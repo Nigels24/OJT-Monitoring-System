@@ -12,10 +12,163 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+enum Role {
+  STUDENT
+  SUPERVISOR
+  COORDINATOR
+}
+
+enum StudentStatus {
+  ACTIVE
+  PENDING
+  COMPLETED
+  INACTIVE
+}
+
+enum AttendanceStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
+  password  String
   name      String
-  role      String   // "student" | "supervisor" | "coordinator"
+  role      Role
   createdAt DateTime @default(now())
+
+  studentProfile     Student?
+  supervisorProfile  Supervisor?
+  coordinatorProfile Coordinator?
+
+  conversations ConversationParticipant[]
+  messagesSent  Message[]
+}
+
+model Establishment {
+  id        String   @id @default(cuid())
+  name      String
+  address   String?
+  createdAt DateTime @default(now())
+
+  supervisors Supervisor[]
+  students    Student[]
+}
+
+model Supervisor {
+  id              String        @id @default(cuid())
+  userId          String        @unique
+  user            User          @relation(fields: [userId], references: [id])
+  establishmentId String
+  establishment   Establishment @relation(fields: [establishmentId], references: [id])
+  position        String?
+
+  attendanceApprovals Attendance[] @relation("ApprovedBy")
+  evaluations         Evaluation[]
+}
+
+model Coordinator {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+}
+
+model Student {
+  id              String         @id @default(cuid())
+  userId          String         @unique
+  user            User           @relation(fields: [userId], references: [id])
+  studentIdNumber String         @unique
+  course          String?
+  establishmentId String?
+  establishment   Establishment? @relation(fields: [establishmentId], references: [id])
+  requiredHours   Int            @default(0)
+  startDate       DateTime?
+  status          StudentStatus  @default(ACTIVE)
+
+  attendances Attendance[]
+  documents   Document[]
+  credentials Credential[]
+  evaluations Evaluation[]
+}
+
+model Attendance {
+  id         String           @id @default(cuid())
+  studentId  String
+  student    Student          @relation(fields: [studentId], references: [id])
+  date       DateTime
+  timeIn     DateTime?
+  timeOut    DateTime?
+  totalHours Float?
+  remarks    String?
+  status     AttendanceStatus @default(PENDING)
+
+  approvedById String?
+  approvedBy   Supervisor? @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model Document {
+  id         String   @id @default(cuid())
+  studentId  String
+  student    Student  @relation(fields: [studentId], references: [id])
+  name       String
+  fileUrl    String
+  status     String   @default("PENDING")
+  uploadedAt DateTime @default(now())
+}
+
+model Credential {
+  id        String   @id @default(cuid())
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id])
+  type      String
+  fileUrl   String
+  createdAt DateTime @default(now())
+}
+
+model Evaluation {
+  id           String     @id @default(cuid())
+  studentId    String
+  student      Student    @relation(fields: [studentId], references: [id])
+  supervisorId String
+  supervisor   Supervisor @relation(fields: [supervisorId], references: [id])
+  score        Float?
+  feedback     String?
+  createdAt    DateTime   @default(now())
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  isGroup   Boolean  @default(false)
+  name      String?
+  createdBy String
+  createdAt DateTime @default(now())
+
+  participants ConversationParticipant[]
+  messages     Message[]
+}
+
+model ConversationParticipant {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  userId         String
+  user           User         @relation(fields: [userId], references: [id])
+  joinedAt       DateTime     @default(now())
+  lastReadAt     DateTime?
+
+  @@unique([conversationId, userId])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  senderId       String
+  sender         User         @relation(fields: [senderId], references: [id])
+  content        String
+  createdAt      DateTime     @default(now())
 }
