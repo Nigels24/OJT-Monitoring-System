@@ -1,4 +1,12 @@
-import { Controller, Post, Get, Body, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Patch,
+  Param,
+  Body,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { CoordinatorService } from './coordinator.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
@@ -18,6 +26,12 @@ class CreateStudentDto {
   studentIdNumber!: string;
   course?: string;
   establishmentId?: string;
+  requiredHours?: number;
+}
+
+class UpdateStudentDto {
+  establishmentId?: string;
+  course?: string;
   requiredHours?: number;
 }
 
@@ -45,5 +59,10 @@ export class CoordinatorController {
   @Get('supervisors')
   listSupervisors() {
     return this.coordinatorService.listSupervisors();
+  }
+
+  @Patch('students/:id')
+  updateStudent(@Param('id') id: string, @Body() dto: UpdateStudentDto) {
+    return this.coordinatorService.updateStudent(id, dto);
   }
 }

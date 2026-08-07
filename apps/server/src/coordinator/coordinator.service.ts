@@ -93,4 +93,14 @@ export class CoordinatorService {
       include: { user: true, establishment: true },
     });
   }
+
+  async updateStudent(
+    studentId: string,
+    data: { establishmentId?: string; course?: string; requiredHours?: number },
+  ) {
+    return this.prisma.student.update({
+      where: { id: studentId },
+      data,
+    });
+  }
 }
