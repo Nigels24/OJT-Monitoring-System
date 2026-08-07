@@ -94,22 +94,22 @@ model Student {
 }
 
 model Attendance {
-  id         String           @id @default(cuid())
-  studentId  String
-  student    Student          @relation(fields: [studentId], references: [id])
-  date       DateTime
-  timeIn     DateTime?
-  timeOut    DateTime?
-  totalHours Float?
-  remarks    String?
-  status     AttendanceStatus @default(PENDING)
+  id            String           @id @default(cuid())
+  studentId     String
+  student       Student          @relation(fields: [studentId], references: [id])
+  date          DateTime
+  timeInAM      DateTime?
+  timeOutAM     DateTime?
+  timeInPM      DateTime?
+  timeOutPM     DateTime?
+  remarks       String?
+  status        AttendanceStatus @default(PENDING)
 
   approvedById String?
   approvedBy   Supervisor? @relation("ApprovedBy", fields: [approvedById], references: [id])
 
   createdAt DateTime @default(now())
 }
-
 model Document {
   id         String   @id @default(cuid())
   studentId  String
