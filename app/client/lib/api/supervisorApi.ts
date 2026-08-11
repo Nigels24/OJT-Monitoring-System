@@ -41,6 +41,7 @@ export interface SupervisorDashboard {
   stats: {
     totalStudents: number;
     activeStudents: number;
+    completedStudents: number;
     pendingApprovals: number;
     approvedThisWeek: number;
     declinedCount: number;
@@ -62,7 +63,7 @@ export interface SupervisorStudent {
 export const supervisorApi = createApi({
   reducerPath: "supervisorApi",
   baseQuery: baseQueryWithAuth,
-  tagTypes: ["SupervisorAttendance", "SupervisorDashboard"],
+  tagTypes: ["SupervisorAttendance", "SupervisorDashboard", "SupervisorStudent"],
   endpoints: (builder) => ({
     getSupervisorDashboard: builder.query<SupervisorDashboard, void>({
       query: () => "/supervisor/dashboard",
@@ -70,6 +71,28 @@ export const supervisorApi = createApi({
     }),
     getSupervisorStudents: builder.query<SupervisorStudent[], void>({
       query: () => "/supervisor/students",
+      providesTags: ["SupervisorStudent"],
+    }),
+    /**
+     * Marks an OJT finished, or reopens it.
+     *
+     * COMPLETED students drop out of the approval queue so the next intake
+     * starts clean — their attendance records are kept, not deleted.
+     */
+    setStudentStatus: builder.mutation<
+      SupervisorStudent,
+      { id: string; status: "ACTIVE" | "COMPLETED" }
+    >({
+      query: ({ id, status }) => ({
+        url: `/supervisor/students/${id}/status`,
+        method: "PATCH",
+        body: { status },
+      }),
+      invalidatesTags: [
+        "SupervisorStudent",
+        "SupervisorAttendance",
+        "SupervisorDashboard",
+      ],
     }),
     getSupervisorAttendance: builder.query<
       SupervisorAttendance[],
@@ -104,6 +127,7 @@ export const supervisorApi = createApi({
 export const {
   useGetSupervisorDashboardQuery,
   useGetSupervisorStudentsQuery,
+  useSetStudentStatusMutation,
   useGetSupervisorAttendanceQuery,
   useApproveAttendanceMutation,
   useDeclineAttendanceMutation,

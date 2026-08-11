@@ -23,7 +23,6 @@ import { useStudents } from "@/features/student/hooks/use-students";
 import StudentList from "@/features/student/components/StudentList";
 import StudentViewDialog from "@/features/student/components/StudentViewDialog";
 import StudentEditDialog from "@/features/student/components/StudentEditDialog";
-import NewCredentialsDialog from "@/features/student/components/NewCredentialsDialog";
 
 const COORDINATOR_NAV = [
   { label: "Dashboard", href: "/coordinator/dashboard", icon: LayoutDashboard },
@@ -57,7 +56,6 @@ export default function StudentManagementPage() {
     paged,
     totalPages,
     stats,
-    newCredentials,
     COURSE_OPTIONS,
     YEAR_LEVEL_OPTIONS,
     STATUS_OPTIONS,
@@ -67,7 +65,6 @@ export default function StudentManagementPage() {
     setPage,
     setDeleteTarget,
     setViewTarget,
-    setNewCredentials,
     handleSubmit,
     handleDeleteConfirm,
     handleView,
@@ -183,13 +180,6 @@ export default function StudentManagementPage() {
         setField={setField}
         onSubmit={handleSubmit}
         onClose={closeDialog}
-      />
-
-      <NewCredentialsDialog
-        credentials={newCredentials}
-        onClose={() => {
-          setNewCredentials(null);
-        }}
       />
     </div>
   );

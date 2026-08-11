@@ -75,13 +75,9 @@ export default function AttendanceTable({
         </span>
       ),
     },
-    {
-      key: "hours",
-      label: "Total Hours",
-      render: (r) => (
-        <span className="font-semibold text-gray-900">{r.hours}</span>
-      ),
-    },
+    // No "Total Hours" column — removed at the client's request. Hours are
+    // still tracked and shown as the running totals on the dashboard, which is
+    // what tells the student how far through their requirement they are.
     {
       key: "status",
       label: "Status",

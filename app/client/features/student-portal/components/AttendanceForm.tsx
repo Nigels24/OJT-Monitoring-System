@@ -7,7 +7,6 @@ import type { AttendanceFormValues } from "../hooks/use-attendance-log";
 interface AttendanceFormProps {
   form: AttendanceFormValues;
   error: string;
-  previewHours: number;
   isSubmitting: boolean;
   setField: (
     key: keyof AttendanceFormValues,
@@ -18,7 +17,6 @@ interface AttendanceFormProps {
 export default function AttendanceForm({
   form,
   error,
-  previewHours,
   isSubmitting,
   setField,
   onSubmit,
@@ -29,29 +27,19 @@ export default function AttendanceForm({
 
   return (
     <form onSubmit={onSubmit} className="space-y-5">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-        <TextField
-          label="Date"
-          labelIcon={CalendarDays}
-          fieldIcon={CalendarDays}
-          type="date"
-          required
-          max={today}
-          value={form.date}
-          onChange={setField("date")}
-        />
-        <div className="flex items-end">
-          <div className="w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5 flex items-center justify-between">
-            <span className="text-sm text-gray-500 flex items-center gap-2">
-              <Clock size={16} />
-              Total hours
-            </span>
-            <span className="text-lg font-semibold text-gray-900">
-              {previewHours}
-            </span>
-          </div>
-        </div>
-      </div>
+      {/* Total hours is deliberately not shown here — the client asked for the
+          submit form to collect only the AM/PM times. The value is still
+          computed and validated, just not displayed. */}
+      <TextField
+        label="Date"
+        labelIcon={CalendarDays}
+        fieldIcon={CalendarDays}
+        type="date"
+        required
+        max={today}
+        value={form.date}
+        onChange={setField("date")}
+      />
 
       <fieldset className="border-l-4 border-amber-300 pl-4">
         <legend className="sr-only">Morning session</legend>

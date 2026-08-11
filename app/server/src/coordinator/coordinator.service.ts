@@ -5,7 +5,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { totalHours } from '../common/attendance-hours';
 
@@ -31,25 +30,34 @@ interface StudentDetails {
 export class CoordinatorService {
   constructor(private prisma: PrismaService) {}
 
+  /** Rejects an email or username already claimed by another account. */
+  private async assertCredentialsAvailable(email: string, username: string) {
+    const clash = await this.prisma.client.user.findFirst({
+      where: { OR: [{ email }, { username }] },
+      select: { email: true, username: true },
+    });
+    if (!clash) return;
+    throw new ConflictException(
+      clash.email === email ? 'Email already in use' : 'Username already taken',
+    );
+  }
+
   async createSupervisor(data: {
     email: string;
+    username: string;
     password: string;
     name: string;
     establishmentId: string;
     position?: string;
   }) {
-    const existing = await this.prisma.client.user.findUnique({
-      where: { email: data.email },
-    });
-    if (existing) {
-      throw new ConflictException('Email already in use');
-    }
+    await this.assertCredentialsAvailable(data.email, data.username);
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
 
     const user = await this.prisma.client.user.create({
       data: {
         email: data.email,
+        username: data.username,
         password: hashedPassword,
         name: data.name,
         role: 'SUPERVISOR',
@@ -70,16 +78,12 @@ export class CoordinatorService {
   async createStudent(
     data: StudentDetails & {
       email: string;
-      password?: string;
+      username: string;
+      password: string;
       studentIdNumber: string;
     },
   ) {
-    const existing = await this.prisma.client.user.findUnique({
-      where: { email: data.email },
-    });
-    if (existing) {
-      throw new ConflictException('Email already in use');
-    }
+    await this.assertCredentialsAvailable(data.email, data.username);
 
     const idTaken = await this.prisma.client.student.findUnique({
       where: { studentIdNumber: data.studentIdNumber },
@@ -97,11 +101,7 @@ export class CoordinatorService {
       );
     }
 
-    // The coordinator's form has no password field, matching the prototype, so
-    // one is generated and returned once for the coordinator to hand over.
-    // An explicitly supplied password still wins.
-    const plainPassword = data.password ?? generateTemporaryPassword();
-    const hashedPassword = await bcrypt.hash(plainPassword, 10);
+    const hashedPassword = await bcrypt.hash(data.password, 10);
 
     // User and Student are separate rows. Without a transaction a failure on
     // the second write would leave a login with no profile, which every
@@ -110,6 +110,7 @@ export class CoordinatorService {
       const created = await tx.user.create({
         data: {
           email: data.email,
+          username: data.username,
           password: hashedPassword,
           name: fullName,
           role: 'STUDENT',
@@ -131,18 +132,21 @@ export class CoordinatorService {
     });
 
     const { password, ...result } = user;
-    return {
-      ...result,
-      // Only present when the server generated it — there is no way to read it
-      // back later, so the UI must surface it immediately.
-      temporaryPassword: data.password ? undefined : plainPassword,
-    };
+    return result;
   }
 
   async listStudents() {
     const students = await this.prisma.client.student.findMany({
       include: {
-        user: { select: { id: true, email: true, name: true, createdAt: true } },
+        user: {
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            name: true,
+            createdAt: true,
+          },
+        },
         establishment: { select: { id: true, name: true } },
         attendances: {
           where: { status: 'APPROVED' },
@@ -270,7 +274,3 @@ function buildFullName(
   return fallback;
 }
 
-/** Readable one-off password; the coordinator passes it to the student. */
-function generateTemporaryPassword(): string {
-  return `ojt-${randomBytes(4).toString('hex')}`;
-}

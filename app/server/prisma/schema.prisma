@@ -37,8 +37,13 @@ enum EstablishmentStatus {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
+  id       String @id @default(cuid())
+  email    String @unique
+  // Login name issued by the coordinator. Nullable because accounts created
+  // before this existed have none — those still sign in with their email.
+  // Logging in accepts either, so a username may never contain "@", which is
+  // what keeps the two namespaces from colliding.
+  username  String?  @unique
   password  String
   name      String
   role      Role

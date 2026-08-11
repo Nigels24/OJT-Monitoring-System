@@ -1,10 +1,12 @@
 import { Controller, Post, Body } from '@nestjs/common';
-import { IsEmail, IsString, IsNotEmpty } from 'class-validator';
+import { IsString, IsNotEmpty } from 'class-validator';
 import { AuthService } from './auth.service';
 
 class LoginDto {
-  @IsEmail()
-  email!: string;
+  /** Username or email address — see AuthService.login. */
+  @IsString()
+  @IsNotEmpty()
+  identifier!: string;
 
   @IsString()
   @IsNotEmpty()
@@ -17,6 +19,6 @@ export class AuthController {
 
   @Post('login')
   async login(@Body() dto: LoginDto) {
-    return this.authService.login(dto.email, dto.password);
+    return this.authService.login(dto.identifier, dto.password);
   }
 }

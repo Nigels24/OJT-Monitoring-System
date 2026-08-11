@@ -32,7 +32,6 @@ export default function StudentAttendancePage() {
   const {
     form,
     error,
-    previewHours,
     isLoading,
     isSubmitting,
     statusFilter,
@@ -99,7 +98,6 @@ export default function StudentAttendancePage() {
             <AttendanceForm
               form={form}
               error={error}
-              previewHours={previewHours}
               isSubmitting={isSubmitting}
               setField={setField}
               onSubmit={handleSubmit}

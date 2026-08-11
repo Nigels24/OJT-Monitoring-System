@@ -6,13 +6,15 @@ type LoginResponse = {
   user: {
     id: string;
     email: string;
+    username: string | null;
     name: string;
     role: string;
   };
 };
 
 type LoginRequest = {
-  email: string;
+  /** Username or email — the server matches either. */
+  identifier: string;
   password: string;
 };
 

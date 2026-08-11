@@ -27,9 +27,18 @@ import { CoordinatorService } from './coordinator.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { EmptyToUndefined, ToOptionalNumber } from '../common/transforms';
 
+// Usernames must not contain "@" so they can never shadow an email address
+// when AuthService.login matches an identifier against both columns.
+const USERNAME_PATTERN = /^[a-zA-Z0-9._-]{4,30}$/;
+const USERNAME_MESSAGE =
+  'username must be 4-30 characters using letters, numbers, dot, underscore or hyphen (no "@")';
+
 class CreateSupervisorDto {
   @IsEmail()
   email!: string;
+
+  @Matches(USERNAME_PATTERN, { message: USERNAME_MESSAGE })
+  username!: string;
 
   @IsString()
   @MinLength(8)
@@ -138,13 +147,14 @@ class CreateStudentDto extends StudentDetailsDto {
   @IsEmail()
   email!: string;
 
-  // Optional: the coordinator's form has no password field, so the server
-  // generates one and returns it in the response exactly once.
-  @IsOptional()
-  @EmptyToUndefined()
+  // The coordinator issues both credentials by hand and passes them to the
+  // student. This replaced an earlier server-generated temporary password.
+  @Matches(USERNAME_PATTERN, { message: USERNAME_MESSAGE })
+  username!: string;
+
   @IsString()
   @MinLength(8)
-  password?: string;
+  password!: string;
 
   // Only needed when first/last name are not supplied; the service composes
   // User.name from the name parts when it can.

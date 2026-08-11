@@ -10,8 +10,9 @@ import {
   Req,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsIn,
   IsNotEmpty,
   IsNumber,
@@ -24,13 +25,24 @@ import {
 } from 'class-validator';
 import { SupervisorService } from './supervisor.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
-import { EmptyToUndefined } from '../common/transforms';
+import { EmptyToUndefined, ToOptionalNumber } from '../common/transforms';
 
 class AttendanceQueryDto {
   @IsOptional()
   @EmptyToUndefined()
   @IsIn(['PENDING', 'APPROVED', 'DECLINED'])
   status?: 'PENDING' | 'APPROVED' | 'DECLINED';
+
+  /** Include finished batches, which are hidden from the queue by default. */
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  includeCompleted?: boolean;
+}
+
+class SetStudentStatusDto {
+  @IsIn(['ACTIVE', 'COMPLETED'])
+  status!: 'ACTIVE' | 'COMPLETED';
 }
 
 class DeclineAttendanceDto {
@@ -48,11 +60,12 @@ class CreateEvaluationDto {
   @IsNotEmpty()
   studentId!: string;
 
+  // No upper bound: the 5-star scale was removed at the client's request.
+  // The scale for evaluations is still undecided — see the Evaluations module.
   @IsOptional()
-  @Type(() => Number)
+  @ToOptionalNumber()
   @IsNumber()
   @Min(0)
-  @Max(5)
   score?: number;
 
   @IsOptional()
@@ -79,7 +92,24 @@ export class SupervisorController {
 
   @Get('attendance')
   getAttendance(@Req() req: any, @Query() query: AttendanceQueryDto) {
-    return this.supervisorService.getAttendance(req.user.userId, query.status);
+    return this.supervisorService.getAttendance(
+      req.user.userId,
+      query.status,
+      query.includeCompleted,
+    );
+  }
+
+  @Patch('students/:id/status')
+  setStudentStatus(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() dto: SetStudentStatusDto,
+  ) {
+    return this.supervisorService.setStudentStatus(
+      req.user.userId,
+      id,
+      dto.status,
+    );
   }
 
   @Patch('attendance/:id/approve')

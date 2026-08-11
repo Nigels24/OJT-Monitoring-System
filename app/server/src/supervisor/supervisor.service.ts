@@ -50,12 +50,18 @@ export class SupervisorService {
           timeInPM: true,
           timeOutPM: true,
           createdAt: true,
+          student: { select: { status: true } },
         },
       }),
     ]);
 
     const approved = attendances.filter((a) => a.status === 'APPROVED');
     const weekStart = startOfWeek();
+    // A finished batch should not keep showing up as work to do, but its
+    // approved hours still count toward the establishment's running total.
+    const activeQueue = attendances.filter(
+      (a) => a.student.status !== 'COMPLETED',
+    );
 
     return {
       supervisor: {
@@ -68,11 +74,13 @@ export class SupervisorService {
       stats: {
         totalStudents: students.length,
         activeStudents: students.filter((s) => s.status === 'ACTIVE').length,
-        pendingApprovals: attendances.filter((a) => a.status === 'PENDING')
+        completedStudents: students.filter((s) => s.status === 'COMPLETED')
+          .length,
+        pendingApprovals: activeQueue.filter((a) => a.status === 'PENDING')
           .length,
         approvedThisWeek: approved.filter((a) => a.createdAt >= weekStart)
           .length,
-        declinedCount: attendances.filter((a) => a.status === 'DECLINED')
+        declinedCount: activeQueue.filter((a) => a.status === 'DECLINED')
           .length,
         // Hours this establishment has signed off across all its students.
         totalApprovedHours: totalHours(approved),
@@ -87,12 +95,22 @@ export class SupervisorService {
    * was previously called getPendingAttendance but never filtered, so the
    * approval screen showed already-actioned rows with no way to tell.)
    */
-  async getAttendance(userId: string, status?: AttendanceStatus) {
+  async getAttendance(
+    userId: string,
+    status?: AttendanceStatus,
+    includeCompleted = false,
+  ) {
     const supervisor = await this.getSupervisorByUserId(userId);
 
     const records = await this.prisma.client.attendance.findMany({
       where: {
-        student: { establishmentId: supervisor.establishmentId },
+        student: {
+          establishmentId: supervisor.establishmentId,
+          // Students marked COMPLETED are a finished OJT batch. Their logs stay
+          // in the database — nothing is deleted — but they drop out of the
+          // working queue so the next intake starts with a clean board.
+          ...(includeCompleted ? {} : { status: { not: 'COMPLETED' } }),
+        },
         ...(status ? { status } : {}),
       },
       include: {
@@ -143,6 +161,40 @@ export class SupervisorService {
       ...student,
       completedHours: totalHours(attendances),
     }));
+  }
+
+  /**
+   * Marks a student's OJT finished, or puts them back in the active queue.
+   *
+   * This is the non-destructive answer to "clear the board for the next batch":
+   * a COMPLETED student disappears from the approval queue and dashboard
+   * counts, but every attendance record they built up is preserved for the
+   * coordinator's reports and for any later dispute over hours worked.
+   */
+  async setStudentStatus(
+    userId: string,
+    studentId: string,
+    status: 'ACTIVE' | 'COMPLETED',
+  ) {
+    const supervisor = await this.getSupervisorByUserId(userId);
+
+    const student = await this.prisma.client.student.findUnique({
+      where: { id: studentId },
+    });
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+    if (student.establishmentId !== supervisor.establishmentId) {
+      throw new ForbiddenException(
+        'This student is not under your establishment',
+      );
+    }
+
+    return this.prisma.client.student.update({
+      where: { id: studentId },
+      data: { status },
+      include: { user: { select: { id: true, name: true, email: true } } },
+    });
   }
 
   async approveAttendance(userId: string, attendanceId: string) {

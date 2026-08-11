@@ -13,6 +13,7 @@ export interface Student {
   id: string;
   userId: string;
   studentIdNumber: string;
+  username?: string | null;
   firstName?: string | null;
   lastName?: string | null;
   middleInitial?: string | null;
@@ -32,6 +33,7 @@ export interface Student {
   user: {
     id: string;
     email: string;
+    username: string | null;
     name: string;
     createdAt: string;
   };
@@ -57,19 +59,20 @@ export interface StudentDetailsRequest {
 
 export interface CreateStudentRequest extends StudentDetailsRequest {
   email: string;
+  /** Login name issued by the coordinator. No "@" allowed. */
+  username: string;
+  /** Set by the coordinator and handed to the student. */
+  password: string;
   studentIdNumber: string;
-  /** Omit to have the server generate one and return it once. */
-  password?: string;
   name?: string;
 }
 
 export interface CreateStudentResponse {
   id: string;
   email: string;
+  username: string | null;
   name: string;
   role: string;
-  /** Present only when the server generated the password. Shown once. */
-  temporaryPassword?: string;
 }
 
 export type UpdateStudentRequest = StudentDetailsRequest;

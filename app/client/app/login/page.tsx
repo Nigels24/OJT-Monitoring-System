@@ -14,7 +14,6 @@ import Button from "@/components/ui/Button";
 import TextField from "@/components/ui/TextField";
 import Tabs, { TabOption } from "@/components/ui/Tabs";
 import {
-  Mail,
   Lock,
   User,
   KeyRound,
@@ -40,7 +39,9 @@ export default function LoginPage() {
   // Cosmetic only — not sent to the backend. The server determines the
   // actual role from the account record and returns it in the response.
   const [selectedRole, setSelectedRole] = useState<Role>("Student");
-  const [email, setEmail] = useState("");
+  // Username or email — the coordinator issues usernames, but accounts made
+  // before usernames existed still sign in with their email.
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
@@ -49,7 +50,7 @@ export default function LoginPage() {
     setError("");
 
     try {
-      const result = await login({ email, password }).unwrap();
+      const result = await login({ identifier, password }).unwrap();
       const user = result.user as StoredUser;
 
       if (!ROLE_HOME[user.role]) {
@@ -75,7 +76,7 @@ export default function LoginPage() {
 
       router.push(destination);
     } catch (err: any) {
-      setError(err?.data?.message || "Invalid email or password.");
+      setError(err?.data?.message || "Invalid username or password.");
     }
   };
 
@@ -97,14 +98,15 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="mt-6">
           <TextField
-            label="Email"
-            labelIcon={Mail}
+            label="Username"
+            labelIcon={User}
             fieldIcon={User}
-            type="email"
+            type="text"
             required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="Enter your email"
+            autoComplete="username"
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
+            placeholder="Enter your username or email"
             className="mb-4"
           />
 

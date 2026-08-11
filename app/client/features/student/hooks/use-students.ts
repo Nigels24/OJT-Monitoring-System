@@ -40,6 +40,8 @@ const EMPTY_FORM = {
   middleInitial: "",
   lastName: "",
   email: "",
+  username: "",
+  password: "",
   age: "",
   dateOfBirth: "",
   school: "",
@@ -66,12 +68,6 @@ export function useStudents() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StudentStatus | "">("");
   const [page, setPage] = useState(1);
-  // The generated password is only ever returned by the create response, so it
-  // is held here to be shown once and never fetched again.
-  const [newCredentials, setNewCredentials] = useState<{
-    email: string;
-    password: string;
-  } | null>(null);
 
   const { showSuccess, showError } = useSnackbar();
 
@@ -120,17 +116,15 @@ export function useStudents() {
       } else {
         const result = await createStudent({
           email: form.email,
+          username: form.username,
+          password: form.password,
           studentIdNumber: form.studentIdNumber,
           ...detailsPayload(),
         }).unwrap();
 
-        if (result.temporaryPassword) {
-          setNewCredentials({
-            email: result.email,
-            password: result.temporaryPassword,
-          });
-        }
-        showSuccess(`"${result.name}" has been added.`);
+        showSuccess(
+          `"${result.name}" has been added. Give them the username and password you set.`,
+        );
       }
       closeDialog();
     } catch (err: unknown) {
@@ -168,6 +162,10 @@ export function useStudents() {
       middleInitial: student.middleInitial ?? "",
       lastName: student.lastName ?? "",
       email: student.user.email,
+      // Credentials are not editable here — the fields are disabled in edit
+      // mode and these values are only shown for reference.
+      username: student.user.username ?? "",
+      password: "",
       age: student.age?.toString() ?? "",
       // <input type="date"> wants yyyy-mm-dd, not a full ISO timestamp.
       dateOfBirth: student.dateOfBirth ? student.dateOfBirth.slice(0, 10) : "",
@@ -249,7 +247,6 @@ export function useStudents() {
     totalPages,
     filtered,
     stats,
-    newCredentials,
 
     COURSE_OPTIONS,
     YEAR_LEVEL_OPTIONS,
@@ -261,7 +258,6 @@ export function useStudents() {
     setPage,
     setDeleteTarget,
     setViewTarget,
-    setNewCredentials,
 
     handleSubmit,
     handleDeleteConfirm,

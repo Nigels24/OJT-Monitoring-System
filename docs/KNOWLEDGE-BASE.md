@@ -3,7 +3,7 @@
 The running record of what this project is, what's built, and how to work on it.
 Updated at the end of every working session.
 
-**Last updated:** 2026-08-11 · after *Supervisor*
+**Last updated:** 2026-08-11 · after *client feedback batch*
 
 **Workflow:** one module at a time → verify → **commit and push to `origin/main`** → update this file → stop for review.
 
@@ -119,6 +119,8 @@ Coordinator attendance oversight, Evaluation views.
 
 ### Auth and roles
 
+**Login is by username or email.** The coordinator issues both credentials by hand when creating a student or supervisor account — there is no self-registration and no server-generated password. `AuthService.login(identifier, password)` matches `identifier` against `User.email` OR `User.username` (`findFirst` with `OR`). `User.username` is nullable (accounts from before this existed have none, so they still sign in with email) and unique, and is barred from containing `"@"` — that's what stops a username from ever colliding with someone else's email. `POST /auth/login` body is `{ identifier, password }`, not `{ email, password }`.
+
 `AuthService.login` verifies bcrypt and signs `{ sub, email, role }`.
 `JwtStrategy.validate` maps it to `req.user` as `{ userId, email, role }` —
 **handlers read `req.user.userId`, not `.id`.**
@@ -211,7 +213,7 @@ just restored; an effect on `editTarget` clears the flag. Touch that flag carefu
 | `DELETE /coordinator/students/:id` | **409** if attendance/evaluations/documents exist |
 
 - **`completedHours`** is computed from **APPROVED attendance only**, via `src/common/attendance-hours.ts` (`hoursForAttendance`, `totalHours`). AM and PM spans are summed; a reversed in/out pair clamps to 0. Reuse this for the student and supervisor modules.
-- **Passwords:** the prototype's form has no password field. `POST` therefore accepts an optional `password`; when omitted the server generates one and returns it as **`temporaryPassword` exactly once** (it is hashed immediately and unrecoverable). `NewCredentialsDialog` shows it with a copy button.
+- **Credentials:** `POST` requires both `username` and `password` — the coordinator sets them and hands them to the student directly. (This replaced an earlier server-generated-password design; the client asked for manual issuance instead. See the 2026-08-12 session log entry.) `username` must be 4–30 chars, letters/numbers/`.`/`_`/`-`, and must not contain `@`.
 - **`studentIdNumber` is unique table-wide** and immutable in the UI after creation — it identifies the student across attendance and evaluations. Duplicates return **409**.
 - `contactNumber` is validated as exactly 11 digits (`09123456789`), matching the prototype.
 - Deleting removes the `Credential` rows, the `Student` row, **and** the `User` row — otherwise a login would survive with no profile.
@@ -252,6 +254,9 @@ Slice: `lib/api/supervisorApi.ts`. Feature: `features/supervisor/`.
 | `GET /supervisor/attendance?status=` | optional `PENDING`/`APPROVED`/`DECLINED`; omit for all |
 | `PATCH /supervisor/attendance/:id/approve` | clears any previous `declineReason` |
 | `PATCH /supervisor/attendance/:id/decline` | body `{ reason }` — **required**, 3–500 chars |
+| `PATCH /supervisor/students/:id/status` | body `{ status: "ACTIVE" \| "COMPLETED" }` — see below |
+
+**Mark Complete / Reopen** (client request, 2026-08-12): the client asked for a way to "delete all" a batch's attendance data before the next OJT intake. That was declined as too destructive — hours are an academic record a student could need to dispute, and a hard delete has no undo. `Student.status` already had an unused `COMPLETED` value, so that's what this uses instead: `setStudentStatus` in `SupervisorService` flips a student to `COMPLETED`, and `getAttendance`/`getDashboard` exclude `COMPLETED` students from the active queue and pending/declined counts by default. **Nothing is deleted** — every attendance record is intact, still counted in `totalApprovedHours`, and the coordinator's own views are unaffected. `GET /supervisor/attendance?includeCompleted=true` opts back in. The action is fully reversible (`ACTIVE` again). UI: `StudentRoster` on the supervisor dashboard, with a `ConfirmDialog` explaining what does and doesn't happen.
 
 - **`getPendingAttendance` was renamed to `getAttendance` and now actually filters.** It previously returned every status regardless of its name, so the approval screen mixed already-actioned rows in with the queue. The UI defaults to `PENDING`.
 - **Declining requires a written reason**, enforced server-side, stored in the new `Attendance.declineReason` column and shown to the student on their own history. The prototype wrote the reason into `remarks` — that is the *student's* note, so doing the same would have destroyed what they wrote. The two are separate columns.
@@ -260,6 +265,14 @@ Slice: `lib/api/supervisorApi.ts`. Feature: `features/supervisor/`.
 - `approvedById` is set on decline too. The column name is misleading (it means "who actioned this"), but renaming it is a migration not worth spending here.
 - `SUPERVISOR_NAV` omits Evaluation and Messages for the same reason `STUDENT_NAV` does — no backend, so no dead links.
 - `ROLE_HOME.SUPERVISOR` is still `/supervisor/attendance` rather than the dashboard, since approving is the supervisor's actual job. Both pages exist, so either is fine.
+- **Evaluation score has no upper bound.** The client asked to remove the 5-star scale; `@Max(5)` was dropped from `CreateEvaluationDto.score` (still `@Min(0)`). No replacement scale has been decided — that's still open for the Evaluations module (§ below).
+
+### Attendance forms — hours totals removed (client request, 2026-08-12)
+
+Two client-requested removals, both cosmetic — the underlying hours are still computed, validated, and used everywhere else:
+
+- **Student submit form** (`AttendanceForm`, `app/student/attendance`) no longer shows the live "Total hours" preview box. The four AM/PM time fields are unchanged and still the only required input.
+- **Student attendance history** (`AttendanceTable`) no longer has a "Total Hours" column. The running totals still appear on the student dashboard's stat cards and progress bar — that's the only place a student sees their hours now.
 
 ---
 
@@ -282,6 +295,7 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 | `20260811071701_student_personal_details` | `Student`: firstName, lastName, middleInitial, age, dateOfBirth, school, contactNumber, address, yearLevel — all nullable |
 | `20260811085904_attendance_one_per_day` | `@@unique([studentId, date])` on `Attendance`. Written with `prisma migrate diff` and applied with `migrate deploy`, because `migrate dev` needs an interactive confirmation for the unique-constraint warning and cannot run non-interactively. Verified zero duplicates first. |
 | `20260811091601_attendance_decline_reason` | `Attendance.declineReason` — the supervisor's explanation, kept separate from the student's `remarks` |
+| `20260811120804_user_username` | `User.username` — nullable, unique. Login accepts username or email (`AuthService.login`); usernames may not contain `@`. |
 
 > **If `migrate dev` ever offers to reset the database, stop.** It means drift again.
 > Reconcile with a baseline migration + `migrate resolve --applied`. This is a live
@@ -354,6 +368,20 @@ Fixes the STUDENT login 404 — `/student/dashboard` had never existed.
 - Verified the whole loop live: student submits 8h → dashboard shows 8h pending → supervisor approves → dashboard shows 8h completed / 492 remaining → the coordinator's student list agrees. Cross-role guards return 403, unauthenticated 401. Test row removed afterwards.
 
 **Still open:** the SUPERVISOR login still 404s (`/supervisor/attendance` has a backend but no page) — that is the next module.
+
+### 2026-08-12 — Client feedback batch
+
+Five items from the client, spanning four already-built areas rather than one new module. Not part of the numbered build order.
+
+1. **Coordinator issues both username and password.** Reversed the module-2 design where the server generated a temporary password. `User.username` added (migration `user_username`), unique, nullable, barred from containing `@` so it can never collide with an email in `AuthService.login`'s lookup. `POST /auth/login` body changed from `{ email, password }` to `{ identifier, password }`. `CreateStudentDto`/`CreateSupervisorDto` now require both fields; `NewCredentialsDialog` and the generated-password code path were deleted entirely. Login page's Email field became a Username field (label and copy only — it still accepts either).
+2. **Student submit form:** removed the live total-hours preview box. Time fields unchanged.
+3. **Student attendance history:** removed the Total Hours column. Aggregate totals still live on the dashboard.
+4. **Supervisor "clear the board" control.** Requested as "delete all/hide" — declined as a literal delete (see the schema-gaps note below) in favor of `Student.status = COMPLETED`, which already existed unused. New `PATCH /supervisor/students/:id/status`; `getAttendance` and `getDashboard` exclude completed students from the active queue by default; nothing is deleted; fully reversible. `StudentRoster` component added to the supervisor dashboard.
+5. **Evaluation score has no upper bound.** `@Max(5)` removed from `CreateEvaluationDto.score`. The replacement scale is still undecided — flagged for the Evaluations module.
+
+Verified live: username and email both authenticate, wrong password still 401, `@` in a username 400s, duplicate usernames 409, a password-less create now 400s (no more silent generation), mark-complete/reopen round-trips and is correctly excluded from dashboard stats while remaining in the roster, cross-establishment guard still holds on the new status endpoint, and evaluation scores of 6 and 87 both succeed where `@Max(5)` would have rejected them. Test data removed afterward.
+
+A judgment call worth restating: the client's literal ask for item 4 was deletion. I pushed back before building — attendance is the record a graduation requirement is checked against, and a hard delete has no undo and would also erase the coordinator's history for that batch. `COMPLETED` gives them the same "clean board for the next OJT" outcome without that risk. If they actually want data gone (e.g. for storage or privacy reasons), that's a distinct, separate decision — flag it back to me rather than building it silently.
 
 ### 2026-08-11 — Supervisor
 

@@ -3,6 +3,7 @@ export type UserRole = "STUDENT" | "SUPERVISOR" | "COORDINATOR";
 export interface StoredUser {
   id: string;
   email: string;
+  username: string | null;
   name: string;
   role: UserRole;
 }
