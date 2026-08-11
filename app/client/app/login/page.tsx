@@ -109,6 +109,7 @@ export default function LoginPage() {
           <div className="text-right mb-5">
             <a
               href=""
+              onClick={(e) => e.preventDefault()}
               className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
             >
               <HelpCircle size={14} />

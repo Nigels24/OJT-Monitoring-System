@@ -69,7 +69,7 @@ export default function EstablishmentViewDialog({
 
           <div className="border-t border-gray-200 pt-4">
             <h3 className="text-base md:text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <User size={18} className="md:size-20 text-blue-600" />
+              <User size={18} className="text-blue-600" />
               Coordinator Information
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">

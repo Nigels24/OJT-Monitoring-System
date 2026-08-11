@@ -65,7 +65,7 @@ export default function EstablishmentForm({
       {/* Establishment Details */}
       <div className="border-l-4 border-blue-400 pl-4 md:pl-6">
         <div className="flex items-center gap-2 mb-4 max-w-4xl mx-auto">
-          <Building2 size={16} className="md:size-18 text-gray-700" />
+          <Building2 size={16} className="text-gray-700" />
           <h3 className="font-semibold text-gray-900 text-base md:text-lg">
             Establishment Details
           </h3>
@@ -193,13 +193,30 @@ export default function EstablishmentForm({
             onChange={setField("zipCode")}
             placeholder="Zip code"
           />
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Status <span className="text-red-500">*</span>
+            </label>
+            <SelectField
+              value={form.status}
+              onChange={(value) =>
+                setField("status")({ target: { value } })
+              }
+              placeholder="Select Status"
+              options={[
+                { label: "Active", value: "ACTIVE" },
+                { label: "Inactive", value: "INACTIVE" },
+              ]}
+              className="w-full"
+            />
+          </div>
         </div>
       </div>
 
       {/* Establishment Coordinator Details */}
       <div className="border-l-4 border-blue-400 pl-4 md:pl-6">
         <div className="flex items-center gap-2 mb-4 max-w-4xl mx-auto">
-          <User size={16} className="md:size-18 text-gray-700" />
+          <User size={16} className="text-gray-700" />
           <h3 className="font-semibold text-gray-900 text-base md:text-lg">
             Establishment Coordinator Details
           </h3>
@@ -251,61 +268,54 @@ export default function EstablishmentForm({
             />
           </div>
           <TextField
-            label="Position/Title"
-            required
+            label="Position"
             value={form.coordinatorPosition}
             onChange={setField("coordinatorPosition")}
-            placeholder="e.g., HR Manager, IT Director"
+            placeholder="Position"
           />
-        </div>
-        <div className="mt-4 max-w-4xl mx-auto">
-          <TextArea
-            label="Complete Address"
+          <TextField
+            label="Address"
             labelIcon={MapPin}
-            required
+            fieldIcon={MapPin}
             value={form.coordinatorAddress}
             onChange={setField("coordinatorAddress")}
-            placeholder="House/Unit No., Street, Barangay, City, Province"
-            rows={3}
+            placeholder="Address"
           />
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 max-w-4xl mx-auto">
           <TextField
-            label="Contact Number"
+            label="Contact"
             labelIcon={Phone}
             fieldIcon={Phone}
-            required
             value={form.coordinatorContact}
             onChange={setField("coordinatorContact")}
-            placeholder="09123456789"
+            placeholder="Contact number"
           />
           <TextField
-            label="Email Address"
+            label="Email"
             labelIcon={Mail}
             fieldIcon={Mail}
-            required
-            type="email"
             value={form.coordinatorEmail}
             onChange={setField("coordinatorEmail")}
-            placeholder="coordinator@company.com"
+            placeholder="Email address"
           />
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto space-y-6">
-        {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-red-600">{error}</p>}
 
-        <div className="flex justify-end gap-3">
-          <Button type="button" variant="secondary" onClick={onReset}>
-            {editTarget ? "Cancel" : "Clear"}
-          </Button>
-          <Button
-            type="submit"
-            loading={isCreating || isUpdating}
-          >
-            {editTarget ? "Update Establishment" : "Save Establishment"}
-          </Button>
-        </div>
+      <div className="flex justify-end gap-3">
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={onReset}
+        >
+          {editTarget ? "Cancel" : "Clear"}
+        </Button>
+        <Button
+          type="submit"
+          loading={isCreating || isUpdating}
+        >
+          {editTarget ? "Update Establishment" : "Save Establishment"}
+        </Button>
       </div>
     </form>
   );
