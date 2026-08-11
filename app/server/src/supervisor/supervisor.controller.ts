@@ -5,12 +5,14 @@ import {
   Post,
   Param,
   Body,
+  Query,
   UseGuards,
   Req,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Type } from 'class-transformer';
 import {
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -18,9 +20,28 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 import { SupervisorService } from './supervisor.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
+import { EmptyToUndefined } from '../common/transforms';
+
+class AttendanceQueryDto {
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsIn(['PENDING', 'APPROVED', 'DECLINED'])
+  status?: 'PENDING' | 'APPROVED' | 'DECLINED';
+}
+
+class DeclineAttendanceDto {
+  // Required: a declined log with no explanation gives the student nothing to
+  // act on. The prototype enforces this in the UI; enforce it on the server too.
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(3)
+  @MaxLength(500)
+  reason!: string;
+}
 
 class CreateEvaluationDto {
   @IsString()
@@ -46,9 +67,19 @@ class CreateEvaluationDto {
 export class SupervisorController {
   constructor(private supervisorService: SupervisorService) {}
 
+  @Get('dashboard')
+  getDashboard(@Req() req: any) {
+    return this.supervisorService.getDashboard(req.user.userId);
+  }
+
+  @Get('students')
+  getStudents(@Req() req: any) {
+    return this.supervisorService.getStudents(req.user.userId);
+  }
+
   @Get('attendance')
-  getPendingAttendance(@Req() req: any) {
-    return this.supervisorService.getPendingAttendance(req.user.userId);
+  getAttendance(@Req() req: any, @Query() query: AttendanceQueryDto) {
+    return this.supervisorService.getAttendance(req.user.userId, query.status);
   }
 
   @Patch('attendance/:id/approve')
@@ -57,8 +88,16 @@ export class SupervisorController {
   }
 
   @Patch('attendance/:id/decline')
-  declineAttendance(@Req() req: any, @Param('id') id: string) {
-    return this.supervisorService.declineAttendance(req.user.userId, id);
+  declineAttendance(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() dto: DeclineAttendanceDto,
+  ) {
+    return this.supervisorService.declineAttendance(
+      req.user.userId,
+      id,
+      dto.reason,
+    );
   }
 
   @Post('evaluations')

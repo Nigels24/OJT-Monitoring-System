@@ -140,6 +140,11 @@ model Attendance {
   remarks   String?
   status    AttendanceStatus @default(PENDING)
 
+  // Why a supervisor declined. Kept separate from `remarks`, which belongs to
+  // the student — the prototype overwrote the student's note with the decline
+  // reason, losing what they had written.
+  declineReason String?
+
   approvedById String?
   approvedBy   Supervisor? @relation("ApprovedBy", fields: [approvedById], references: [id])
 

@@ -96,7 +96,15 @@ export default function AttendanceTable({
       key: "remarks",
       label: "Remarks",
       render: (r) => (
-        <span className="text-gray-600">{r.remarks || "—"}</span>
+        <div className="max-w-xs">
+          <span className="text-gray-600">{r.remarks || "—"}</span>
+          {/* A declined log is only actionable if the student can see why. */}
+          {r.status === "DECLINED" && r.declineReason && (
+            <p className="text-xs text-red-600 mt-1">
+              <span className="font-medium">Declined:</span> {r.declineReason}
+            </p>
+          )}
+        </div>
       ),
     },
   ];

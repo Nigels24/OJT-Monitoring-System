@@ -17,7 +17,10 @@ export interface AttendanceRecord {
   timeOutAM: string | null;
   timeInPM: string | null;
   timeOutPM: string | null;
+  /** The student's own note. */
   remarks: string | null;
+  /** The supervisor's explanation when status is DECLINED. */
+  declineReason: string | null;
   status: AttendanceStatus;
   createdAt: string;
   /** Derived server-side from the four clock fields. */

@@ -3,7 +3,7 @@
 The running record of what this project is, what's built, and how to work on it.
 Updated at the end of every working session.
 
-**Last updated:** 2026-08-11 · after *Student self-service*
+**Last updated:** 2026-08-11 · after *Supervisor*
 
 **Workflow:** one module at a time → verify → **commit and push to `origin/main`** → update this file → stop for review.
 
@@ -82,15 +82,19 @@ passwords to the documented values, and repairs a missing profile row. It never 
 - **Auth** — `POST /auth/login`, JWT bearer, role-based routing.
 - **Establishment (Coordinator)** — full CRUD, PSGC cascading address dropdowns. The original reference slice.
 - **Student Management (Coordinator)** — full CRUD, computed hours, progress, stats. See §5.
-- **Student self-service** — dashboard + attendance logging and history. See §5. The STUDENT login no longer 404s.
+- **Student self-service** — dashboard + attendance logging and history. See §5.
+- **Supervisor** — dashboard + attendance approval with required decline reasons. See §5.
+
+**All three roles now land on a real page after login. No role 404s.**
 
 ### Partially built
 
 | Module | Backend | Frontend |
 |---|---|---|
 | Coordinator dashboard | none | full UI on **mock constants** (`ATTENDANCE_TREND`, `TOP_ESTABLISHMENTS`, `RECENT_STUDENTS`, hardcoded `stats`) |
-| Student self-service | done | dashboard + attendance done; **Documents, Credentials, Profile and Messages sections from the prototype are not built** (no backend for any of them) |
-| Supervisor | `GET /supervisor/attendance`, approve/decline, `POST /supervisor/evaluations` | **none** — `app/supervisor/*` empty. **SUPERVISOR login still 404s.** |
+| Student self-service | done | dashboard + attendance done; **Documents, Credentials, Profile and Messages from the prototype are not built** (no backend for any) |
+| Supervisor | done for attendance | dashboard + approval done; **Evaluation and Messages not built** |
+| Evaluations | `POST /supervisor/evaluations` only — write-only, nothing can read them back | none |
 
 ### Not started
 
@@ -102,8 +106,8 @@ Coordinator attendance oversight, Evaluation views.
 1. ~~Foundation pass~~ ✅
 2. ~~Student Management (Coordinator)~~ ✅
 3. ~~Student self-service~~ ✅
-4. **Supervisor** ← next (fixes the remaining SUPERVISOR 404)
-5. Evaluations
+4. ~~Supervisor~~ ✅
+5. **Evaluations** ← next
 6. Coordinator dashboard stats
 7. Attendance oversight
 8. Documents + Credentials
@@ -236,6 +240,27 @@ Slice: `lib/api/studentPortalApi.ts`. Feature: `features/student-portal/`.
 - `hours` is computed server-side on every record so the client never recomputes it. Only **APPROVED** logs count toward `completedHours`; `pendingHours` is reported separately so the student can see what is awaiting a supervisor.
 - `STUDENT_NAV` (`features/student-portal/nav.ts`) deliberately lists only Dashboard and Attendance. The prototype's My Documents, Credentials, Profile and Messages have no backend, and linking to them would recreate the dead-link problem this module fixed. **Add each entry as its module lands.**
 
+### Supervisor
+
+Pages: `app/supervisor/dashboard`, `app/supervisor/attendance`.
+Slice: `lib/api/supervisorApi.ts`. Feature: `features/supervisor/`.
+
+| Route | Notes |
+|---|---|
+| `GET /supervisor/dashboard` | establishment, student counts, pending approvals, approved-this-week, total approved hours |
+| `GET /supervisor/students` | students at this establishment, each with `completedHours` |
+| `GET /supervisor/attendance?status=` | optional `PENDING`/`APPROVED`/`DECLINED`; omit for all |
+| `PATCH /supervisor/attendance/:id/approve` | clears any previous `declineReason` |
+| `PATCH /supervisor/attendance/:id/decline` | body `{ reason }` — **required**, 3–500 chars |
+
+- **`getPendingAttendance` was renamed to `getAttendance` and now actually filters.** It previously returned every status regardless of its name, so the approval screen mixed already-actioned rows in with the queue. The UI defaults to `PENDING`.
+- **Declining requires a written reason**, enforced server-side, stored in the new `Attendance.declineReason` column and shown to the student on their own history. The prototype wrote the reason into `remarks` — that is the *student's* note, so doing the same would have destroyed what they wrote. The two are separate columns.
+- Approving clears `declineReason`, so a record that was declined and later approved does not keep the stale explanation.
+- Ownership is re-derived per request as everywhere else: `verifyAttendanceBelongsToSupervisor` throws `ForbiddenException` for another establishment's record. Verified live — a supervisor at a different establishment sees an empty queue and gets 403 on both approve and decline.
+- `approvedById` is set on decline too. The column name is misleading (it means "who actioned this"), but renaming it is a migration not worth spending here.
+- `SUPERVISOR_NAV` omits Evaluation and Messages for the same reason `STUDENT_NAV` does — no backend, so no dead links.
+- `ROLE_HOME.SUPERVISOR` is still `/supervisor/attendance` rather than the dashboard, since approving is the supervisor's actual job. Both pages exist, so either is fine.
+
 ---
 
 ## 6. Database
@@ -256,6 +281,7 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 | `20260808013306_establishment_region` | **Baseline.** `Establishment.region` had been added straight to the DB with no migration, so every `migrate dev` demanded a full reset. This file records the existing column and was applied with `prisma migrate resolve --applied`, not executed. |
 | `20260811071701_student_personal_details` | `Student`: firstName, lastName, middleInitial, age, dateOfBirth, school, contactNumber, address, yearLevel — all nullable |
 | `20260811085904_attendance_one_per_day` | `@@unique([studentId, date])` on `Attendance`. Written with `prisma migrate diff` and applied with `migrate deploy`, because `migrate dev` needs an interactive confirmation for the unique-constraint warning and cannot run non-interactively. Verified zero duplicates first. |
+| `20260811091601_attendance_decline_reason` | `Attendance.declineReason` — the supervisor's explanation, kept separate from the student's `remarks` |
 
 > **If `migrate dev` ever offers to reset the database, stop.** It means drift again.
 > Reconcile with a baseline migration + `migrate resolve --applied`. This is a live
@@ -282,8 +308,9 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 6. `@Max(5)` on evaluation `score` (`supervisor.controller.ts`) is an **unverified assumption** about the rating scale. Confirm before building evaluations.
 7. No password reset / "Forgot Password" flow, despite the link on the login form. Compounded by student passwords being generated once and shown once — a lost password currently has no recovery path.
 8. The login page's role tabs are cosmetic — the server decides the role.
-9. The prototype's student Documents, Credentials and Profile sections are not built, and there is no backend for them. `STUDENT_NAV` omits them on purpose.
-10. `SupervisorService.getPendingAttendance` returns **all** statuses despite its name, and `GET /supervisor/attendance` has no filter. Address when building the supervisor UI.
+9. The prototype's student Documents, Credentials and Profile sections are not built, and there is no backend for them. `STUDENT_NAV` and `SUPERVISOR_NAV` omit unbuilt sections on purpose.
+10. **Evaluations are write-only.** `POST /supervisor/evaluations` stores one, but nothing reads them back and no UI creates them. The scale bound (`@Max(5)`) is still unverified. Module 5.
+11. `Attendance.approvedById` is set when declining too — it means "who actioned this", not "who approved this".
 
 ---
 
@@ -327,3 +354,14 @@ Fixes the STUDENT login 404 — `/student/dashboard` had never existed.
 - Verified the whole loop live: student submits 8h → dashboard shows 8h pending → supervisor approves → dashboard shows 8h completed / 492 remaining → the coordinator's student list agrees. Cross-role guards return 403, unauthenticated 401. Test row removed afterwards.
 
 **Still open:** the SUPERVISOR login still 404s (`/supervisor/attendance` has a backend but no page) — that is the next module.
+
+### 2026-08-11 — Supervisor
+
+Fixes the last role 404. All three roles now land on a real page.
+
+- Migration `attendance_decline_reason` adds `Attendance.declineReason`.
+- `getPendingAttendance` → `getAttendance`, now honouring a `status` filter. It had always returned every status despite the name, which would have shown already-actioned rows in the approval queue with no way to tell them apart.
+- Declining now **requires** a reason (3–500 chars, enforced server-side). It is stored separately from the student's `remarks` and surfaced on the student's own attendance history, so a declined log is actionable. Approving clears it.
+- New `GET /supervisor/dashboard` and `GET /supervisor/students`, both scoped to the supervisor's establishment.
+- Client: `supervisorApi` slice, `use-attendance-approval` hook, `ApprovalTable` and `DeclineDialog`, plus the dashboard and attendance pages. Also extended the student's `AttendanceTable` to display the decline reason — the supervisor writing one is useless if the student cannot read it.
+- Verified live with 14 checks: dashboard aggregates, student list, status filtering (`PENDING`/`APPROVED`/`DECLINED`/none), 400 on an invalid status, 400 on a missing or too-short decline reason, decline preserving the student's own remarks, the student reading the reason back, re-approval clearing it, and cross-role 403/401. Crucially, a supervisor created at a *different* establishment saw an empty queue and got 403 on both approve and decline. Test data removed afterwards.
