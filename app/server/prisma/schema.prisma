@@ -108,6 +108,20 @@ model Student {
   startDate       DateTime?
   status          StudentStatus  @default(ACTIVE)
 
+  // Personal details captured by the coordinator's student form. All nullable
+  // because every student created before this migration has none of them.
+  // `age` is stored alongside `dateOfBirth` rather than derived, matching how
+  // Establishment already stores `coordinatorAge`.
+  firstName     String?
+  lastName      String?
+  middleInitial String?
+  age           Int?
+  dateOfBirth   DateTime?
+  school        String?
+  contactNumber String?
+  address       String?
+  yearLevel     String?
+
   attendances Attendance[]
   documents   Document[]
   credentials Credential[]

@@ -1,0 +1,11 @@
+-- Baseline migration.
+--
+-- `Establishment.region` was added directly to the database (via `prisma db
+-- push` or by hand) without a migration, so the migration history did not match
+-- reality and every `prisma migrate dev` demanded a full database reset.
+--
+-- This file records the column that already exists. It is marked as applied
+-- with `prisma migrate resolve --applied 20260808013306_establishment_region`
+-- rather than executed, so the guard below is only for a fresh database built
+-- from the migration history.
+ALTER TABLE "Establishment" ADD COLUMN IF NOT EXISTS "region" TEXT;

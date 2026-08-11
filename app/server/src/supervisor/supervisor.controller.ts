@@ -9,12 +9,34 @@ import {
   Req,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Type } from 'class-transformer';
+import {
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { SupervisorService } from './supervisor.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 
 class CreateEvaluationDto {
+  @IsString()
+  @IsNotEmpty()
   studentId!: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(5)
   score?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
   feedback?: string;
 }
 

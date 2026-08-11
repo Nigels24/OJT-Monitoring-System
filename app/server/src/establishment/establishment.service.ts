@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 interface EstablishmentInput {
@@ -88,7 +92,7 @@ export class EstablishmentService {
       establishment._count.students > 0 ||
       establishment._count.supervisors > 0
     ) {
-      throw new Error(
+      throw new ConflictException(
         `Cannot delete establishment with ${establishment._count.students} student(s) and ${establishment._count.supervisors} supervisor(s). Please reassign or remove these records first.`,
       );
     }

@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+See `docs/KNOWLEDGE-BASE.md` for the running project record: what is built, what is next, the session log, and the prototype that defines scope.
+
 ## Layout
 
 Two independent npm projects, no workspace root — always `cd` into one of them before running anything:
@@ -46,7 +48,7 @@ Prisma's own agent skills are vendored at `app/server/.agents/skills/` (symlinke
 
 ### Auth and role enforcement
 
-JWT bearer tokens, no refresh flow, no sessions. `AuthService.login` verifies bcrypt and signs `{ sub, email, role }`; `JwtStrategy.validate` maps it onto `req.user` as `{ userId, email, role }` — **handlers read `req.user.userId`, not `req.user.id`**. `JwtStrategy` falls back to the literal secret `'dev-secret-change-this'` when `JWT_SECRET` is unset.
+JWT bearer tokens, no refresh flow, no sessions. `AuthService.login` verifies bcrypt and signs `{ sub, email, role }`; `JwtStrategy.validate` maps it onto `req.user` as `{ userId, email, role }` — **handlers read `req.user.userId`, not `req.user.id`**. `JWT_SECRET` is required — `getJwtSecret()` in `src/auth/jwt.constants.ts` throws at startup when it is unset, and both `AuthModule` and `JwtStrategy` go through it. Because that runs at module-init, `app.module.ts` imports `dotenv/config` as well as `main.ts` (the e2e tests boot `AppModule` directly and never run `main.ts`).
 
 Authorization is the hand-rolled `RolesGuard` in `src/auth/roles.guard.ts` (which also exports the `Roles()` decorator). Guards are attached per-controller with `@UseGuards(AuthGuard('jwt'), RolesGuard)`; there is no global guard, so a controller without that line is fully public (e.g. `AppController`).
 
@@ -72,11 +74,19 @@ Never trust an id from the request body to imply ownership.
 
 `AuthModule`, `PrismaModule`, plus one module per actor: `coordinator` (creates supervisor/student accounts, lists them, `PATCH students/:id`), `student` (own dashboard, submit attendance, own history), `supervisor` (approve/decline attendance for their establishment, create evaluations), `establishment` (CRUD).
 
-DTOs are plain classes declared inline at the top of each controller file. `class-validator`/`ValidationPipe` is **not** installed — request bodies are unvalidated, and numeric coercion is done by hand in services (e.g. `Number(data.coordinatorAge)` in `EstablishmentService`).
+DTOs are plain classes declared inline at the top of each controller file, decorated with `class-validator`. `main.ts` registers a global `ValidationPipe` with `whitelist`, `forbidNonWhitelisted` and `transform`, so an undeclared body property is a **400**, not a silent drop — a DTO must declare every field its form sends.
+
+Two shared helpers in `src/common/transforms.ts` are mandatory for optional fields: `EmptyToUndefined()` (an HTML form posts `""` for a cleared input, and `@IsOptional()` only skips `null`/`undefined`) and `ToOptionalNumber()`, which replaces `@Type(() => Number)` on optional numbers — `@Type` coerces `""` to `0`, silently turning a blank "Required Hours" into a real zero.
+
+Use `UpdateXDto extends PartialType(CreateXDto)` (`@nestjs/mapped-types`) for update DTOs. Plain `extends` does **not** work: class-validator inherits the parent's `@IsOptional()` and would make required create fields optional.
+
+`src/common/attendance-hours.ts` (`hoursForAttendance`, `totalHours`) is the single place that turns the four AM/PM clock columns into hours. Reuse it — completed hours must count **APPROVED** attendance only.
 
 `PrismaService` exposes the client as a `.client` property rather than extending `PrismaClient`, so all queries read `this.prisma.client.<model>`.
 
-Prisma schema notes: `Attendance` splits AM/PM into four nullable `DateTime`s (`timeInAM`/`timeOutAM`/`timeInPM`/`timeOutPM`) and has no uniqueness constraint on `(studentId, date)` — duplicate submissions for one day are accepted. `Document`, `Credential`, `Conversation`/`ConversationParticipant`/`Message` are modeled and migrated but have no module yet; `socket.io` and `@nestjs/websockets` are installed with no gateway written. Deleting an establishment is blocked in `EstablishmentService.remove` when students or supervisors reference it — it throws a bare `Error` (500), not an HTTP exception.
+Prisma schema notes: `Attendance` splits AM/PM into four nullable `DateTime`s (`timeInAM`/`timeOutAM`/`timeInPM`/`timeOutPM`) and has no uniqueness constraint on `(studentId, date)` — duplicate submissions for one day are accepted. `Document`, `Credential`, `Conversation`/`ConversationParticipant`/`Message` are modeled and migrated but have no module yet; `socket.io` and `@nestjs/websockets` are installed with no gateway written. Deleting an establishment is blocked in `EstablishmentService.remove` when students or supervisors reference it, and deleting a student is blocked in `CoordinatorService.removeStudent` when attendance/evaluations/documents reference them — both throw `ConflictException` (409).
+
+**Migrations:** one migration per module, adding only what that module needs. `20260808013306_establishment_region` is a **baseline** — `Establishment.region` had been added straight to the database with no migration, so `migrate dev` kept demanding a full reset; that file records the existing column and was applied with `prisma migrate resolve --applied`, not executed. If `migrate dev` ever offers to reset, it means drift again — reconcile the same way. This is a live database with real data.
 
 ### Client
 
@@ -89,12 +99,18 @@ Structure convention:
 - `components/ui/` — generic primitives; `lib/api/*Api.ts` — one RTK Query `createApi` slice per domain, registered in `lib/store.ts`.
 - `@/*` maps to the client root. (Feature imports in existing pages use relative `../../../features/...` — either works.)
 
-**How much actually exists:** only three real pages — `login`, `coordinator/dashboard`, `coordinator/establishments` — and two API slices, `authApi` and `establishmentApi`. Every other route directory under `app/student/`, `app/supervisor/`, and `app/coordinator/` is **empty**, as is `types/`. Login redirects STUDENT → `/student/dashboard` and SUPERVISOR → `/supervisor/attendance`, both of which 404. `coordinator/dashboard` renders module-level mock constants (`ATTENDANCE_TREND`, `TOP_ESTABLISHMENTS`, `RECENT_STUDENTS`) and hardcoded `stats` set in a `useEffect` with a `TODO` — there is no dashboard-stats endpoint. `establishment` is the one end-to-end vertical slice; copy its shape when building a new domain.
+**How much actually exists:** four real pages — `login`, `coordinator/dashboard`, `coordinator/establishments`, `coordinator/students` — and three API slices, `authApi`, `establishmentApi`, `studentApi`. Every other route directory under `app/student/`, `app/supervisor/`, and `app/coordinator/` is **empty**, as is `types/`. Login still redirects STUDENT → `/student/dashboard` and SUPERVISOR → `/supervisor/attendance`, both of which 404. `coordinator/dashboard` renders module-level mock constants (`ATTENDANCE_TREND`, `TOP_ESTABLISHMENTS`, `RECENT_STUDENTS`) and hardcoded `stats` set in a `useEffect` with a `TODO` — there is no dashboard-stats endpoint. `establishment` and `student` are the two end-to-end vertical slices; copy their shape when building a new domain.
 
-Each API slice hardcodes `baseUrl: "http://localhost:3000"` and pulls the bearer token from `localStorage` in `prepareHeaders` (guarded with a `typeof window` check for SSR). There is no env var for the API base yet — changing it means editing every slice.
+Note `features/student/` and `lib/api/studentApi.ts` are the **coordinator's** view of students (`/coordinator/students`). The student-facing `/student/*` routes are a separate concern and should get their own slice.
+
+Every API slice shares `lib/api/baseQuery.ts`, which reads `NEXT_PUBLIC_API_URL` (default `http://localhost:3000`) and attaches the bearer token from `localStorage` (guarded with a `typeof window` check for SSR). On a **401** it clears the session and hard-navigates to `/login`; `/auth/login` is exempt, since a 401 there is just bad credentials.
 
 **CORS:** `main.ts` allows exactly `http://localhost:3001`, but `next dev` defaults to 3000, which the API already occupies. Run the client with `-p 3001` or every request fails.
 
-There is no route protection: `login/page.tsx` writes `token`/`user` to `localStorage` and `router.push`es by role; nothing stops a direct URL visit to a role's pages. The role tabs on the login form are cosmetic — the server decides the role. Reading the display name from stored `user` is inconsistent: `dashboard/page.tsx` parses it out of `localStorage`, while `establishments/page.tsx` still passes a literal `userName="Admin Coordinator"`.
+Route protection lives in `proxy.ts` at the client root — **Next 16 renamed the `middleware.ts` convention to `proxy.ts`**, exporting a `proxy` function. It sends unauthenticated visitors to `/login?next=…`, redirects the wrong role to their own home, and points `/` somewhere useful. Session helpers are in `lib/auth.ts` (`persistSession`, `clearSession`, `getStoredUser`, `ROLE_HOME`, `ROLE_PREFIX`).
+
+The `ojt_role` cookie carries **only the role**, and its `Max-Age` (`SESSION_MAX_AGE_SECONDS`) must stay equal to the server's JWT `expiresIn` (currently `1d`). If the cookie outlives the token the user is trapped — bounced off `/login` onto a page where every request 401s, and for STUDENT/SUPERVISOR that page is a 404 with no sidebar and therefore no logout button. The proxy is **navigation UX, not the security boundary**: the cookie is forgeable in devtools, and `RolesGuard` on the server is what actually enforces access.
+
+The role tabs on the login form are cosmetic — the server decides the role. Read the display name with `useCurrentUser()` (`lib/hooks/use-current-user.ts`), which uses `useSyncExternalStore`; do not reimplement it with `useState` + `useEffect`, as the React 19 lint rule rejects setState-in-effect.
 
 Philippine region/province/city/barangay dropdowns come from `@aivangogh/ph-address`, keyed by PSGC code. The DB stores **names**, not codes, so `useEstablishment.handleEdit` does a reverse name→code lookup (scanning every region for a matching province) and sets `isPopulatingRef` to stop the cascade effects from clearing the children it just restored; a `useEffect` on `editTarget` clears the flag afterwards. Touch that flag carefully.

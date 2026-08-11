@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Sidebar from "@/components/layout/Sidebar";
+import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import PageHeader from "@/components/ui/PageHeader";
 import StatCard from "@/components/ui/StatCard";
 import TrendChart from "@/components/ui/TrendChart";
@@ -201,13 +202,10 @@ const STUDENT_COLUMNS: DataTableColumn<RecentStudent>[] = [
 
 export default function CoordinatorDashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [userName, setUserName] = useState("Admin");
+  const currentUser = useCurrentUser();
+  const userName = currentUser?.name || "Admin";
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("user");
-    if (storedUser) {
-      setUserName(JSON.parse(storedUser).name || "Admin");
-    }
     // TODO: replace with a real GET /coordinator/dashboard-stats call
     // once that endpoint exists on the backend.
     setStats({

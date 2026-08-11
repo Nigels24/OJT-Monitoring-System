@@ -1,14 +1,32 @@
 import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { IsDateString, IsOptional, IsString, MaxLength } from 'class-validator';
 import { StudentService } from './student.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 
 class SubmitAttendanceDto {
+  @IsDateString()
   date!: string;
+
+  @IsOptional()
+  @IsDateString()
   timeInAM?: string;
+
+  @IsOptional()
+  @IsDateString()
   timeOutAM?: string;
+
+  @IsOptional()
+  @IsDateString()
   timeInPM?: string;
+
+  @IsOptional()
+  @IsDateString()
   timeOutPM?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
   remarks?: string;
 }
 

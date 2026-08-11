@@ -1,4 +1,5 @@
-import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
+import { createApi } from "@reduxjs/toolkit/query/react";
+import { baseQueryWithAuth } from "./baseQuery";
 
 type LoginResponse = {
   accessToken: string;
@@ -17,17 +18,7 @@ type LoginRequest = {
 
 export const authApi = createApi({
   reducerPath: "authApi",
-  baseQuery: fetchBaseQuery({
-    baseUrl: "http://localhost:3000",
-    prepareHeaders: (headers) => {
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
-      if (token) {
-        headers.set("Authorization", `Bearer ${token}`);
-      }
-      return headers;
-    },
-  }),
+  baseQuery: baseQueryWithAuth,
   tagTypes: [],
   endpoints: (builder) => ({
     login: builder.mutation<LoginResponse, LoginRequest>({

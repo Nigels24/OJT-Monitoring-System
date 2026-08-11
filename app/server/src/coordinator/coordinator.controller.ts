@@ -3,37 +3,164 @@ import {
   Post,
   Get,
   Patch,
+  Delete,
   Param,
   Body,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import {
+  IsDateString,
+  IsEmail,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 import { CoordinatorService } from './coordinator.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
+import { EmptyToUndefined, ToOptionalNumber } from '../common/transforms';
 
 class CreateSupervisorDto {
+  @IsEmail()
   email!: string;
+
+  @IsString()
+  @MinLength(8)
   password!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
   name!: string;
+
+  @IsString()
+  @IsNotEmpty()
   establishmentId!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
   position?: string;
 }
 
-class CreateStudentDto {
-  email!: string;
-  password!: string;
-  name!: string;
-  studentIdNumber!: string;
+/**
+ * Personal and OJT fields the coordinator's student form collects. Shared by
+ * create and update; create adds the identity fields below.
+ */
+class StudentDetailsDto {
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(120)
+  firstName?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(120)
+  lastName?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(10)
+  middleInitial?: string;
+
+  @IsOptional()
+  @ToOptionalNumber()
+  @IsInt()
+  @Min(15)
+  @Max(100)
+  age?: number;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsDateString()
+  dateOfBirth?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(200)
+  school?: string;
+
+  // Philippine mobile format, matching the prototype's own input validation.
+  @IsOptional()
+  @EmptyToUndefined()
+  @Matches(/^\d{11}$/, {
+    message: 'contactNumber must be exactly 11 digits (e.g. 09123456789)',
+  })
+  contactNumber?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(255)
+  address?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(120)
   course?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(30)
+  yearLevel?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @IsNotEmpty()
   establishmentId?: string;
+
+  @IsOptional()
+  @ToOptionalNumber()
+  @IsInt()
+  @Min(0)
   requiredHours?: number;
+
+  @IsOptional()
+  @IsIn(['ACTIVE', 'PENDING', 'COMPLETED', 'INACTIVE'])
+  status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
 }
 
-class UpdateStudentDto {
-  establishmentId?: string;
-  course?: string;
-  requiredHours?: number;
+class CreateStudentDto extends StudentDetailsDto {
+  @IsEmail()
+  email!: string;
+
+  // Optional: the coordinator's form has no password field, so the server
+  // generates one and returns it in the response exactly once.
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MinLength(8)
+  password?: string;
+
+  // Only needed when first/last name are not supplied; the service composes
+  // User.name from the name parts when it can.
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(120)
+  name?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  studentIdNumber!: string;
 }
+
+class UpdateStudentDto extends StudentDetailsDto {}
 
 @Controller('coordinator')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -64,5 +191,10 @@ export class CoordinatorController {
   @Patch('students/:id')
   updateStudent(@Param('id') id: string, @Body() dto: UpdateStudentDto) {
     return this.coordinatorService.updateStudent(id, dto);
+  }
+
+  @Delete('students/:id')
+  removeStudent(@Param('id') id: string) {
+    return this.coordinatorService.removeStudent(id);
   }
 }

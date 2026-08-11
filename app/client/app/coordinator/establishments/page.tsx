@@ -1,6 +1,7 @@
 "use client";
 
 import Sidebar from "@/components/layout/Sidebar";
+import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -33,6 +34,7 @@ const COORDINATOR_NAV = [
 ];
 
 export default function EstablishmentManagementPage() {
+  const currentUser = useCurrentUser();
   const {
     form,
     error,
@@ -82,7 +84,7 @@ export default function EstablishmentManagementPage() {
         orgName="WPH Institute"
         orgSubtitle="Barangay San Francisco"
         items={COORDINATOR_NAV}
-        userName="Admin Coordinator"
+        userName={currentUser?.name || "Coordinator"}
       />
 
       <main className="flex-1 p-4 md:p-6">

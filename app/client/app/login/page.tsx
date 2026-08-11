@@ -3,6 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useLoginMutation } from "@/lib/api/authApi";
+import {
+  persistSession,
+  ROLE_HOME,
+  ROLE_PREFIX,
+  type StoredUser,
+} from "@/lib/auth";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import TextField from "@/components/ui/TextField";
@@ -44,22 +50,30 @@ export default function LoginPage() {
 
     try {
       const result = await login({ email, password }).unwrap();
-      localStorage.setItem("token", result.accessToken);
-      localStorage.setItem("user", JSON.stringify(result.user));
+      const user = result.user as StoredUser;
 
-      switch (result.user.role) {
-        case "STUDENT":
-          router.push("/student/dashboard");
-          break;
-        case "SUPERVISOR":
-          router.push("/supervisor/attendance");
-          break;
-        case "COORDINATOR":
-          router.push("/coordinator/dashboard");
-          break;
-        default:
-          setError("Unknown role returned from server.");
+      if (!ROLE_HOME[user.role]) {
+        setError("Unknown role returned from server.");
+        return;
       }
+
+      persistSession(result.accessToken, user);
+
+      // `proxy.ts` adds ?next=... when it bounces an unauthenticated visitor
+      // off a protected page. Honour it, but only within this role's own
+      // section so the parameter can't be used to land somewhere they'd
+      // immediately be redirected away from.
+      //
+      // Read from window rather than useSearchParams() — the latter opts the
+      // whole page out of prerendering unless it sits inside a Suspense
+      // boundary, and this value is only needed here at submit time.
+      const next = new URLSearchParams(window.location.search).get("next");
+      const destination =
+        next && next.startsWith(ROLE_PREFIX[user.role])
+          ? next
+          : ROLE_HOME[user.role];
+
+      router.push(destination);
     } catch (err: any) {
       setError(err?.data?.message || "Invalid email or password.");
     }

@@ -1,4 +1,5 @@
-import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
+import { createApi } from "@reduxjs/toolkit/query/react";
+import { baseQueryWithAuth } from "./baseQuery";
 
 export interface Establishment {
   id: string;
@@ -52,17 +53,7 @@ export type UpdateEstablishmentRequest = Partial<CreateEstablishmentRequest>;
 
 export const establishmentApi = createApi({
   reducerPath: "establishmentApi",
-  baseQuery: fetchBaseQuery({
-    baseUrl: "http://localhost:3000",
-    prepareHeaders: (headers) => {
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
-      if (token) {
-        headers.set("Authorization", `Bearer ${token}`);
-      }
-      return headers;
-    },
-  }),
+  baseQuery: baseQueryWithAuth,
   tagTypes: ["Establishment"],
   endpoints: (builder) => ({
     getEstablishments: builder.query<Establishment[], void>({

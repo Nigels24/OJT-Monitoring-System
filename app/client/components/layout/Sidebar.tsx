@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { clearSession } from "@/lib/auth";
 import {
   LucideIcon,
   Building2,
@@ -36,12 +38,14 @@ export default function Sidebar({
   const router = useRouter();
 
   const handleLogout = () => {
+    // Always clear first. `proxy.ts` trusts the role cookie for routing, so a
+    // caller-supplied onLogout that skipped this would leave the user routed as
+    // if still signed in — and unable to reach /login to fix it.
+    clearSession();
     if (onLogout) {
       onLogout();
       return;
     }
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
     router.push("/login");
   };
 
@@ -64,7 +68,7 @@ export default function Sidebar({
         {items.map(({ label, href, icon: Icon }) => {
           const active = pathname === href || pathname?.startsWith(href + "/");
           return (
-            <a
+            <Link
               key={href}
               href={href}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
@@ -75,7 +79,7 @@ export default function Sidebar({
             >
               <Icon size={18} />
               {label}
-            </a>
+            </Link>
           );
         })}
       </nav>
