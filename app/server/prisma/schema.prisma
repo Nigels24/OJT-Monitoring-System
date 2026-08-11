@@ -144,6 +144,12 @@ model Attendance {
   approvedBy   Supervisor? @relation("ApprovedBy", fields: [approvedById], references: [id])
 
   createdAt DateTime @default(now())
+
+  // One log per student per day. Without this a student can submit the same
+  // day repeatedly and every hours total counts it more than once.
+  // `date` is normalised to UTC midnight on write (see StudentService), which
+  // is what makes the constraint meaningful.
+  @@unique([studentId, date])
 }
 
 model Document {

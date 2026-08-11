@@ -3,7 +3,9 @@
 The running record of what this project is, what's built, and how to work on it.
 Updated at the end of every working session.
 
-**Last updated:** 2026-08-11 · after *Student Management (Coordinator)*
+**Last updated:** 2026-08-11 · after *Student self-service*
+
+**Workflow:** one module at a time → verify → **commit and push to `origin/main`** → update this file → stop for review.
 
 ---
 
@@ -80,14 +82,15 @@ passwords to the documented values, and repairs a missing profile row. It never 
 - **Auth** — `POST /auth/login`, JWT bearer, role-based routing.
 - **Establishment (Coordinator)** — full CRUD, PSGC cascading address dropdowns. The original reference slice.
 - **Student Management (Coordinator)** — full CRUD, computed hours, progress, stats. See §5.
+- **Student self-service** — dashboard + attendance logging and history. See §5. The STUDENT login no longer 404s.
 
 ### Partially built
 
 | Module | Backend | Frontend |
 |---|---|---|
 | Coordinator dashboard | none | full UI on **mock constants** (`ATTENDANCE_TREND`, `TOP_ESTABLISHMENTS`, `RECENT_STUDENTS`, hardcoded `stats`) |
-| Student self-service | `GET /student/dashboard`, `POST/GET /student/attendance` | **none** — `app/student/*` empty |
-| Supervisor | `GET /supervisor/attendance`, approve/decline, `POST /supervisor/evaluations` | **none** — `app/supervisor/*` empty |
+| Student self-service | done | dashboard + attendance done; **Documents, Credentials, Profile and Messages sections from the prototype are not built** (no backend for any of them) |
+| Supervisor | `GET /supervisor/attendance`, approve/decline, `POST /supervisor/evaluations` | **none** — `app/supervisor/*` empty. **SUPERVISOR login still 404s.** |
 
 ### Not started
 
@@ -98,8 +101,8 @@ Coordinator attendance oversight, Evaluation views.
 
 1. ~~Foundation pass~~ ✅
 2. ~~Student Management (Coordinator)~~ ✅
-3. **Student self-service** ← next
-4. Supervisor
+3. ~~Student self-service~~ ✅
+4. **Supervisor** ← next (fixes the remaining SUPERVISOR 404)
 5. Evaluations
 6. Coordinator dashboard stats
 7. Attendance oversight
@@ -214,7 +217,24 @@ Files: `lib/api/studentApi.ts`, `features/student/hooks/use-students.ts`,
 `app/coordinator/students/page.tsx`.
 
 > `features/student/` and `lib/api/studentApi.ts` are the **coordinator's** view of students.
-> The student-facing `/student/*` routes are a separate concern and should get their own slice.
+> The student's own view lives in `features/student-portal/` and `lib/api/studentPortalApi.ts`.
+
+### Student self-service
+
+Pages: `app/student/dashboard`, `app/student/attendance`.
+Slice: `lib/api/studentPortalApi.ts`. Feature: `features/student-portal/`.
+
+| Route | Notes |
+|---|---|
+| `GET /student/dashboard` | profile, establishment, `stats`, `recentAttendance` (5) |
+| `GET /student/attendance` | full history, each row carrying derived `hours` |
+| `POST /student/attendance` | always lands as `PENDING` |
+
+- **One log per student per day**, enforced by `@@unique([studentId, date])` **and** a pre-insert check that returns a readable **409**. `date` is normalised to **UTC midnight** by `startOfUtcDay()` in `StudentService` — the constraint compares the whole timestamp, so without normalising, two submissions on the same calendar day at different clock times would both be accepted.
+- **Wire format for times** (this resolves the open question from earlier): the client sends the calendar day as `yyyy-mm-dd` and each clock field as a **full ISO instant**. `toIsoInstant()` in `use-attendance-log.ts` joins the date with the `HH:mm` from `<input type="time">`, parsed in the browser's local zone. Hours are a difference between two instants, so the total is timezone-safe.
+- A submission must contain **at least one complete session** (both in and out for AM or PM) and produce positive hours, else **400**. Both rules are enforced on the server and mirrored in the form for immediate feedback.
+- `hours` is computed server-side on every record so the client never recomputes it. Only **APPROVED** logs count toward `completedHours`; `pendingHours` is reported separately so the student can see what is awaiting a supervisor.
+- `STUDENT_NAV` (`features/student-portal/nav.ts`) deliberately lists only Dashboard and Attendance. The prototype's My Documents, Credentials, Profile and Messages have no backend, and linking to them would recreate the dead-link problem this module fixed. **Add each entry as its module lands.**
 
 ---
 
@@ -235,6 +255,7 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 | `20260808013305_establishment_full_details` | |
 | `20260808013306_establishment_region` | **Baseline.** `Establishment.region` had been added straight to the DB with no migration, so every `migrate dev` demanded a full reset. This file records the existing column and was applied with `prisma migrate resolve --applied`, not executed. |
 | `20260811071701_student_personal_details` | `Student`: firstName, lastName, middleInitial, age, dateOfBirth, school, contactNumber, address, yearLevel — all nullable |
+| `20260811085904_attendance_one_per_day` | `@@unique([studentId, date])` on `Attendance`. Written with `prisma migrate diff` and applied with `migrate deploy`, because `migrate dev` needs an interactive confirmation for the unique-constraint warning and cannot run non-interactively. Verified zero duplicates first. |
 
 > **If `migrate dev` ever offers to reset the database, stop.** It means drift again.
 > Reconcile with a baseline migration + `migrate resolve --applied`. This is a live
@@ -245,8 +266,7 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 ### Known schema gaps
 
 - **Evaluation** — one `score Float?` + `feedback`. The prototype wants evaluation period, overall rating, performance level and per-criterion ratings. Needs rework (module 5).
-- **Attendance** — **no unique constraint on `(studentId, date)`**, so duplicate submissions for one day are accepted and every hours total double-counts. Fix when building attendance.
-- **Student** — no `gender`, no `endDate`. Gender appears on the student's own Profile screen (module 3).
+- **Student** — no `gender`, no `endDate`. Gender appears on the student's own Profile screen, which is not built.
 - **Supervisor** — no contact fields; the prototype's messaging panels show email + phone.
 - **Document / Credential** — store a `fileUrl` string with no storage wired. `@supabase/supabase-js` is installed but unused; Supabase Storage is the obvious fit.
 
@@ -260,9 +280,10 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 4. Filtering and pagination are client-side over a full `findMany()`. Fine at current scale; will not hold.
 5. `coordinator/dashboard` still renders mock constants. There is no dashboard-stats endpoint.
 6. `@Max(5)` on evaluation `score` (`supervisor.controller.ts`) is an **unverified assumption** about the rating scale. Confirm before building evaluations.
-7. `@IsDateString()` on the AM/PM attendance fields requires a full ISO timestamp, so a native `<input type="time">` value like `"08:00"` is rejected. Decide the wire format when building attendance UI.
-8. No password reset / "Forgot Password" flow, despite the link on the login form.
-9. The login page's role tabs are cosmetic — the server decides the role.
+7. No password reset / "Forgot Password" flow, despite the link on the login form. Compounded by student passwords being generated once and shown once — a lost password currently has no recovery path.
+8. The login page's role tabs are cosmetic — the server decides the role.
+9. The prototype's student Documents, Credentials and Profile sections are not built, and there is no backend for them. `STUDENT_NAV` omits them on purpose.
+10. `SupervisorService.getPendingAttendance` returns **all** statuses despite its name, and `GET /supervisor/attendance` has no filter. Address when building the supervisor UI.
 
 ---
 
@@ -294,3 +315,15 @@ Then a `/code-review high` pass found 9 issues; high + medium fixed the same ses
 - Client: `studentApi` slice, `use-students` hook, 5 components, `app/coordinator/students/page.tsx`. Search, status filter, pagination, 4 stat cards, view/edit/delete dialogs.
 - Also fixed review finding 6 here, since this module's form is what would have triggered it: blank numeric inputs became `0` rather than "absent".
 - Verified with 9 live API checks against a real server, then removed the test data.
+
+### 2026-08-11 — Student self-service
+
+Fixes the STUDENT login 404 — `/student/dashboard` had never existed.
+
+- Migration `attendance_one_per_day` adds `@@unique([studentId, date])`. `migrate dev` refused to run non-interactively because of the unique-constraint warning, so the SQL was generated with `migrate diff` and applied with `migrate deploy`. Checked for duplicates first: none.
+- `StudentService` rewritten: `getDashboard` now returns real aggregates (approved / pending / remaining hours, log counts, recent attendance); `submitAttendance` normalises the date to UTC midnight, requires a complete AM or PM session, rejects reversed times, and returns 409 on a duplicate day; history carries per-record `hours`.
+- Client: `studentPortalApi` slice, `use-attendance-log` hook, `AttendanceForm` and `AttendanceTable`, plus `app/student/dashboard` and `app/student/attendance`.
+- Settled the attendance wire format (previously an open question): `yyyy-mm-dd` for the day, full ISO instants for the clock fields, joined client-side from `<input type="time">`.
+- Verified the whole loop live: student submits 8h → dashboard shows 8h pending → supervisor approves → dashboard shows 8h completed / 492 remaining → the coordinator's student list agrees. Cross-role guards return 403, unauthenticated 401. Test row removed afterwards.
+
+**Still open:** the SUPERVISOR login still 404s (`/supervisor/attendance` has a backend but no page) — that is the next module.
