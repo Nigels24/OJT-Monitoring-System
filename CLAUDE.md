@@ -16,13 +16,13 @@ Two independent npm projects, no workspace root — always `cd` into one of them
 ```bash
 # server (app/server)
 npm run start:dev                    # watch mode, http://localhost:3000
-npm run build && npm run start:prod
+npm run build && node dist/src/main  # start:prod is broken, see note below
 npm run lint                         # eslint --fix
 npm test                             # jest, *.spec.ts under src/
 npm test -- establishment.service    # single suite by path substring
 npm test -- -t "should be defined"   # single test by name
-npm run test:e2e                     # jest with test/jest-e2e.json
-npm run seed                         # tsx prisma/seed.ts — creates coordinator@wphi.edu / admin123
+npm run test:e2e                     # jest with test/jest-e2e.json — passes
+npm run seed                         # tsx prisma/seed.ts — bootstraps the coordinator only; no-op if it exists
 
 npx prisma migrate dev --name <desc> # create + apply a migration
 npx prisma generate                  # REQUIRED after clone/schema change — see below
@@ -33,9 +33,11 @@ npm run build
 npm run lint
 ```
 
-The client has **no test setup**. The server's `*.spec.ts` files are all unmodified Nest scaffolding (`should be defined`) with no Prisma mocking — instantiating a service in a `TestingModule` without providing `PrismaService` will fail, so a real test needs a provider mock.
+The client has **no test setup**. The server's `*.spec.ts` files are all unmodified Nest scaffolding (`should be defined`) with no Prisma mocking — instantiating a service in a `TestingModule` without providing `PrismaService` will fail, so a real test needs a provider mock. `npm test` is currently red (10 of 12 suites) for this reason; `npm run test:e2e` passes.
 
-`app/client/README.md` is untouched `create-next-app` boilerplate (it says port 3000) — ignore it.
+`app/client/README.md` and `app/server/README.md` are untouched boilerplate (`create-next-app` / Nest starter) — ignore them.
+
+`npm run start:prod` is **broken**: it runs `node dist/main`, but `nest build` emits `dist/src/main.js` because `prisma.config.ts` sits at the package root and widens the TS `rootDir`. Use `node dist/src/main` instead. `start:dev` is unaffected.
 
 ### Two things that bite on a fresh clone
 
@@ -48,7 +50,9 @@ Prisma's own agent skills are vendored at `app/server/.agents/skills/` (symlinke
 
 ### Auth and role enforcement
 
-JWT bearer tokens, no refresh flow, no sessions. Login is by **username or email** — `POST /auth/login` takes `{ identifier, password }`, and `AuthService.login` matches `identifier` against `User.email` OR `User.username`. There is no self-registration: the coordinator issues both credentials by hand when creating a student or supervisor, and the API requires them (`CreateStudentDto`/`CreateSupervisorDto`). `User.username` is nullable — accounts predating it sign in with email — unique, and barred from containing `"@"`, which is what keeps a username from ever colliding with someone else's email in that lookup. `AuthService.login` verifies bcrypt and signs `{ sub, email, role }`; `JwtStrategy.validate` maps it onto `req.user` as `{ userId, email, role }` — **handlers read `req.user.userId`, not `req.user.id`**. `JWT_SECRET` is required — `getJwtSecret()` in `src/auth/jwt.constants.ts` throws at startup when it is unset, and both `AuthModule` and `JwtStrategy` go through it. Because that runs at module-init, `app.module.ts` imports `dotenv/config` as well as `main.ts` (the e2e tests boot `AppModule` directly and never run `main.ts`).
+JWT bearer tokens, no refresh flow, no sessions. Login is by **username or email** — `POST /auth/login` takes `{ identifier, password }`, and `AuthService.login` matches `identifier` against `User.email` OR `User.username`.
+
+**Account creation is coordinator-driven and there is no self-registration.** `npm run seed` bootstraps the coordinator and nothing else; the coordinator then creates every establishment, supervisor and student through the app, issuing each account's username and password by hand (`CreateStudentDto`/`CreateSupervisorDto` require both). Do not add sample students or supervisors to the seed — the prototype's three demo logins are a mock-up device, not the real account model. `User.username` is nullable — accounts predating it sign in with email — unique, and barred from containing `"@"`, which is what keeps a username from ever colliding with someone else's email in that lookup. `AuthService.login` verifies bcrypt and signs `{ sub, email, role }`; `JwtStrategy.validate` maps it onto `req.user` as `{ userId, email, role }` — **handlers read `req.user.userId`, not `req.user.id`**. `JWT_SECRET` is required — `getJwtSecret()` in `src/auth/jwt.constants.ts` throws at startup when it is unset, and both `AuthModule` and `JwtStrategy` go through it. Because that runs at module-init, `app.module.ts` imports `dotenv/config` as well as `main.ts` (the e2e tests boot `AppModule` directly and never run `main.ts`).
 
 Authorization is the hand-rolled `RolesGuard` in `src/auth/roles.guard.ts` (which also exports the `Roles()` decorator). Guards are attached per-controller with `@UseGuards(AuthGuard('jwt'), RolesGuard)`; there is no global guard, so a controller without that line is fully public (e.g. `AppController`).
 
@@ -86,7 +90,7 @@ Use `UpdateXDto extends PartialType(CreateXDto)` (`@nestjs/mapped-types`) for up
 
 Prisma schema notes: `Attendance` splits AM/PM into four nullable `DateTime`s (`timeInAM`/`timeOutAM`/`timeInPM`/`timeOutPM`) and has no uniqueness constraint on `(studentId, date)` — duplicate submissions for one day are accepted. `Document`, `Credential`, `Conversation`/`ConversationParticipant`/`Message` are modeled and migrated but have no module yet; `socket.io` and `@nestjs/websockets` are installed with no gateway written. Deleting an establishment is blocked in `EstablishmentService.remove` when students or supervisors reference it, and deleting a student is blocked in `CoordinatorService.removeStudent` when attendance/evaluations/documents reference them — both throw `ConflictException` (409).
 
-**Migrations:** one migration per module, adding only what that module needs. `20260808013306_establishment_region` is a **baseline** — `Establishment.region` had been added straight to the database with no migration, so `migrate dev` kept demanding a full reset; that file records the existing column and was applied with `prisma migrate resolve --applied`, not executed. If `migrate dev` ever offers to reset, it means drift again — reconcile the same way. This is a live database with real data.
+**Migrations:** one migration per module, adding only what that module needs — see `docs/KNOWLEDGE-BASE.md` §6 for the full history and what each one added. `20260808013306_establishment_region` is a **baseline**: `Establishment.region` had been added straight to the database with no migration, so `migrate dev` kept demanding a full reset; that file records the existing column and was applied with `prisma migrate resolve --applied`, not executed. If `migrate dev` ever offers to reset, it means drift again — reconcile the same way, don't accept the reset. This is a live Supabase database with real data. `migrate dev` also refuses to run non-interactively (e.g. when a unique-constraint warning needs confirmation); when that happens, generate the SQL with `prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script` into a new `prisma/migrations/<timestamp>_<name>/migration.sql`, then apply with `prisma migrate deploy`.
 
 ### Client
 

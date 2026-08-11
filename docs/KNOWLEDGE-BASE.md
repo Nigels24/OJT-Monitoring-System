@@ -44,7 +44,7 @@ npm run start:dev            # watch mode
 npm run build
 npm test                     # jest — SEE §7, currently red
 npm run test:e2e             # passes
-npm run seed                 # idempotent demo accounts
+npm run seed                 # bootstraps the coordinator only; no-op if it exists
 npx prisma migrate dev --name <desc>
 npx prisma generate          # REQUIRED after clone or schema change
 
@@ -61,17 +61,27 @@ npm run lint
 - `app/server/.env` is gitignored: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`. Loaded by `import 'dotenv/config'` in `main.ts` **and** `app.module.ts` — there is no `@nestjs/config`.
 - `npm run start:prod` is **broken**: it runs `node dist/main` but `nest build` emits `dist/src/main.js` (because `prisma.config.ts` sits at the package root and widens the TS rootDir). Use `node dist/src/main`. `start:dev` is fine.
 
-### Demo accounts (`npm run seed`)
+### Bootstrap account (`npm run seed`)
 
-| Role | Email | Password |
-|---|---|---|
-| Coordinator | `coordinator@wphi.edu` | `admin123` |
-| Supervisor | `hr@techsolutions.com` | `hr123456` |
-| Student | `student@wphi.edu` | `student123` |
+The seed creates **only the coordinator** — the one account the system cannot create
+for itself:
 
-The seed is idempotent and non-destructive: it matches on email, resets those three
-passwords to the documented values, and repairs a missing profile row. It never deletes.
-(`hr123456` rather than the prototype's `hr123` — the API enforces `MinLength(8)`.)
+| Role | Username | Email | Password |
+|---|---|---|---|
+| Coordinator | `coordinator` | `coordinator@wphi.edu` | `admin123` |
+
+Overridable with `SEED_COORDINATOR_{EMAIL,USERNAME,NAME,PASSWORD}`. Re-running is a
+no-op when the coordinator already exists; it never overwrites a password and never
+deletes anything.
+
+**Everything else is created through the app.** The coordinator signs in and creates
+establishments, supervisors and students, issuing each account's username and password
+by hand at that point. There is no self-registration.
+
+> The prototype's login page advertises three demo logins (student / hr / coordinator).
+> Those are a mock-up device, not a description of how accounts come to exist. An earlier
+> version of this seed created all three; that was wrong and has been removed, along with
+> the two accounts it had created.
 
 ---
 
