@@ -1,213 +1,117 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
 import Sidebar from "@/components/layout/Sidebar";
 import { COORDINATOR_NAV } from "@/features/coordinator/nav";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import PageHeader from "@/components/ui/PageHeader";
+import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
 import TrendChart from "@/components/ui/TrendChart";
 import RankedBarList from "@/components/ui/RankedBarList";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import StatusBadge from "@/components/ui/StatusBadge";
+import ProgressBar from "@/components/ui/ProgressBar";
 import {
   LayoutDashboard,
   Building2,
   Users,
   Users2,
   CalendarCheck,
-  MessageSquare,
   Star,
   CheckCircle2,
   Clock,
-  FileText,
+  Hourglass,
   TrendingUp,
   PieChart,
 } from "lucide-react";
+import {
+  useGetCoordinatorDashboardQuery,
+  RecentStudent,
+} from "@/lib/api/dashboardApi";
 
-
-interface DashboardStats {
-  totalStudents: number;
-  partnerEstablishments: number;
-  presentToday: number;
-  avgPerformance: number;
-  completedOjt: number;
-  totalHoursLogged: number;
-  messages: number;
-  pendingDocuments: number;
-}
-
-interface RecentStudent {
-  studentId: string;
-  name: string;
-  course: string;
-  establishment: string;
-  startDate: string;
-  hoursCompleted: number;
-  hoursRequired: number;
-  status: "Active" | "Pending";
-}
-
-// TODO: replace with real GET /coordinator/attendance-trends data
-// once that endpoint exists on the backend.
-const ATTENDANCE_TREND = [
-  { label: "Week 1", present: 120, late: 15, absent: 8 },
-  { label: "Week 2", present: 135, late: 18, absent: 10 },
-  { label: "Week 3", present: 142, late: 12, absent: 7 },
-  { label: "Week 4", present: 138, late: 20, absent: 12 },
-  { label: "Week 5", present: 148, late: 16, absent: 9 },
-  { label: "Week 6", present: 152, late: 14, absent: 8 },
-];
-
+// Charting the statuses that actually exist. The prototype showed
+// present/late/absent; attendance has no such states.
 const TREND_SERIES = [
-  { key: "present", label: "Present", color: "#22c55e" },
-  { key: "late", label: "Late", color: "#eab308" },
-  { key: "absent", label: "Absent", color: "#ef4444" },
-];
-
-// TODO: replace with real GET /coordinator/top-establishments data
-// once that endpoint exists on the backend.
-const TOP_ESTABLISHMENTS = [
-  {
-    label: "Tech Solutions Inc.",
-    value: 28,
-    badge: "28 students",
-    badgeVariant: "green" as const,
-  },
-  {
-    label: "Digital Innovations Corp.",
-    value: 22,
-    badge: "22 students",
-    badgeVariant: "green" as const,
-  },
-  {
-    label: "Business Analytics Co.",
-    value: 18,
-    badge: "18 students",
-    badgeVariant: "green" as const,
-  },
-  {
-    label: "Hospitality Services Group",
-    value: 15,
-    badge: "15 students",
-    badgeVariant: "amber" as const,
-  },
-  {
-    label: "Accounting Partners Ltd.",
-    value: 12,
-    badge: "12 students",
-    badgeVariant: "green" as const,
-  },
-];
-
-// TODO: replace with real GET /coordinator/students?recent=true
-// once that endpoint exists on the backend.
-const RECENT_STUDENTS: RecentStudent[] = [
-  {
-    studentId: "2024-001",
-    name: "Juan Dela Cruz",
-    course: "BSIT",
-    establishment: "Tech Solutions Inc.",
-    startDate: "2024-03-01",
-    hoursCompleted: 325,
-    hoursRequired: 500,
-    status: "Active",
-  },
-  {
-    studentId: "2024-002",
-    name: "Maria Santos",
-    course: "BSBA",
-    establishment: "Business Analytics Co.",
-    startDate: "2024-03-02",
-    hoursCompleted: 180,
-    hoursRequired: 400,
-    status: "Active",
-  },
-  {
-    studentId: "2024-003",
-    name: "John Smith",
-    course: "BSCS",
-    establishment: "Digital Innovations Corp.",
-    startDate: "2024-03-03",
-    hoursCompleted: 480,
-    hoursRequired: 600,
-    status: "Active",
-  },
-  {
-    studentId: "2024-004",
-    name: "Anna Reyes",
-    course: "BSHM",
-    establishment: "Hospitality Services Group",
-    startDate: "2024-03-04",
-    hoursCompleted: 100,
-    hoursRequired: 500,
-    status: "Pending",
-  },
-  {
-    studentId: "2024-005",
-    name: "Pedro Gonzales",
-    course: "BSA",
-    establishment: "Accounting Partners Ltd.",
-    startDate: "2024-03-05",
-    hoursCompleted: 380,
-    hoursRequired: 400,
-    status: "Active",
-  },
+  { key: "approved", label: "Approved", color: "#22c55e" },
+  { key: "pending", label: "Pending", color: "#eab308" },
+  { key: "declined", label: "Declined", color: "#ef4444" },
 ];
 
 const STUDENT_COLUMNS: DataTableColumn<RecentStudent>[] = [
-  { key: "studentId", label: "Student ID", render: (r) => r.studentId },
+  {
+    key: "studentIdNumber",
+    label: "Student ID",
+    render: (r) => (
+      <span className="font-mono text-xs text-gray-700">
+        {r.studentIdNumber}
+      </span>
+    ),
+  },
   {
     key: "name",
     label: "Name",
     render: (r) => <span className="font-medium text-gray-900">{r.name}</span>,
   },
-  { key: "course", label: "Course", render: (r) => r.course },
+  { key: "course", label: "Course", render: (r) => r.course || "—" },
   {
     key: "establishment",
     label: "Establishment",
-    render: (r) => r.establishment,
+    render: (r) => r.establishment || "Unassigned",
   },
-  { key: "startDate", label: "Start Date", render: (r) => r.startDate },
+  {
+    key: "startDate",
+    label: "Start Date",
+    render: (r) =>
+      r.startDate ? new Date(r.startDate).toLocaleDateString() : "—",
+  },
   {
     key: "hours",
     label: "Hours Completed",
-    render: (r) =>
-      `${r.hoursCompleted}/${r.hoursRequired} hrs (${Math.round(
-        (r.hoursCompleted / r.hoursRequired) * 100,
-      )}%)`,
+    render: (r) => (
+      <div className="min-w-32">
+        <div className="text-xs text-gray-600 mb-1">
+          {r.completedHours}/{r.requiredHours} hrs
+        </div>
+        <ProgressBar
+          value={r.completedHours}
+          max={r.requiredHours || 1}
+          variant="thin"
+          showLabel
+          colorByValue
+        />
+      </div>
+    ),
   },
   {
     key: "status",
     label: "Status",
     render: (r) => (
       <StatusBadge
-        label={r.status}
-        variant={r.status === "Active" ? "active" : "pending"}
+        label={r.status === "ACTIVE" ? "Active" : r.status}
+        variant={
+          r.status === "ACTIVE"
+            ? "active"
+            : r.status === "COMPLETED"
+              ? "completed"
+              : r.status === "PENDING"
+                ? "pending"
+                : "neutral"
+        }
       />
     ),
   },
 ];
 
 export default function CoordinatorDashboard() {
-  const [stats, setStats] = useState<DashboardStats | null>(null);
   const currentUser = useCurrentUser();
   const userName = currentUser?.name || "Admin";
+  const { data, isLoading, error } = useGetCoordinatorDashboardQuery();
 
-  useEffect(() => {
-    // TODO: replace with a real GET /coordinator/dashboard-stats call
-    // once that endpoint exists on the backend.
-    setStats({
-      totalStudents: 9,
-      partnerEstablishments: 5,
-      presentToday: 125,
-      avgPerformance: 3.8,
-      completedOjt: 0,
-      totalHoursLogged: 1705,
-      messages: 2,
-      pendingDocuments: 12,
-    });
-  }, []);
+  const hasTrendData =
+    data?.attendanceTrend.some(
+      (p) => p.approved + p.pending + p.declined > 0,
+    ) ?? false;
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -218,96 +122,159 @@ export default function CoordinatorDashboard() {
         userName={userName}
       />
 
-      <main className="flex-1 p-6">
-        <div className="bg-gradient-to-r from-gray-800 to-gray-700 rounded-2xl p-6 mb-6">
+      <main className="flex-1 p-4 md:p-6">
+        <div className="bg-gradient-to-r from-gray-800 to-gray-700 rounded-2xl p-4 md:p-6 mb-6">
           <PageHeader
             title="Dashboard Overview"
-            subtitle={`Welcome back, ${userName}! Here's a comprehensive overview of your OJT program.`}
+            subtitle={`Welcome back, ${userName}! Here's how the OJT program is going.`}
             icon={LayoutDashboard}
           />
         </div>
 
-        {!stats ? (
+        {isLoading ? (
           <p className="text-gray-400 text-sm">Loading...</p>
+        ) : error || !data ? (
+          <Card>
+            <p className="text-sm text-gray-600">
+              We couldn&apos;t load the dashboard. Check that the API is running.
+            </p>
+          </Card>
         ) : (
           <>
-            <div className="grid grid-cols-4 gap-4 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
               <StatCard
                 label="Total Students"
-                value={stats.totalStudents}
+                value={data.stats.totalStudents}
                 icon={Users}
-                subtext="Active OJT"
+                subtext={`${data.stats.activeStudents} active`}
                 variant="accent"
               />
               <StatCard
                 label="Partner Establishments"
-                value={stats.partnerEstablishments}
+                value={data.stats.partnerEstablishments}
                 icon={Building2}
-                subtext="Active partners"
+                subtext={`${data.stats.activeEstablishments} active`}
               />
               <StatCard
-                label="Present Today"
-                value={stats.presentToday}
+                label="Logged Today"
+                value={data.stats.presentToday}
                 icon={CalendarCheck}
-                subtext={`out of ${stats.partnerEstablishments}`}
+                subtext={`of ${data.stats.activeStudents} active students`}
               />
               <StatCard
                 label="Avg. Performance"
-                value={stats.avgPerformance}
+                value={data.stats.averageRating ?? "—"}
                 icon={Star}
-                subtext="Very Good"
+                subtext={
+                  data.stats.averageLevel ??
+                  (data.stats.totalEvaluations === 0
+                    ? "No evaluations yet"
+                    : undefined)
+                }
               />
             </div>
 
-            <div className="grid grid-cols-4 gap-4 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
               <StatCard
                 label="Completed OJT"
-                value={stats.completedOjt}
+                value={data.stats.completedStudents}
                 icon={CheckCircle2}
                 subtext="Finished program"
               />
               <StatCard
                 label="Total Hours Logged"
-                value={stats.totalHoursLogged.toLocaleString()}
+                value={data.stats.totalHoursLogged.toLocaleString()}
                 icon={Clock}
-                subtext="hours accumulated"
+                subtext="approved hours"
               />
               <StatCard
-                label="Messages"
-                value={stats.messages}
-                icon={MessageSquare}
+                label="Pending Approvals"
+                value={data.stats.pendingApprovals}
+                icon={Hourglass}
+                subtext="awaiting supervisors"
               />
               <StatCard
-                label="Pending Documents"
-                value={stats.pendingDocuments}
-                icon={FileText}
-                subtext="Awaiting approval"
+                label="Evaluations"
+                value={data.stats.totalEvaluations}
+                icon={Star}
+                subtext="submitted"
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <TrendChart
-                title="Attendance Trends (Last 30 Days)"
-                icon={TrendingUp}
-                data={ATTENDANCE_TREND}
-                series={TREND_SERIES}
-              />
-              <RankedBarList
-                title="Top Establishments by Student Count"
-                icon={PieChart}
-                items={TOP_ESTABLISHMENTS}
-              />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+              <Card>
+                <h2 className="text-base md:text-lg font-semibold text-gray-800 mb-1 flex items-center gap-2">
+                  <TrendingUp size={18} className="text-blue-600" />
+                  Attendance Trends (last 6 weeks)
+                </h2>
+                <p className="text-xs text-gray-500 mb-3">
+                  Attendance logs by week, grouped by approval status.
+                </p>
+                {hasTrendData ? (
+                  <TrendChart
+                    title=""
+                    icon={TrendingUp}
+                    data={data.attendanceTrend}
+                    series={TREND_SERIES}
+                  />
+                ) : (
+                  <p className="text-gray-500 text-sm py-8 text-center">
+                    No attendance logged in the last six weeks.
+                  </p>
+                )}
+              </Card>
+
+              {data.topEstablishments.length > 0 ? (
+                <RankedBarList
+                  title="Top Establishments by Student Count"
+                  icon={PieChart}
+                  items={data.topEstablishments.map((e) => ({
+                    label: e.name,
+                    value: e.studentCount,
+                    badge: `${e.studentCount} student${e.studentCount === 1 ? "" : "s"}`,
+                    badgeVariant: e.studentCount > 0 ? "green" : "amber",
+                  }))}
+                />
+              ) : (
+                <Card>
+                  <h2 className="text-base md:text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <PieChart size={18} className="text-blue-600" />
+                    Top Establishments by Student Count
+                  </h2>
+                  <p className="text-gray-500 text-sm py-8 text-center">
+                    No establishments yet.
+                  </p>
+                </Card>
+              )}
             </div>
 
-            <DataTable
-              title="Recently Added Students"
-              icon={Users2}
-              columns={STUDENT_COLUMNS}
-              data={RECENT_STUDENTS}
-              keyField="studentId"
-              actionLabel="View All"
-              onAction={() => (window.location.href = "/coordinator/students")}
-            />
+            <Card>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-base md:text-lg font-semibold text-gray-800 flex items-center gap-2">
+                  <Users2 size={18} className="text-blue-600" />
+                  Recently Added Students
+                </h2>
+                <Link
+                  href="/coordinator/students"
+                  className="text-sm font-medium text-blue-600 hover:underline"
+                >
+                  View all
+                </Link>
+              </div>
+              {data.recentStudents.length === 0 ? (
+                <p className="text-gray-500 text-sm py-8 text-center">
+                  No students yet — add one from Student Management.
+                </p>
+              ) : (
+                <DataTable
+                  title=""
+                  icon={Users2}
+                  columns={STUDENT_COLUMNS}
+                  data={data.recentStudents}
+                  keyField="id"
+                />
+              )}
+            </Card>
           </>
         )}
       </main>

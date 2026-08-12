@@ -11,6 +11,7 @@ import {
   EVALUATION_INCLUDE,
   withBreakdown,
 } from '../supervisor/supervisor.service';
+import { performanceLevel } from '../common/evaluation-scoring';
 
 /** Fields the coordinator can set on a student, shared by create and update. */
 interface StudentDetails {
@@ -181,6 +182,132 @@ export class CoordinatorService {
   }
 
   /**
+   * Aggregates for the coordinator's dashboard.
+   *
+   * Every figure here is derived from real rows. The page previously rendered
+   * module-level mock constants; anything that still has no data source (the
+   * unbuilt messaging and documents modules) is absent from this response
+   * rather than reported as zero, so the UI can't imply a feature works.
+   */
+  async getDashboard() {
+    const weeksBack = 6;
+    const trendStart = startOfWeek(weeksBack - 1);
+    const todayStart = startOfUtcDay(new Date());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+
+    const [
+      students,
+      establishmentCount,
+      activeEstablishments,
+      approvedAttendance,
+      pendingCount,
+      presentToday,
+      evaluationAgg,
+      evaluationCount,
+      topEstablishments,
+      recentStudents,
+      trendRows,
+    ] = await Promise.all([
+      this.prisma.client.student.findMany({ select: { status: true } }),
+      this.prisma.client.establishment.count(),
+      this.prisma.client.establishment.count({ where: { status: 'ACTIVE' } }),
+      this.prisma.client.attendance.findMany({
+        where: { status: 'APPROVED' },
+        select: {
+          timeInAM: true,
+          timeOutAM: true,
+          timeInPM: true,
+          timeOutPM: true,
+        },
+      }),
+      this.prisma.client.attendance.count({ where: { status: 'PENDING' } }),
+      // Distinct students who logged anything for today, not raw record count —
+      // the unique constraint makes these equal today, but the intent is
+      // "how many students turned up".
+      this.prisma.client.attendance.findMany({
+        where: { date: { gte: todayStart, lt: todayEnd } },
+        select: { studentId: true },
+        distinct: ['studentId'],
+      }),
+      this.prisma.client.evaluation.aggregate({
+        _avg: { overallRating: true },
+      }),
+      this.prisma.client.evaluation.count(),
+      this.prisma.client.establishment.findMany({
+        select: { id: true, name: true, _count: { select: { students: true } } },
+        orderBy: { students: { _count: 'desc' } },
+        take: 5,
+      }),
+      this.prisma.client.student.findMany({
+        include: {
+          user: { select: { name: true, createdAt: true } },
+          establishment: { select: { name: true } },
+          attendances: {
+            where: { status: 'APPROVED' },
+            select: {
+              timeInAM: true,
+              timeOutAM: true,
+              timeInPM: true,
+              timeOutPM: true,
+            },
+          },
+        },
+        orderBy: { user: { createdAt: 'desc' } },
+        take: 5,
+      }),
+      this.prisma.client.attendance.findMany({
+        where: { date: { gte: trendStart } },
+        select: { date: true, status: true },
+      }),
+    ]);
+
+    const averageRating = evaluationAgg._avg.overallRating;
+
+    return {
+      stats: {
+        totalStudents: students.length,
+        activeStudents: students.filter((s) => s.status === 'ACTIVE').length,
+        completedStudents: students.filter((s) => s.status === 'COMPLETED')
+          .length,
+        partnerEstablishments: establishmentCount,
+        activeEstablishments,
+        presentToday: presentToday.length,
+        pendingApprovals: pendingCount,
+        totalHoursLogged: totalHours(approvedAttendance),
+        // null rather than 0 when nothing has been evaluated — a real average
+        // of zero and "no data yet" are different things.
+        averageRating:
+          averageRating == null ? null : Math.round(averageRating * 10) / 10,
+        averageLevel:
+          averageRating == null ? null : performanceLevel(averageRating),
+        totalEvaluations: evaluationCount,
+      },
+      // The prototype charted present/late/absent. Those states do not exist —
+      // attendance is PENDING/APPROVED/DECLINED — so the real statuses are
+      // charted instead of inventing the other three.
+      attendanceTrend: buildWeeklyTrend(trendRows, weeksBack),
+      topEstablishments: topEstablishments.map((e) => ({
+        id: e.id,
+        name: e.name,
+        studentCount: e._count.students,
+      })),
+      recentStudents: recentStudents.map(
+        ({ attendances, user, establishment, ...student }) => ({
+          id: student.id,
+          studentIdNumber: student.studentIdNumber,
+          name: user.name,
+          course: student.course,
+          establishment: establishment?.name ?? null,
+          startDate: student.startDate,
+          requiredHours: student.requiredHours,
+          completedHours: totalHours(attendances),
+          status: student.status,
+        }),
+      ),
+    };
+  }
+
+  /**
    * Every evaluation across every establishment — read-only oversight.
    *
    * Unlike the supervisor's list this is deliberately not scoped: the
@@ -311,6 +438,59 @@ export class CoordinatorService {
 
     return { id: studentId, deleted: true };
   }
+}
+
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+
+function startOfUtcDay(date: Date): Date {
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+}
+
+/** Monday 00:00 UTC, `weeksAgo` weeks back from the current week. */
+function startOfWeek(weeksAgo = 0): Date {
+  const now = new Date();
+  const daysSinceMonday = (now.getUTCDay() + 6) % 7;
+  const monday = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() - daysSinceMonday,
+  );
+  return new Date(monday - weeksAgo * MS_PER_WEEK);
+}
+
+/**
+ * Buckets attendance into the last `weeks` Monday-started weeks.
+ *
+ * Weeks with no activity still appear, so the chart shows a real gap rather
+ * than silently compressing the timeline.
+ */
+function buildWeeklyTrend(
+  rows: { date: Date; status: string }[],
+  weeks: number,
+) {
+  const buckets = Array.from({ length: weeks }, (_, i) => {
+    const start = startOfWeek(weeks - 1 - i);
+    return {
+      start,
+      label: start.toISOString().slice(5, 10), // MM-DD
+      approved: 0,
+      pending: 0,
+      declined: 0,
+    };
+  });
+
+  for (const row of rows) {
+    const index = buckets.findLastIndex((b) => row.date >= b.start);
+    if (index === -1) continue;
+    const bucket = buckets[index];
+    if (row.status === 'APPROVED') bucket.approved += 1;
+    else if (row.status === 'PENDING') bucket.pending += 1;
+    else if (row.status === 'DECLINED') bucket.declined += 1;
+  }
+
+  return buckets.map(({ start, ...rest }) => rest);
 }
 
 /** Maps the flat DTO onto Student columns, skipping anything not supplied. */

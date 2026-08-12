@@ -204,6 +204,11 @@ export class CoordinatorController {
     return this.coordinatorService.listSupervisors();
   }
 
+  @Get('dashboard')
+  getDashboard() {
+    return this.coordinatorService.getDashboard();
+  }
+
   @Get('evaluations')
   listEvaluations() {
     return this.coordinatorService.listEvaluations();

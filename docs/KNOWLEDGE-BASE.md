@@ -3,7 +3,7 @@
 The running record of what this project is, what's built, and how to work on it.
 Updated at the end of every working session.
 
-**Last updated:** 2026-08-12 · after *Password recovery*
+**Last updated:** 2026-08-12 · after *Coordinator dashboard stats*
 
 **Workflow:** one module at a time → verify → **commit and push to `origin/main`** → update this file → stop for review.
 
@@ -97,6 +97,7 @@ by hand at that point. There is no self-registration.
 - **Supervisor** — dashboard + attendance approval with required decline reasons. See §5.
 - **Evaluations** — 9-criterion weighted rubric; supervisor writes, coordinator reads across establishments. See §5.
 - **Password recovery** — self-service change for everyone, coordinator-issued reset for students/supervisors, CLI for the coordinator. See §5.
+- **Coordinator dashboard stats** — every tile and chart backed by real aggregates. See §5.
 
 **All three roles now land on a real page after login. No role 404s.**
 
@@ -104,9 +105,8 @@ by hand at that point. There is no self-registration.
 
 | Module | Backend | Frontend |
 |---|---|---|
-| Coordinator dashboard | none | full UI on **mock constants** (`ATTENDANCE_TREND`, `TOP_ESTABLISHMENTS`, `RECENT_STUDENTS`, hardcoded `stats`) |
 | Student self-service | done | dashboard + attendance done; **Documents, Credentials, Profile and Messages from the prototype are not built** (no backend for any) |
-| Supervisor | done | dashboard, approval and evaluation done; **Messages not built** |
+| Supervisor | done | dashboard, approval and evaluation done; **Messages not built**; supervisor password reset has an endpoint but no UI |
 
 ### Not started
 
@@ -125,8 +125,8 @@ messaging).
 4. ~~Supervisor~~ ✅
 5. ~~Evaluations~~ ✅
 6. ~~Password recovery~~ ✅ *(inserted ahead of dashboard stats — nobody could recover a forgotten password)*
-7. **Coordinator dashboard stats** ← next
-8. Attendance oversight
+7. ~~Coordinator dashboard stats~~ ✅
+8. **Attendance oversight** ← next
 9. Documents + Credentials
 10. Messaging
 
@@ -333,6 +333,18 @@ coordinator.
 
 There is still **no reset for supervisors from a UI** — the endpoint exists and is tested, but nothing calls it yet; the supervisor list has no reset button. Add it when the coordinator gets a supervisor management page.
 
+### Coordinator dashboard stats
+
+`GET /coordinator/dashboard`. Replaces the four mock constants (`ATTENDANCE_TREND`, `TOP_ESTABLISHMENTS`, `RECENT_STUDENTS`, hardcoded `stats`) that used to render on `coordinator/dashboard` regardless of what was in the database.
+
+- **Every figure is derived from real rows** — student/establishment counts, today's distinct-student attendance count, pending approvals, total *approved* hours (via `totalHours` from `common/attendance-hours.ts`, same helper every other module uses), and the evaluation average (via `common/evaluation-scoring.ts`'s `performanceLevel`, same rubric evaluations already use).
+- **`averageRating` is `null`, not `0`, when nothing has been evaluated.** A real average of zero and "no data yet" are different claims; the UI renders `—` and "No evaluations yet" rather than a misleading zero.
+- **Fields with no data source are absent from the response entirely** — not zero. Unread messages and pending documents have no backend, so reporting `0` for them would claim a working feature reports nothing to do. Those two dashboard tiles from the original mock are gone until their modules exist.
+- **The attendance trend charts real statuses.** The prototype's mock showed present/late/absent; those states don't exist in the data model (`Attendance.status` is `PENDING`/`APPROVED`/`DECLINED`). The trend charts the states that are real instead of inventing the other two. `buildWeeklyTrend` in `coordinator.service.ts` buckets by Monday-started week, six weeks back, and includes weeks with zero activity so a real gap is visible rather than compressed away.
+- Read-only, and deliberately unscoped like the evaluations list — the coordinator's dashboard covers the whole programme, not one establishment.
+
+Verified live by creating real data and checking the deltas, not just that the endpoint returns something: a student's new PENDING log moved `presentToday` and `pendingApprovals` but left `totalHoursLogged` unchanged (pending isn't approved); approving it then moved `totalHoursLogged` by exactly the log's hours and landed it in the correct week's trend bucket; submitting an evaluation moved `averageRating`/`averageLevel`/`totalEvaluations` together. Cross-role access 403/401. Test data removed afterward.
+
 ### Attendance forms — hours totals removed (client request, 2026-08-12)
 
 Two client-requested removals, both cosmetic — the underlying hours are still computed, validated, and used everywhere else:
@@ -381,17 +393,16 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 ## 7. Known issues / tech debt
 
 1. **`npm test` is red — 10 of 12 suites fail.** Every `*.spec.ts` is untouched Nest scaffolding that instantiates a service without providing `PrismaService`, so DI fails. A real test needs a Prisma mock. (`npm run test:e2e` passes.)
-2. **`npm run lint` on the client reports 30 problems**, all pre-existing in the establishment feature — `any` types and setState-in-effect. New code should not add to this.
+2. **`npm run lint` on the client reports 28 problems**, all pre-existing in the establishment feature — `any` types and setState-in-effect. New code should not add to this.
 3. **`npm run start:prod` is broken** — wrong entry path (see §2).
 4. Filtering and pagination are client-side over a full `findMany()`. Fine at current scale; will not hold.
-5. `coordinator/dashboard` still renders mock constants. There is no dashboard-stats endpoint.
-6. Changing a password doesn't invalidate already-issued JWTs — no refresh flow, no blocklist, so an old token stays valid for up to a day. Matters if a password is reset because it leaked.
-7. The login page's role tabs are cosmetic — the server decides the role.
-8. The prototype's student Documents, Credentials and Profile sections are not built, and there is no backend for them. `STUDENT_NAV` and `SUPERVISOR_NAV` omit unbuilt sections on purpose.
-9. `Attendance.approvedById` is set when declining too — it means "who actioned this", not "who approved this".
-10. The coordinator dashboard's "Avg. Performance" tile is still a hardcoded `3.8`. Real evaluation data now exists to compute it from — wire it up in the dashboard-stats module.
-11. Evaluations cannot be edited or deleted once submitted, and there is no per-period uniqueness. Fine for now, but a mis-scored evaluation currently has no correction path.
-12. Supervisor password reset has an endpoint but no UI — the coordinator has no supervisor management page to hang it off yet.
+5. Changing a password doesn't invalidate already-issued JWTs — no refresh flow, no blocklist, so an old token stays valid for up to a day. Matters if a password is reset because it leaked.
+6. The login page's role tabs are cosmetic — the server decides the role.
+7. The prototype's student Documents, Credentials and Profile sections are not built, and there is no backend for them. `STUDENT_NAV` and `SUPERVISOR_NAV` omit unbuilt sections on purpose.
+8. `Attendance.approvedById` is set when declining too — it means "who actioned this", not "who approved this".
+9. Evaluations cannot be edited or deleted once submitted, and there is no per-period uniqueness. Fine for now, but a mis-scored evaluation currently has no correction path.
+10. Supervisor password reset has an endpoint but no UI — the coordinator has no supervisor management page to hang it off yet.
+11. The coordinator dashboard has no server-side date range on the attendance trend — always the last 6 weeks from today. Fine at current scale; revisit if the query gets expensive.
 
 ---
 
@@ -497,3 +508,35 @@ password, refuses short ones, and generates one when given none. Coordinator res
 the documented `admin123` afterwards; test student removed.
 
 A judgment call worth restating: the client's literal ask for item 4 was deletion. I pushed back before building — attendance is the record a graduation requirement is checked against, and a hard delete has no undo and would also erase the coordinator's history for that batch. `COMPLETED` gives them the same "clean board for the next OJT" outcome without that risk. If they actually want data gone (e.g. for storage or privacy reasons), that's a distinct, separate decision — flag it back to me rather than building it silently.
+
+### 2026-08-12 — Coordinator dashboard stats
+
+Replaced the four mock constants that had rendered on `coordinator/dashboard`
+since before this build sequence started, regardless of what was actually in
+the database.
+
+- New `GET /coordinator/dashboard`, unscoped like the evaluations list — the
+  coordinator's remit is the whole programme. Reuses `totalHours` and
+  `performanceLevel` from the existing shared modules rather than
+  recalculating either.
+- Two judgment calls, both about not overstating what exists: `averageRating`
+  is `null`, not `0`, when nothing has been evaluated yet — a real zero and
+  "no data" are different claims. Messages and pending-documents tiles from
+  the original mock are gone entirely rather than shown as `0`, since neither
+  has a backend; a working-looking `0` would misrepresent an unbuilt feature
+  as a feature that checked and found nothing.
+- The prototype's attendance-trend mock charted present/late/absent, states
+  that don't exist in the schema (`Attendance.status` is
+  `PENDING`/`APPROVED`/`DECLINED`). Charted the real statuses instead of
+  inventing the other two. `buildWeeklyTrend` buckets six Monday-started
+  weeks back and keeps empty weeks visible rather than compressing the axis.
+- Centralised `COORDINATOR_NAV` refactor from the Evaluations module made
+  this a clean page rewrite rather than an edit around a duplicated nav array.
+
+Verified live by creating real records and checking the deltas rather than
+just that the endpoint returns something: a new PENDING attendance log moved
+`presentToday`/`pendingApprovals` but left `totalHoursLogged` unchanged;
+approving it then moved `totalHoursLogged` by exactly its hours and landed in
+the correct week's bucket; submitting an evaluation moved
+`averageRating`/`averageLevel`/`totalEvaluations` together. Cross-role access
+403/401. Test data removed afterward.
