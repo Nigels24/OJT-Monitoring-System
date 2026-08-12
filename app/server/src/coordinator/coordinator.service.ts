@@ -222,6 +222,63 @@ export class CoordinatorService {
     });
   }
 
+  /**
+   * Issues a new password for a student or supervisor.
+   *
+   * This is the recovery path: there is no email infrastructure, so a user who
+   * forgets their password asks the coordinator, who sets a new one and passes
+   * it on — the same way the account was issued in the first place.
+   *
+   * Deliberately does NOT require the old password: the whole point is that it
+   * is unknown. That means a coordinator can set any student's or supervisor's
+   * password and sign in as them; that authority is inherent to a system where
+   * the coordinator issues every credential, and it stops at COORDINATOR
+   * accounts, which only the CLI can reset.
+   */
+  async resetStudentPassword(studentId: string, password: string) {
+    const student = await this.prisma.client.student.findUnique({
+      where: { id: studentId },
+      include: { user: { select: { id: true, name: true, username: true } } },
+    });
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    await this.prisma.client.user.update({
+      where: { id: student.userId },
+      data: { password: await bcrypt.hash(password, 10) },
+    });
+
+    return {
+      id: student.id,
+      name: student.user.name,
+      username: student.user.username,
+      passwordReset: true,
+    };
+  }
+
+  async resetSupervisorPassword(supervisorId: string, password: string) {
+    const supervisor = await this.prisma.client.supervisor.findUnique({
+      where: { id: supervisorId },
+      include: { user: { select: { id: true, name: true, username: true } } },
+    });
+    if (!supervisor) {
+      throw new NotFoundException('Supervisor not found');
+    }
+
+    await this.prisma.client.user.update({
+      where: { id: supervisor.userId },
+      data: { password: await bcrypt.hash(password, 10) },
+    });
+
+    return {
+      id: supervisor.id,
+      name: supervisor.user.name,
+      username: supervisor.user.username,
+      passwordReset: true,
+    };
+  }
+
   async removeStudent(studentId: string) {
     const student = await this.prisma.client.student.findUnique({
       where: { id: studentId },

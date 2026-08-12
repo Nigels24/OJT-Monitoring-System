@@ -1,13 +1,16 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { clearSession } from "@/lib/auth";
+import ChangePasswordDialog from "@/features/account/ChangePasswordDialog";
 import {
   LucideIcon,
   Building2,
   MapPin,
   LogOut,
+  KeyRound,
   UserCircle,
 } from "lucide-react";
 
@@ -36,6 +39,7 @@ export default function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
 
   const handleLogout = () => {
     // Always clear first. `proxy.ts` trusts the role cookie for routing, so a
@@ -92,14 +96,34 @@ export default function Sidebar({
             <p className="text-xs text-white/70 truncate">{userSubtitle}</p>
           )}
         </div>
+        {/* Lives here rather than on each dashboard so every role gets it from
+            one place, whatever page they're on. */}
+        <button
+          onClick={() => {
+            setPasswordDialogOpen(true);
+          }}
+          aria-label="Change password"
+          title="Change password"
+          className="text-white/80 hover:text-white shrink-0"
+        >
+          <KeyRound size={18} />
+        </button>
         <button
           onClick={handleLogout}
           aria-label="Logout"
+          title="Logout"
           className="text-white/80 hover:text-white shrink-0"
         >
           <LogOut size={18} />
         </button>
       </div>
+
+      <ChangePasswordDialog
+        open={passwordDialogOpen}
+        onClose={() => {
+          setPasswordDialogOpen(false);
+        }}
+      />
     </aside>
   );
 }

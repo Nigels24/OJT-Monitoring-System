@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Sidebar from "@/components/layout/Sidebar";
 import { COORDINATOR_NAV } from "@/features/coordinator/nav";
 import PageHeader from "@/components/ui/PageHeader";
@@ -16,13 +17,16 @@ import {
   UserCheck,
 } from "lucide-react";
 import { useStudents } from "@/features/student/hooks/use-students";
+import type { Student } from "@/lib/api/studentApi";
 import StudentList from "@/features/student/components/StudentList";
 import StudentViewDialog from "@/features/student/components/StudentViewDialog";
 import StudentEditDialog from "@/features/student/components/StudentEditDialog";
+import ResetPasswordDialog from "@/features/student/components/ResetPasswordDialog";
 
 
 export default function StudentManagementPage() {
   const currentUser = useCurrentUser();
+  const [resetTarget, setResetTarget] = useState<Student | null>(null);
   const {
     form,
     error,
@@ -126,6 +130,9 @@ export default function StudentManagementPage() {
             onDelete={(student) => {
               setDeleteTarget(student);
             }}
+            onResetPassword={(student) => {
+              setResetTarget(student);
+            }}
           />
         </Card>
       </main>
@@ -164,6 +171,13 @@ export default function StudentManagementPage() {
         setField={setField}
         onSubmit={handleSubmit}
         onClose={closeDialog}
+      />
+
+      <ResetPasswordDialog
+        student={resetTarget}
+        onClose={() => {
+          setResetTarget(null);
+        }}
       />
     </div>
   );

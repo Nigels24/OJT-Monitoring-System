@@ -172,6 +172,12 @@ class CreateStudentDto extends StudentDetailsDto {
 
 class UpdateStudentDto extends StudentDetailsDto {}
 
+class ResetPasswordDto {
+  @IsString()
+  @MinLength(8)
+  password!: string;
+}
+
 @Controller('coordinator')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles('COORDINATOR')
@@ -211,5 +217,23 @@ export class CoordinatorController {
   @Delete('students/:id')
   removeStudent(@Param('id') id: string) {
     return this.coordinatorService.removeStudent(id);
+  }
+
+  // Recovery for a forgotten password. No current password required — see
+  // CoordinatorService.resetStudentPassword.
+  @Patch('students/:id/password')
+  resetStudentPassword(
+    @Param('id') id: string,
+    @Body() dto: ResetPasswordDto,
+  ) {
+    return this.coordinatorService.resetStudentPassword(id, dto.password);
+  }
+
+  @Patch('supervisors/:id/password')
+  resetSupervisorPassword(
+    @Param('id') id: string,
+    @Body() dto: ResetPasswordDto,
+  ) {
+    return this.coordinatorService.resetSupervisorPassword(id, dto.password);
   }
 }

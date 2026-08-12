@@ -23,6 +23,7 @@ npm test -- establishment.service    # single suite by path substring
 npm test -- -t "should be defined"   # single test by name
 npm run test:e2e                     # jest with test/jest-e2e.json — passes
 npm run seed                         # tsx prisma/seed.ts — bootstraps the coordinator only; no-op if it exists
+npm run reset-coordinator            # recover a locked-out coordinator; bare = generate, or -- 'newpassword'
 
 npx prisma migrate dev --name <desc> # create + apply a migration
 npx prisma generate                  # REQUIRED after clone/schema change — see below
@@ -51,6 +52,8 @@ Prisma's own agent skills are vendored at `app/server/.agents/skills/` (symlinke
 ### Auth and role enforcement
 
 JWT bearer tokens, no refresh flow, no sessions. Login is by **username or email** — `POST /auth/login` takes `{ identifier, password }`, and `AuthService.login` matches `identifier` against `User.email` OR `User.username`.
+
+**Password recovery has no email step** — there is no mail library or SMTP config, so nothing sends a reset link. Any signed-in user changes their own via `PATCH /auth/password` (current password required — a valid JWT proves the session, not the owner). A forgotten student/supervisor password is reissued by the coordinator via `PATCH /coordinator/{students,supervisors}/:id/password`, which deliberately does *not* need the old one. **There is no endpoint that resets a COORDINATOR** — that's `npm run reset-coordinator` on the CLI, where `.env` access is the authority. Don't add a web route for it.
 
 **Account creation is coordinator-driven and there is no self-registration.** `npm run seed` bootstraps the coordinator and nothing else; the coordinator then creates every establishment, supervisor and student through the app, issuing each account's username and password by hand (`CreateStudentDto`/`CreateSupervisorDto` require both). Do not add sample students or supervisors to the seed — the prototype's three demo logins are a mock-up device, not the real account model. `User.username` is nullable — accounts predating it sign in with email — unique, and barred from containing `"@"`, which is what keeps a username from ever colliding with someone else's email in that lookup. `AuthService.login` verifies bcrypt and signs `{ sub, email, role }`; `JwtStrategy.validate` maps it onto `req.user` as `{ userId, email, role }` — **handlers read `req.user.userId`, not `req.user.id`**. `JWT_SECRET` is required — `getJwtSecret()` in `src/auth/jwt.constants.ts` throws at startup when it is unset, and both `AuthModule` and `JwtStrategy` go through it. Because that runs at module-init, `app.module.ts` imports `dotenv/config` as well as `main.ts` (the e2e tests boot `AppModule` directly and never run `main.ts`).
 

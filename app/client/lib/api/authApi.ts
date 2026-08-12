@@ -30,7 +30,18 @@ export const authApi = createApi({
         body: credentials,
       }),
     }),
+    /** Any signed-in user changing their own password. */
+    changePassword: builder.mutation<
+      { changed: boolean },
+      { currentPassword: string; newPassword: string }
+    >({
+      query: (body) => ({
+        url: "/auth/password",
+        method: "PATCH",
+        body,
+      }),
+    }),
   }),
 });
 
-export const { useLoginMutation } = authApi;
+export const { useLoginMutation, useChangePasswordMutation } = authApi;

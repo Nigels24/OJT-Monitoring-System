@@ -8,6 +8,7 @@ import {
   Trash2,
   Users,
   FileText,
+  KeyRound,
 } from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import ProgressBar from "@/components/ui/ProgressBar";
@@ -29,6 +30,7 @@ interface StudentListProps {
   onView: (student: Student) => void;
   onEdit: (student: Student) => void;
   onDelete: (student: Student) => void;
+  onResetPassword: (student: Student) => void;
 }
 
 const STATUS_VARIANT: Record<StudentStatus, BadgeVariant> = {
@@ -59,6 +61,7 @@ export default function StudentList({
   onView,
   onEdit,
   onDelete,
+  onResetPassword,
 }: StudentListProps) {
   // Seeded once from the prop. The parent's `search` is only ever changed by
   // the debounce below, so there is nothing to sync back the other way.
@@ -179,6 +182,14 @@ export default function StudentList({
             aria-label={`Edit ${r.user.name}`}
           >
             <Pencil size={14} />
+          </button>
+          <button
+            onClick={() => onResetPassword(r)}
+            className="p-1 md:p-1.5 rounded-md border border-amber-200 text-amber-600 hover:bg-amber-50"
+            aria-label={`Reset ${r.user.name}'s password`}
+            title="Reset password"
+          >
+            <KeyRound size={14} />
           </button>
           <button
             onClick={() => onDelete(r)}

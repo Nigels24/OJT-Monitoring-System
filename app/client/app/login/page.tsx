@@ -44,6 +44,7 @@ export default function LoginPage() {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [showForgotHelp, setShowForgotHelp] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -123,14 +124,16 @@ export default function LoginPage() {
           />
 
           <div className="text-right mb-5">
-            <a
-              href=""
-              onClick={(e) => e.preventDefault()}
+            <button
+              type="button"
+              onClick={() => {
+                setShowForgotHelp(true);
+              }}
               className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
             >
               <HelpCircle size={14} />
               Forgot Password?
-            </a>
+            </button>
           </div>
 
           {error && (
@@ -142,6 +145,58 @@ export default function LoginPage() {
           </Button>
         </form>
       </Card>
+
+      {/* There is no emailed reset link — no mail infrastructure exists, and
+          the coordinator already issues every credential by hand. So this
+          explains the actual recovery route rather than pretending to send
+          an email. */}
+      {showForgotHelp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <Card className="w-full max-w-md">
+            <div className="flex items-center gap-2 mb-4">
+              <KeyRound size={20} className="text-blue-600" />
+              <h2 className="text-lg font-semibold text-gray-900">
+                Forgot your password?
+              </h2>
+            </div>
+
+            <div className="space-y-4 text-sm text-gray-600">
+              <div>
+                <p className="font-medium text-gray-900 mb-1">
+                  Students and supervisors
+                </p>
+                <p>
+                  Ask your OJT coordinator. They can issue you a new password
+                  straight away, and you can change it yourself once you sign
+                  in.
+                </p>
+              </div>
+              <div>
+                <p className="font-medium text-gray-900 mb-1">Coordinators</p>
+                <p>
+                  Run{" "}
+                  <code className="px-1.5 py-0.5 rounded bg-gray-100 font-mono text-xs">
+                    npm run reset-coordinator
+                  </code>{" "}
+                  in <span className="font-mono text-xs">app/server</span>. It
+                  prints a new password you can sign in with.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <Button
+                type="button"
+                onClick={() => {
+                  setShowForgotHelp(false);
+                }}
+              >
+                Got it
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

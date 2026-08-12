@@ -114,6 +114,20 @@ export const studentApi = createApi({
       }),
       invalidatesTags: ["Student"],
     }),
+    /**
+     * Issues a new password for a student who has forgotten theirs.
+     * No current password needed — that's the point.
+     */
+    resetStudentPassword: builder.mutation<
+      { id: string; name: string; username: string | null },
+      { id: string; password: string }
+    >({
+      query: ({ id, password }) => ({
+        url: `/coordinator/students/${id}/password`,
+        method: "PATCH",
+        body: { password },
+      }),
+    }),
   }),
 });
 
@@ -122,4 +136,5 @@ export const {
   useCreateStudentMutation,
   useUpdateStudentMutation,
   useDeleteStudentMutation,
+  useResetStudentPasswordMutation,
 } = studentApi;

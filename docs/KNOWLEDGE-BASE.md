@@ -3,7 +3,7 @@
 The running record of what this project is, what's built, and how to work on it.
 Updated at the end of every working session.
 
-**Last updated:** 2026-08-12 · after *Evaluations*
+**Last updated:** 2026-08-12 · after *Password recovery*
 
 **Workflow:** one module at a time → verify → **commit and push to `origin/main`** → update this file → stop for review.
 
@@ -45,6 +45,7 @@ npm run build
 npm test                     # jest — SEE §7, currently red
 npm run test:e2e             # passes
 npm run seed                 # bootstraps the coordinator only; no-op if it exists
+npm run reset-coordinator    # recovers a locked-out coordinator (see §5)
 npx prisma migrate dev --name <desc>
 npx prisma generate          # REQUIRED after clone or schema change
 
@@ -95,6 +96,7 @@ by hand at that point. There is no self-registration.
 - **Student self-service** — dashboard + attendance logging and history. See §5.
 - **Supervisor** — dashboard + attendance approval with required decline reasons. See §5.
 - **Evaluations** — 9-criterion weighted rubric; supervisor writes, coordinator reads across establishments. See §5.
+- **Password recovery** — self-service change for everyone, coordinator-issued reset for students/supervisors, CLI for the coordinator. See §5.
 
 **All three roles now land on a real page after login. No role 404s.**
 
@@ -112,8 +114,8 @@ Messaging (models + `socket.io` installed, zero code), Documents, Credentials,
 Coordinator attendance oversight.
 
 Also unbuilt and not yet in the numbered order: the student **Profile** section (needs
-`gender` and `endDate` on `Student`), **Forgot Password**, and **supervisor contact
-fields** (blocks part of messaging).
+`gender` and `endDate` on `Student`) and **supervisor contact fields** (blocks part of
+messaging).
 
 ### Remaining build order
 
@@ -122,10 +124,11 @@ fields** (blocks part of messaging).
 3. ~~Student self-service~~ ✅
 4. ~~Supervisor~~ ✅
 5. ~~Evaluations~~ ✅
-6. **Coordinator dashboard stats** ← next
-7. Attendance oversight
-8. Documents + Credentials
-9. Messaging
+6. ~~Password recovery~~ ✅ *(inserted ahead of dashboard stats — nobody could recover a forgotten password)*
+7. **Coordinator dashboard stats** ← next
+8. Attendance oversight
+9. Documents + Credentials
+10. Messaging
 
 ---
 
@@ -308,6 +311,28 @@ Slice: `lib/api/evaluationApi.ts`. Feature: `features/evaluation/`.
 - `EVALUATION_INCLUDE`, `pickCriteria` and `withBreakdown` are exported from `supervisor.service.ts` and reused by `CoordinatorService.listEvaluations`, so both lists have an identical shape.
 - Nothing prevents a student being evaluated more than once — repeat evaluations across periods are expected. `periodStart`/`periodEnd` are optional.
 
+### Password recovery
+
+There is **no email infrastructure** — no mail library, no SMTP credentials, and
+`@supabase/supabase-js` is installed but never imported. So there is no emailed reset
+link. Recovery mirrors how accounts are issued in the first place: by hand, by the
+coordinator.
+
+| Route / command | Who | Notes |
+|---|---|---|
+| `PATCH /auth/password` | any signed-in user | `{ currentPassword, newPassword }` |
+| `PATCH /coordinator/students/:id/password` | COORDINATOR | `{ password }` — no current password needed |
+| `PATCH /coordinator/supervisors/:id/password` | COORDINATOR | same |
+| `npm run reset-coordinator` | anyone with DB access | the root account's only escape hatch |
+
+- **Change-password requires the current password** even though the caller already holds a valid JWT. The token proves the session, not that the person at the keyboard owns the account — without the check, an unattended logged-in browser is enough to lock the real owner out. Reusing the same password is rejected.
+- **The coordinator's reset deliberately does *not* require the old password** — that's the whole point, it's unknown. This means a coordinator can set any student's or supervisor's password and then sign in as them. That authority is inherent to a system where the coordinator issues every credential, and it stops at COORDINATOR accounts: **there is no endpoint that resets a coordinator** (verified — the route doesn't exist).
+- **`npm run reset-coordinator`** (`scripts/reset-coordinator.ts`) is the root account's recovery. It lives on the CLI on purpose: running it needs the `.env` database credentials, which is authority enough, and it is unreachable from the web. Usage: bare (generates a password), `-- 'newpassword'`, or `-- 'newpassword' <username|email>` when more than one coordinator exists. Refuses passwords under 8 characters, matching the API.
+- **UI:** `ChangePasswordDialog` is rendered from `Sidebar`, so all three roles get it from one place on every page. The coordinator's reset is the amber key button in the student list (`ResetPasswordDialog`). The login page's "Forgot Password?" link now opens a dialog explaining both routes instead of being a dead `preventDefault` anchor.
+- **Changing a password does not invalidate existing tokens** — there is no refresh flow or token blocklist, so an already-issued JWT stays valid until it expires (1 day). Worth knowing if a password is being reset *because* it leaked.
+
+There is still **no reset for supervisors from a UI** — the endpoint exists and is tested, but nothing calls it yet; the supervisor list has no reset button. Add it when the coordinator gets a supervisor management page.
+
 ### Attendance forms — hours totals removed (client request, 2026-08-12)
 
 Two client-requested removals, both cosmetic — the underlying hours are still computed, validated, and used everywhere else:
@@ -360,12 +385,13 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 3. **`npm run start:prod` is broken** — wrong entry path (see §2).
 4. Filtering and pagination are client-side over a full `findMany()`. Fine at current scale; will not hold.
 5. `coordinator/dashboard` still renders mock constants. There is no dashboard-stats endpoint.
-6. No password reset / "Forgot Password" flow, despite the link on the login form. More pressing now that the coordinator sets each password by hand: a forgotten one has **no recovery path** short of editing the database.
+6. Changing a password doesn't invalidate already-issued JWTs — no refresh flow, no blocklist, so an old token stays valid for up to a day. Matters if a password is reset because it leaked.
 7. The login page's role tabs are cosmetic — the server decides the role.
 8. The prototype's student Documents, Credentials and Profile sections are not built, and there is no backend for them. `STUDENT_NAV` and `SUPERVISOR_NAV` omit unbuilt sections on purpose.
 9. `Attendance.approvedById` is set when declining too — it means "who actioned this", not "who approved this".
 10. The coordinator dashboard's "Avg. Performance" tile is still a hardcoded `3.8`. Real evaluation data now exists to compute it from — wire it up in the dashboard-stats module.
 11. Evaluations cannot be edited or deleted once submitted, and there is no per-period uniqueness. Fine for now, but a mis-scored evaluation currently has no correction path.
+12. Supervisor password reset has an endpoint but no UI — the coordinator has no supervisor management page to hang it off yet.
 
 ---
 
@@ -444,5 +470,30 @@ Verified live: username and email both authenticate, wrong password still 401, `
 Verified live with 10 checks: all-5s → 5.0 Excellent, all-1s → 1.0 Poor, and the weighting demonstrably applies (5s on the 40% category → 2.6, the same 5s on a 30% category → 2.2). Out-of-range and missing criteria 400. A body supplying its own `overallRating`/`performanceLevel` is rejected by the whitelist. A supervisor at another establishment gets 403 on create and an empty list. Cross-role access 403, unauthenticated 401. Test supervisors and their evaluations removed afterwards.
 
 One bug caught during verification: `createEvaluation` returned the raw row without `categories`, so the create response didn't match the shape the list endpoints and the client's `Evaluation` type promised. Fixed by running `withBreakdown` on it too.
+
+### 2026-08-12 — Password recovery
+
+Slotted in ahead of dashboard stats: with the coordinator issuing every password by
+hand, a forgotten one had no recovery path short of editing the database.
+
+Checked first that **no email infrastructure exists** — no mail library, no SMTP
+credentials, `@supabase/supabase-js` installed but never imported, no token model, and
+the "Forgot Password?" link was a dead `preventDefault` anchor. An emailed reset link
+would have meant a new dependency, a provider account, a token table, and deliverability
+risk to `@wphi.edu` addresses that can't be tested from here. Chose the coordinator-
+mediated route instead, which matches how accounts are issued and needs none of that.
+
+- `PATCH /auth/password` — any signed-in user, current password required.
+- `PATCH /coordinator/{students,supervisors}/:id/password` — coordinator reissues a forgotten one.
+- `npm run reset-coordinator` (`scripts/reset-coordinator.ts`) — the root account's only recovery, CLI-only on purpose.
+- `ChangePasswordDialog` rendered from `Sidebar` so all three roles get it everywhere; `ResetPasswordDialog` on the student list; the login link now explains both routes.
+
+Verified live with 13 checks: change-password succeeds and the old password stops
+working, a wrong current password 401s, reusing the same password 400s, short passwords
+400 on every route, unauthenticated 401. Coordinator reset works without the old
+password and a STUDENT attempting the same route gets 403. Unknown id 404s. **No route
+exists to reset a coordinator** (confirmed 404). The CLI resets with an explicit
+password, refuses short ones, and generates one when given none. Coordinator restored to
+the documented `admin123` afterwards; test student removed.
 
 A judgment call worth restating: the client's literal ask for item 4 was deletion. I pushed back before building — attendance is the record a graduation requirement is checked against, and a hard delete has no undo and would also erase the coordinator's history for that batch. `COMPLETED` gives them the same "clean board for the next OJT" outcome without that risk. If they actually want data gone (e.g. for storage or privacy reasons), that's a distinct, separate decision — flag it back to me rather than building it silently.
