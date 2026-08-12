@@ -198,6 +198,11 @@ export class CoordinatorController {
     return this.coordinatorService.listSupervisors();
   }
 
+  @Get('evaluations')
+  listEvaluations() {
+    return this.coordinatorService.listEvaluations();
+  }
+
   @Patch('students/:id')
   updateStudent(@Param('id') id: string, @Body() dto: UpdateStudentDto) {
     return this.coordinatorService.updateStudent(id, dto);

@@ -1,18 +1,14 @@
 "use client";
 
 import Sidebar from "@/components/layout/Sidebar";
+import { COORDINATOR_NAV } from "@/features/coordinator/nav";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Button from "@/components/ui/Button";
 import {
-  LayoutDashboard,
   Building2,
-  Users,
-  CalendarCheck,
-  MessageSquare,
-  Star,
   Plus,
 } from "lucide-react";
 import { useEstablishment } from "../../../features/establishment/hooks/use-establishment";
@@ -20,18 +16,6 @@ import EstablishmentList from "../../../features/establishment/components/Establ
 import EstablishmentViewDialog from "../../../features/establishment/components/EstablishmentViewDialog";
 import EstablishmentEditDialog from "../../../features/establishment/components/EstablishmentEditDialog";
 
-const COORDINATOR_NAV = [
-  { label: "Dashboard", href: "/coordinator/dashboard", icon: LayoutDashboard },
-  {
-    label: "Establishment Management",
-    href: "/coordinator/establishments",
-    icon: Building2,
-  },
-  { label: "Student Management", href: "/coordinator/students", icon: Users },
-  { label: "Attendance", href: "/coordinator/attendance", icon: CalendarCheck },
-  { label: "Messages", href: "/coordinator/messages", icon: MessageSquare },
-  { label: "Evaluations", href: "/coordinator/evaluations", icon: Star },
-];
 
 export default function EstablishmentManagementPage() {
   const currentUser = useCurrentUser();

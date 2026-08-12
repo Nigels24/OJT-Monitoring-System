@@ -5,6 +5,13 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { hoursForAttendance, totalHours } from '../common/attendance-hours';
+import {
+  CRITERIA,
+  CriteriaScores,
+  categoryBreakdown,
+  overallRating,
+  performanceLevel,
+} from '../common/evaluation-scoring';
 
 type AttendanceStatus = 'PENDING' | 'APPROVED' | 'DECLINED';
 
@@ -257,7 +264,13 @@ export class SupervisorService {
 
   async createEvaluation(
     userId: string,
-    data: { studentId: string; score?: number; feedback?: string },
+    data: CriteriaScores & {
+      studentId: string;
+      periodStart?: string;
+      periodEnd?: string;
+      comments?: string;
+      recommendations?: string;
+    },
   ) {
     const supervisor = await this.getSupervisorByUserId(userId);
 
@@ -270,15 +283,83 @@ export class SupervisorService {
       );
     }
 
-    return this.prisma.client.evaluation.create({
+    const scores = pickCriteria(data);
+    // Derived here, never read from the request — otherwise a caller could
+    // submit nine low scores alongside an "Excellent" overall.
+    const rating = overallRating(scores);
+
+    const created = await this.prisma.client.evaluation.create({
       data: {
         studentId: data.studentId,
         supervisorId: supervisor.id,
-        score: data.score,
-        feedback: data.feedback,
+        ...scores,
+        overallRating: rating,
+        performanceLevel: performanceLevel(rating),
+        periodStart: data.periodStart ? new Date(data.periodStart) : null,
+        periodEnd: data.periodEnd ? new Date(data.periodEnd) : null,
+        comments: data.comments,
+        recommendations: data.recommendations,
       },
+      include: EVALUATION_INCLUDE,
     });
+
+    // Same shape as the list endpoints, so a freshly created evaluation can be
+    // rendered without a refetch.
+    return withBreakdown(created);
   }
+
+  /** Evaluations written for students at this supervisor's establishment. */
+  async getEvaluations(userId: string) {
+    const supervisor = await this.getSupervisorByUserId(userId);
+
+    const evaluations = await this.prisma.client.evaluation.findMany({
+      where: { student: { establishmentId: supervisor.establishmentId } },
+      include: EVALUATION_INCLUDE,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return evaluations.map(withBreakdown);
+  }
+}
+
+/** Shared shape so supervisor and coordinator lists render identically. */
+export const EVALUATION_INCLUDE = {
+  student: {
+    select: {
+      id: true,
+      studentIdNumber: true,
+      course: true,
+      school: true,
+      user: { select: { name: true, email: true } },
+      establishment: { select: { id: true, name: true } },
+    },
+  },
+  supervisor: {
+    select: {
+      id: true,
+      position: true,
+      user: { select: { name: true } },
+    },
+  },
+} as const;
+
+/** Narrows a request body down to just the nine scored criteria. */
+export function pickCriteria(source: Record<string, unknown>): CriteriaScores {
+  return Object.fromEntries(
+    CRITERIA.map((key) => [key, Number(source[key])]),
+  ) as CriteriaScores;
+}
+
+/**
+ * Attaches the per-category averages. Recomputed on read rather than stored —
+ * it is a presentation detail derived from the criteria, unlike overallRating
+ * which is part of the record.
+ */
+export function withBreakdown<T extends CriteriaScores>(evaluation: T) {
+  return {
+    ...evaluation,
+    categories: categoryBreakdown(pickCriteria(evaluation)),
+  };
 }
 
 /** Monday 00:00 UTC of the current week. */

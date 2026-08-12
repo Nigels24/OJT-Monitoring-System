@@ -187,9 +187,32 @@ model Evaluation {
   student      Student    @relation(fields: [studentId], references: [id])
   supervisorId String
   supervisor   Supervisor @relation(fields: [supervisorId], references: [id])
-  score        Float?
-  feedback     String?
-  createdAt    DateTime   @default(now())
+
+  // Nine criteria scored 1-5. Grouping and weights live in
+  // src/common/evaluation-scoring.ts — Work Performance 40%,
+  // Professional Behavior 30%, Technical Skills 30%.
+  quality        Int
+  quantity       Int
+  efficiency     Int
+  attendance     Int
+  teamwork       Int
+  communication  Int
+  knowledge      Int
+  problemSolving Int
+  initiative     Int
+
+  // Derived from the nine criteria and stored, never accepted from the client.
+  // Kept rather than computed on read so an evaluation keeps the rating and
+  // label it was given, even if the rubric or its bands are changed later.
+  overallRating    Float
+  performanceLevel String
+
+  periodStart     DateTime?
+  periodEnd       DateTime?
+  comments        String?
+  recommendations String?
+
+  createdAt DateTime @default(now())
 }
 
 model Conversation {

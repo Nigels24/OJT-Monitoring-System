@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Sidebar from "@/components/layout/Sidebar";
+import { COORDINATOR_NAV } from "@/features/coordinator/nav";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import PageHeader from "@/components/ui/PageHeader";
 import StatCard from "@/components/ui/StatCard";
@@ -24,18 +25,6 @@ import {
   PieChart,
 } from "lucide-react";
 
-const COORDINATOR_NAV = [
-  { label: "Dashboard", href: "/coordinator/dashboard", icon: LayoutDashboard },
-  {
-    label: "Establishment Management",
-    href: "/coordinator/establishments",
-    icon: Building2,
-  },
-  { label: "Student Management", href: "/coordinator/students", icon: Users },
-  { label: "Attendance", href: "/coordinator/attendance", icon: CalendarCheck },
-  { label: "Messages", href: "/coordinator/messages", icon: MessageSquare },
-  { label: "Evaluations", href: "/coordinator/evaluations", icon: Star },
-];
 
 interface DashboardStats {
   totalStudents: number;

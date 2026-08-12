@@ -8,14 +8,16 @@ import {
   Query,
   UseGuards,
   Req,
+  applyDecorators,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsDateString,
   IsIn,
+  IsInt,
   IsNotEmpty,
-  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -25,7 +27,8 @@ import {
 } from 'class-validator';
 import { SupervisorService } from './supervisor.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
-import { EmptyToUndefined, ToOptionalNumber } from '../common/transforms';
+import { EmptyToUndefined } from '../common/transforms';
+import { MAX_SCORE, MIN_SCORE } from '../common/evaluation-scoring';
 
 class AttendanceQueryDto {
   @IsOptional()
@@ -55,23 +58,56 @@ class DeclineAttendanceDto {
   reason!: string;
 }
 
+/**
+ * Applies the shared 1–5 bound to every criterion, so the rubric is defined in
+ * one place rather than repeated nine times.
+ */
+const Criterion = () =>
+  applyDecorators(
+    Type(() => Number),
+    IsInt(),
+    Min(MIN_SCORE),
+    Max(MAX_SCORE),
+  );
+
 class CreateEvaluationDto {
   @IsString()
   @IsNotEmpty()
   studentId!: string;
 
-  // No upper bound: the 5-star scale was removed at the client's request.
-  // The scale for evaluations is still undecided — see the Evaluations module.
-  @IsOptional()
-  @ToOptionalNumber()
-  @IsNumber()
-  @Min(0)
-  score?: number;
+  // The nine criteria. Weights and the overall rating are computed server-side
+  // (src/common/evaluation-scoring.ts) — the client cannot supply either.
+  @Criterion() quality!: number;
+  @Criterion() quantity!: number;
+  @Criterion() efficiency!: number;
+  @Criterion() attendance!: number;
+  @Criterion() teamwork!: number;
+  @Criterion() communication!: number;
+  @Criterion() knowledge!: number;
+  @Criterion() problemSolving!: number;
+  @Criterion() initiative!: number;
 
   @IsOptional()
+  @EmptyToUndefined()
+  @IsDateString()
+  periodStart?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsDateString()
+  periodEnd?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
   @IsString()
   @MaxLength(2000)
-  feedback?: string;
+  comments?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(2000)
+  recommendations?: string;
 }
 
 @Controller('supervisor')
@@ -128,6 +164,11 @@ export class SupervisorController {
       id,
       dto.reason,
     );
+  }
+
+  @Get('evaluations')
+  getEvaluations(@Req() req: any) {
+    return this.supervisorService.getEvaluations(req.user.userId);
   }
 
   @Post('evaluations')

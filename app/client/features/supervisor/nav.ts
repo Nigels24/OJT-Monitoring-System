@@ -1,11 +1,11 @@
-import { LayoutDashboard, CalendarCheck } from "lucide-react";
+import { LayoutDashboard, CalendarCheck, Star } from "lucide-react";
 
 /**
  * Supervisor sidebar.
  *
- * The prototype also lists Evaluation and Messages. Neither has a page yet, so
- * they are left out rather than linked as dead ends. Add each as its module
- * lands (evaluations is module 5, messaging module 9).
+ * The prototype also lists Messages, which has no page yet, so it is left out
+ * rather than linked as a dead end — a 404 renders no sidebar and therefore no
+ * logout button. Add it when messaging lands.
  */
 export const SUPERVISOR_NAV = [
   { label: "Dashboard", href: "/supervisor/dashboard", icon: LayoutDashboard },
@@ -14,4 +14,5 @@ export const SUPERVISOR_NAV = [
     href: "/supervisor/attendance",
     icon: CalendarCheck,
   },
+  { label: "Evaluation", href: "/supervisor/evaluation", icon: Star },
 ];

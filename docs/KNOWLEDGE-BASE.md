@@ -3,7 +3,7 @@
 The running record of what this project is, what's built, and how to work on it.
 Updated at the end of every working session.
 
-**Last updated:** 2026-08-11 · after *client feedback batch*
+**Last updated:** 2026-08-12 · after *Evaluations*
 
 **Workflow:** one module at a time → verify → **commit and push to `origin/main`** → update this file → stop for review.
 
@@ -94,6 +94,7 @@ by hand at that point. There is no self-registration.
 - **Student Management (Coordinator)** — full CRUD, computed hours, progress, stats. See §5.
 - **Student self-service** — dashboard + attendance logging and history. See §5.
 - **Supervisor** — dashboard + attendance approval with required decline reasons. See §5.
+- **Evaluations** — 9-criterion weighted rubric; supervisor writes, coordinator reads across establishments. See §5.
 
 **All three roles now land on a real page after login. No role 404s.**
 
@@ -103,8 +104,7 @@ by hand at that point. There is no self-registration.
 |---|---|---|
 | Coordinator dashboard | none | full UI on **mock constants** (`ATTENDANCE_TREND`, `TOP_ESTABLISHMENTS`, `RECENT_STUDENTS`, hardcoded `stats`) |
 | Student self-service | done | dashboard + attendance done; **Documents, Credentials, Profile and Messages from the prototype are not built** (no backend for any) |
-| Supervisor | done for attendance | dashboard + approval done; **Evaluation and Messages not built** |
-| Evaluations | `POST /supervisor/evaluations` only — write-only, nothing can read them back | none |
+| Supervisor | done | dashboard, approval and evaluation done; **Messages not built** |
 
 ### Not started
 
@@ -117,8 +117,8 @@ Coordinator attendance oversight, Evaluation views.
 2. ~~Student Management (Coordinator)~~ ✅
 3. ~~Student self-service~~ ✅
 4. ~~Supervisor~~ ✅
-5. **Evaluations** ← next
-6. Coordinator dashboard stats
+5. ~~Evaluations~~ ✅
+6. **Coordinator dashboard stats** ← next
 7. Attendance oversight
 8. Documents + Credentials
 9. Messaging
@@ -277,6 +277,34 @@ Slice: `lib/api/supervisorApi.ts`. Feature: `features/supervisor/`.
 - `ROLE_HOME.SUPERVISOR` is still `/supervisor/attendance` rather than the dashboard, since approving is the supervisor's actual job. Both pages exist, so either is fine.
 - **Evaluation score has no upper bound.** The client asked to remove the 5-star scale; `@Max(5)` was dropped from `CreateEvaluationDto.score` (still `@Min(0)`). No replacement scale has been decided — that's still open for the Evaluations module (§ below).
 
+### Evaluations
+
+Pages: `app/supervisor/evaluation` (write + own list), `app/coordinator/evaluations` (read-only, all establishments).
+Slice: `lib/api/evaluationApi.ts`. Feature: `features/evaluation/`.
+
+| Route | Role | Notes |
+|---|---|---|
+| `POST /supervisor/evaluations` | SUPERVISOR | 9 criteria required, 1–5 each |
+| `GET /supervisor/evaluations` | SUPERVISOR | scoped to own establishment |
+| `GET /coordinator/evaluations` | COORDINATOR | every establishment, read-only |
+
+**The rubric lives in `src/common/evaluation-scoring.ts`** — nine criteria in three weighted categories, taken from the prototype's `calculateOverallRating`:
+
+| Category | Weight | Criteria |
+|---|---|---|
+| Work Performance | 40% | quality, quantity, efficiency |
+| Professional Behavior | 30% | attendance, teamwork, communication |
+| Technical Skills | 30% | knowledge, problemSolving, initiative |
+
+`overall = (WP avg × 0.4) + (PB avg × 0.3) + (TS avg × 0.3)`, then banded into a performance level: ≥4.5 Excellent, ≥3.5 Very Good, ≥2.5 Good, ≥1.5 Fair, else Poor.
+
+- **The client's "remove the 5 star rating" meant the star glyphs, not the scale.** Confirmed before building: the 1–5 scoring, the nine criteria, the weights and the bands all stay; criteria are rendered as dropdowns instead of clickable stars. `features/evaluation/rubric.ts` holds the client-side labels and repeats the weights *for display only*.
+- **`overallRating` and `performanceLevel` are computed server-side and stored**, never accepted from the request — `forbidNonWhitelisted` rejects a body that tries to supply them (verified). They're stored rather than derived on read so an evaluation keeps the rating it was given if the rubric or its bands ever change.
+- `categories` (per-category averages) is *not* stored — it's recomputed on read by `withBreakdown`, since it's a presentation detail. Create and both list endpoints all return it, so a new evaluation renders without a refetch.
+- Ownership: `createEvaluation` re-derives the supervisor from the JWT and rejects a student outside their establishment with 403; `getEvaluations` filters by establishment. The coordinator's list is deliberately unscoped — their remit is the whole programme.
+- `EVALUATION_INCLUDE`, `pickCriteria` and `withBreakdown` are exported from `supervisor.service.ts` and reused by `CoordinatorService.listEvaluations`, so both lists have an identical shape.
+- Nothing prevents a student being evaluated more than once — repeat evaluations across periods are expected. `periodStart`/`periodEnd` are optional.
+
 ### Attendance forms — hours totals removed (client request, 2026-08-12)
 
 Two client-requested removals, both cosmetic — the underlying hours are still computed, validated, and used everywhere else:
@@ -306,6 +334,7 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 | `20260811085904_attendance_one_per_day` | `@@unique([studentId, date])` on `Attendance`. Written with `prisma migrate diff` and applied with `migrate deploy`, because `migrate dev` needs an interactive confirmation for the unique-constraint warning and cannot run non-interactively. Verified zero duplicates first. |
 | `20260811091601_attendance_decline_reason` | `Attendance.declineReason` — the supervisor's explanation, kept separate from the student's `remarks` |
 | `20260811120804_user_username` | `User.username` — nullable, unique. Login accepts username or email (`AuthService.login`); usernames may not contain `@`. |
+| `20260811234804_evaluation_rubric` | Replaced `Evaluation.score`/`feedback` with the 9 criteria, `overallRating`, `performanceLevel`, `periodStart`/`periodEnd`, `comments`, `recommendations`. Destructive (drops two columns) but the table was empty — verified 0 rows first. |
 
 > **If `migrate dev` ever offers to reset the database, stop.** It means drift again.
 > Reconcile with a baseline migration + `migrate resolve --applied`. This is a live
@@ -315,7 +344,6 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 
 ### Known schema gaps
 
-- **Evaluation** — one `score Float?` + `feedback`. The prototype wants evaluation period, overall rating, performance level and per-criterion ratings. Needs rework (module 5).
 - **Student** — no `gender`, no `endDate`. Gender appears on the student's own Profile screen, which is not built.
 - **Supervisor** — no contact fields; the prototype's messaging panels show email + phone.
 - **Document / Credential** — store a `fileUrl` string with no storage wired. `@supabase/supabase-js` is installed but unused; Supabase Storage is the obvious fit.
@@ -333,8 +361,9 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 7. No password reset / "Forgot Password" flow, despite the link on the login form. Compounded by student passwords being generated once and shown once — a lost password currently has no recovery path.
 8. The login page's role tabs are cosmetic — the server decides the role.
 9. The prototype's student Documents, Credentials and Profile sections are not built, and there is no backend for them. `STUDENT_NAV` and `SUPERVISOR_NAV` omit unbuilt sections on purpose.
-10. **Evaluations are write-only.** `POST /supervisor/evaluations` stores one, but nothing reads them back and no UI creates them. The scale bound (`@Max(5)`) is still unverified. Module 5.
-11. `Attendance.approvedById` is set when declining too — it means "who actioned this", not "who approved this".
+10. `Attendance.approvedById` is set when declining too — it means "who actioned this", not "who approved this".
+11. The coordinator dashboard's "Avg. Performance" tile is still a hardcoded `3.8`. Real evaluation data now exists to compute it from — wire it up in the dashboard-stats module.
+12. Evaluations cannot be edited or deleted once submitted, and there is no per-period uniqueness. Fine for now, but a mis-scored evaluation currently has no correction path.
 
 ---
 
@@ -390,6 +419,18 @@ Five items from the client, spanning four already-built areas rather than one ne
 5. **Evaluation score has no upper bound.** `@Max(5)` removed from `CreateEvaluationDto.score`. The replacement scale is still undecided — flagged for the Evaluations module.
 
 Verified live: username and email both authenticate, wrong password still 401, `@` in a username 400s, duplicate usernames 409, a password-less create now 400s (no more silent generation), mark-complete/reopen round-trips and is correctly excluded from dashboard stats while remaining in the roster, cross-establishment guard still holds on the new status endpoint, and evaluation scores of 6 and 87 both succeed where `@Max(5)` would have rejected them. Test data removed afterward.
+
+### 2026-08-12 — Evaluations
+
+- Confirmed with the user before building that "remove the 5 star rating" meant the star *glyphs*, not the 1–5 scale — the prototype's whole rubric (9 criteria, 40/30/30 weights, performance bands) is built on that scale, so the two readings implied very different schemas.
+- Migration `evaluation_rubric` replaces `score`/`feedback` with the nine criteria plus `overallRating`, `performanceLevel`, period dates, comments and recommendations. Destructive, but the table was verified empty first.
+- New `src/common/evaluation-scoring.ts` holds the rubric — criteria, weights, bands, and the overall/breakdown functions — shared by the supervisor (writes) and coordinator (reads) so both agree on how a score becomes a label.
+- Client: `evaluationApi` slice, `use-evaluations` hook, `EvaluationForm`/`EvaluationList`/`EvaluationViewDialog`, and both pages. The form previews the weighted rating live; the stored value is always the server's.
+- Also centralised `COORDINATOR_NAV` into `features/coordinator/nav.ts` — it had been duplicated inline across three pages and this module added a fourth entry. Removed the icon imports that orphaned.
+
+Verified live with 10 checks: all-5s → 5.0 Excellent, all-1s → 1.0 Poor, and the weighting demonstrably applies (5s on the 40% category → 2.6, the same 5s on a 30% category → 2.2). Out-of-range and missing criteria 400. A body supplying its own `overallRating`/`performanceLevel` is rejected by the whitelist. A supervisor at another establishment gets 403 on create and an empty list. Cross-role access 403, unauthenticated 401. Test supervisors and their evaluations removed afterwards.
+
+One bug caught during verification: `createEvaluation` returned the raw row without `categories`, so the create response didn't match the shape the list endpoints and the client's `Evaluation` type promised. Fixed by running `withBreakdown` on it too.
 
 A judgment call worth restating: the client's literal ask for item 4 was deletion. I pushed back before building — attendance is the record a graduation requirement is checked against, and a hard delete has no undo and would also erase the coordinator's history for that batch. `COMPLETED` gives them the same "clean board for the next OJT" outcome without that risk. If they actually want data gone (e.g. for storage or privacy reasons), that's a distinct, separate decision — flag it back to me rather than building it silently.
 

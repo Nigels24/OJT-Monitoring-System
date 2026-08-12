@@ -7,6 +7,10 @@ import {
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { totalHours } from '../common/attendance-hours';
+import {
+  EVALUATION_INCLUDE,
+  withBreakdown,
+} from '../supervisor/supervisor.service';
 
 /** Fields the coordinator can set on a student, shared by create and update. */
 interface StudentDetails {
@@ -174,6 +178,21 @@ export class CoordinatorService {
     return this.prisma.client.supervisor.findMany({
       include: { user: true, establishment: true },
     });
+  }
+
+  /**
+   * Every evaluation across every establishment — read-only oversight.
+   *
+   * Unlike the supervisor's list this is deliberately not scoped: the
+   * coordinator's remit is the whole OJT programme.
+   */
+  async listEvaluations() {
+    const evaluations = await this.prisma.client.evaluation.findMany({
+      include: EVALUATION_INCLUDE,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return evaluations.map(withBreakdown);
   }
 
   async updateStudent(studentId: string, data: StudentDetails) {
