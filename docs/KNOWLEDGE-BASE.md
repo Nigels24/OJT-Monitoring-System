@@ -109,7 +109,11 @@ by hand at that point. There is no self-registration.
 ### Not started
 
 Messaging (models + `socket.io` installed, zero code), Documents, Credentials,
-Coordinator attendance oversight, Evaluation views.
+Coordinator attendance oversight.
+
+Also unbuilt and not yet in the numbered order: the student **Profile** section (needs
+`gender` and `endDate` on `Student`), **Forgot Password**, and **supervisor contact
+fields** (blocks part of messaging).
 
 ### Remaining build order
 
@@ -273,9 +277,8 @@ Slice: `lib/api/supervisorApi.ts`. Feature: `features/supervisor/`.
 - Approving clears `declineReason`, so a record that was declined and later approved does not keep the stale explanation.
 - Ownership is re-derived per request as everywhere else: `verifyAttendanceBelongsToSupervisor` throws `ForbiddenException` for another establishment's record. Verified live — a supervisor at a different establishment sees an empty queue and gets 403 on both approve and decline.
 - `approvedById` is set on decline too. The column name is misleading (it means "who actioned this"), but renaming it is a migration not worth spending here.
-- `SUPERVISOR_NAV` omits Evaluation and Messages for the same reason `STUDENT_NAV` does — no backend, so no dead links.
+- `SUPERVISOR_NAV` omits Messages for the same reason `STUDENT_NAV` does — no backend, so no dead links. Evaluation was added once that module landed.
 - `ROLE_HOME.SUPERVISOR` is still `/supervisor/attendance` rather than the dashboard, since approving is the supervisor's actual job. Both pages exist, so either is fine.
-- **Evaluation score has no upper bound.** The client asked to remove the 5-star scale; `@Max(5)` was dropped from `CreateEvaluationDto.score` (still `@Min(0)`). No replacement scale has been decided — that's still open for the Evaluations module (§ below).
 
 ### Evaluations
 
@@ -357,13 +360,12 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 3. **`npm run start:prod` is broken** — wrong entry path (see §2).
 4. Filtering and pagination are client-side over a full `findMany()`. Fine at current scale; will not hold.
 5. `coordinator/dashboard` still renders mock constants. There is no dashboard-stats endpoint.
-6. `@Max(5)` on evaluation `score` (`supervisor.controller.ts`) is an **unverified assumption** about the rating scale. Confirm before building evaluations.
-7. No password reset / "Forgot Password" flow, despite the link on the login form. Compounded by student passwords being generated once and shown once — a lost password currently has no recovery path.
-8. The login page's role tabs are cosmetic — the server decides the role.
-9. The prototype's student Documents, Credentials and Profile sections are not built, and there is no backend for them. `STUDENT_NAV` and `SUPERVISOR_NAV` omit unbuilt sections on purpose.
-10. `Attendance.approvedById` is set when declining too — it means "who actioned this", not "who approved this".
-11. The coordinator dashboard's "Avg. Performance" tile is still a hardcoded `3.8`. Real evaluation data now exists to compute it from — wire it up in the dashboard-stats module.
-12. Evaluations cannot be edited or deleted once submitted, and there is no per-period uniqueness. Fine for now, but a mis-scored evaluation currently has no correction path.
+6. No password reset / "Forgot Password" flow, despite the link on the login form. More pressing now that the coordinator sets each password by hand: a forgotten one has **no recovery path** short of editing the database.
+7. The login page's role tabs are cosmetic — the server decides the role.
+8. The prototype's student Documents, Credentials and Profile sections are not built, and there is no backend for them. `STUDENT_NAV` and `SUPERVISOR_NAV` omit unbuilt sections on purpose.
+9. `Attendance.approvedById` is set when declining too — it means "who actioned this", not "who approved this".
+10. The coordinator dashboard's "Avg. Performance" tile is still a hardcoded `3.8`. Real evaluation data now exists to compute it from — wire it up in the dashboard-stats module.
+11. Evaluations cannot be edited or deleted once submitted, and there is no per-period uniqueness. Fine for now, but a mis-scored evaluation currently has no correction path.
 
 ---
 
@@ -408,6 +410,17 @@ Fixes the STUDENT login 404 — `/student/dashboard` had never existed.
 
 **Still open:** the SUPERVISOR login still 404s (`/supervisor/attendance` has a backend but no page) — that is the next module.
 
+### 2026-08-11 — Supervisor
+
+Fixes the last role 404. All three roles now land on a real page.
+
+- Migration `attendance_decline_reason` adds `Attendance.declineReason`.
+- `getPendingAttendance` → `getAttendance`, now honouring a `status` filter. It had always returned every status despite the name, which would have shown already-actioned rows in the approval queue with no way to tell them apart.
+- Declining now **requires** a reason (3–500 chars, enforced server-side). It is stored separately from the student's `remarks` and surfaced on the student's own attendance history, so a declined log is actionable. Approving clears it.
+- New `GET /supervisor/dashboard` and `GET /supervisor/students`, both scoped to the supervisor's establishment.
+- Client: `supervisorApi` slice, `use-attendance-approval` hook, `ApprovalTable` and `DeclineDialog`, plus the dashboard and attendance pages. Also extended the student's `AttendanceTable` to display the decline reason — the supervisor writing one is useless if the student cannot read it.
+- Verified live with 14 checks: dashboard aggregates, student list, status filtering (`PENDING`/`APPROVED`/`DECLINED`/none), 400 on an invalid status, 400 on a missing or too-short decline reason, decline preserving the student's own remarks, the student reading the reason back, re-approval clearing it, and cross-role 403/401. Crucially, a supervisor created at a *different* establishment saw an empty queue and got 403 on both approve and decline. Test data removed afterwards.
+
 ### 2026-08-12 — Client feedback batch
 
 Five items from the client, spanning four already-built areas rather than one new module. Not part of the numbered build order.
@@ -433,14 +446,3 @@ Verified live with 10 checks: all-5s → 5.0 Excellent, all-1s → 1.0 Poor, and
 One bug caught during verification: `createEvaluation` returned the raw row without `categories`, so the create response didn't match the shape the list endpoints and the client's `Evaluation` type promised. Fixed by running `withBreakdown` on it too.
 
 A judgment call worth restating: the client's literal ask for item 4 was deletion. I pushed back before building — attendance is the record a graduation requirement is checked against, and a hard delete has no undo and would also erase the coordinator's history for that batch. `COMPLETED` gives them the same "clean board for the next OJT" outcome without that risk. If they actually want data gone (e.g. for storage or privacy reasons), that's a distinct, separate decision — flag it back to me rather than building it silently.
-
-### 2026-08-11 — Supervisor
-
-Fixes the last role 404. All three roles now land on a real page.
-
-- Migration `attendance_decline_reason` adds `Attendance.declineReason`.
-- `getPendingAttendance` → `getAttendance`, now honouring a `status` filter. It had always returned every status despite the name, which would have shown already-actioned rows in the approval queue with no way to tell them apart.
-- Declining now **requires** a reason (3–500 chars, enforced server-side). It is stored separately from the student's `remarks` and surfaced on the student's own attendance history, so a declined log is actionable. Approving clears it.
-- New `GET /supervisor/dashboard` and `GET /supervisor/students`, both scoped to the supervisor's establishment.
-- Client: `supervisorApi` slice, `use-attendance-approval` hook, `ApprovalTable` and `DeclineDialog`, plus the dashboard and attendance pages. Also extended the student's `AttendanceTable` to display the decline reason — the supervisor writing one is useless if the student cannot read it.
-- Verified live with 14 checks: dashboard aggregates, student list, status filtering (`PENDING`/`APPROVED`/`DECLINED`/none), 400 on an invalid status, 400 on a missing or too-short decline reason, decline preserving the student's own remarks, the student reading the reason back, re-approval clearing it, and cross-role 403/401. Crucially, a supervisor created at a *different* establishment saw an empty queue and got 403 on both approve and decline. Test data removed afterwards.
