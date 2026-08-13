@@ -234,7 +234,11 @@ export class CoordinatorService {
       }),
       this.prisma.client.evaluation.count(),
       this.prisma.client.establishment.findMany({
-        select: { id: true, name: true, _count: { select: { students: true } } },
+        select: {
+          id: true,
+          name: true,
+          _count: { select: { students: true } },
+        },
         orderBy: { students: { _count: 'desc' } },
         take: 5,
       }),
@@ -305,6 +309,92 @@ export class CoordinatorService {
         }),
       ),
     };
+  }
+
+  /**
+   * Attendance percentage per student, across every establishment.
+   *
+   * Read-only oversight, deliberately unscoped like getDashboard() and
+   * listEvaluations() — the coordinator's remit is the whole programme.
+   *
+   * "Attendance percentage" exists nowhere else in this codebase (every other
+   * view reports completedHours/requiredHours), so it is defined here:
+   * APPROVED days logged, over calendar days elapsed since the student started.
+   * Calendar days, not school days — the schema has no school-calendar concept,
+   * so students with different start dates or weekend-heavy periods are only
+   * roughly comparable.
+   */
+  async getAttendanceOversight() {
+    const todayStart = startOfUtcDay(new Date());
+    const todayEnd = new Date(todayStart.getTime() + MS_PER_DAY);
+
+    // Both bounds matter. The upper one (`lt: todayEnd`, i.e. date <= today) is
+    // defensive — submitAttendance has no server-side future-date check, only
+    // the client's <input max={today}>. The lower one is each student's own
+    // startDate, applied per student below: a day approved *before* a student
+    // started is outside the window totalDays measures, and counting it would
+    // push the percentage past 100%.
+    //
+    // A filtered relation `_count` can't express that correlated per-row bound,
+    // so the rows are fetched flat and bucketed here — still one round trip per
+    // table, no N+1, the same app-level aggregation shape as common/
+    // attendance-hours.ts.
+    const [students, approvedRows] = await Promise.all([
+      this.prisma.client.student.findMany({
+        include: {
+          user: { select: { name: true } },
+          establishment: { select: { name: true } },
+        },
+        orderBy: { user: { createdAt: 'desc' } },
+      }),
+      this.prisma.client.attendance.findMany({
+        where: { status: 'APPROVED', date: { lt: todayEnd } },
+        select: { studentId: true, date: true },
+      }),
+    ]);
+
+    const approvedByStudent = new Map<string, Date[]>();
+    for (const row of approvedRows) {
+      const dates = approvedByStudent.get(row.studentId) ?? [];
+      dates.push(row.date);
+      approvedByStudent.set(row.studentId, dates);
+    }
+
+    return students.map((student) => {
+      const startDay = student.startDate
+        ? startOfUtcDay(student.startDate)
+        : null;
+
+      // With no startDate there is no lower bound to apply — the count stays
+      // honest about what was logged, while totalDays below is 0 and so the
+      // percentage is null either way.
+      const presentDays = (approvedByStudent.get(student.id) ?? []).filter(
+        (date) => !startDay || date >= startDay,
+      ).length;
+
+      const totalDays = startDay
+        ? Math.max(
+            0,
+            Math.floor(
+              (todayStart.getTime() - startDay.getTime()) / MS_PER_DAY,
+            ) + 1,
+          )
+        : 0;
+
+      return {
+        id: student.id,
+        studentIdNumber: student.studentIdNumber,
+        name: student.user.name,
+        establishmentName: student.establishment?.name ?? null,
+        presentDays,
+        totalDays,
+        // null, not 0, when there is no window to measure against — no
+        // startDate, or a startDate still in the future. Same distinction the
+        // dashboard's averageRating makes between "no data" and a real zero.
+        attendancePercentage:
+          totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : null,
+      };
+    });
   }
 
   /**
@@ -440,7 +530,8 @@ export class CoordinatorService {
   }
 }
 
-const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MS_PER_WEEK = 7 * MS_PER_DAY;
 
 function startOfUtcDay(date: Date): Date {
   return new Date(
@@ -529,4 +620,3 @@ function buildFullName(
   if (data.name?.trim()) return data.name.trim();
   return fallback;
 }
-

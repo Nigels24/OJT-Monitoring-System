@@ -3,7 +3,7 @@
 The running record of what this project is, what's built, and how to work on it.
 Updated at the end of every working session.
 
-**Last updated:** 2026-08-12 · after *Coordinator dashboard stats*
+**Last updated:** 2026-08-12 · after *Attendance oversight (Coordinator)*
 
 **Workflow:** one module at a time → verify → **commit and push to `origin/main`** → update this file → stop for review.
 
@@ -98,6 +98,7 @@ by hand at that point. There is no self-registration.
 - **Evaluations** — 9-criterion weighted rubric; supervisor writes, coordinator reads across establishments. See §5.
 - **Password recovery** — self-service change for everyone, coordinator-issued reset for students/supervisors, CLI for the coordinator. See §5.
 - **Coordinator dashboard stats** — every tile and chart backed by real aggregates. See §5.
+- **Attendance oversight (Coordinator)** — read-only cross-establishment attendance %, built via the new Coordinator/Implementor/Reviewer pipeline. See §5.
 
 **All three roles now land on a real page after login. No role 404s.**
 
@@ -110,11 +111,11 @@ by hand at that point. There is no self-registration.
 
 ### Not started
 
-Messaging (models + `socket.io` installed, zero code), Documents, Credentials,
-Coordinator attendance oversight.
+Messaging (models + `socket.io` installed, zero code), Documents, Credentials.
 
 Also unbuilt and not yet in the numbered order: the student **Profile** section (needs
-`gender` and `endDate` on `Student`) and **supervisor contact fields** (blocks part of
+`gender` and `endDate` **and — new since module 8 — `startDate`, currently write-nowhere
+in the entire app** on `Student`) and **supervisor contact fields** (blocks part of
 messaging).
 
 ### Remaining build order
@@ -126,8 +127,8 @@ messaging).
 5. ~~Evaluations~~ ✅
 6. ~~Password recovery~~ ✅ *(inserted ahead of dashboard stats — nobody could recover a forgotten password)*
 7. ~~Coordinator dashboard stats~~ ✅
-8. **Attendance oversight** ← next
-9. Documents + Credentials
+8. ~~Attendance oversight (Coordinator)~~ ✅
+9. **Documents + Credentials** ← next
 10. Messaging
 
 ---
@@ -345,6 +346,23 @@ There is still **no reset for supervisors from a UI** — the endpoint exists an
 
 Verified live by creating real data and checking the deltas, not just that the endpoint returns something: a student's new PENDING log moved `presentToday` and `pendingApprovals` but left `totalHoursLogged` unchanged (pending isn't approved); approving it then moved `totalHoursLogged` by exactly the log's hours and landed it in the correct week's trend bucket; submitting an evaluation moved `averageRating`/`averageLevel`/`totalEvaluations` together. Cross-role access 403/401. Test data removed afterward.
 
+### Attendance oversight (Coordinator)
+
+`GET /coordinator/attendance`. Read-only, cross-establishment (unscoped, like the dashboard and evaluations list). Page: `app/coordinator/attendance`. Slice: `lib/api/attendanceOversightApi.ts`. Feature: `features/attendance-oversight/`.
+
+**"Attendance percentage" is a new concept introduced by this module** — nothing elsewhere uses it, every other view is `completedHours`/`requiredHours`. Definition, per student:
+- `presentDays` = count of `APPROVED` attendance rows with `startDate <= date <= today` — **both bounds matter**, see the bug below.
+- `totalDays` = calendar days from `startDate` to today inclusive, clamped `>= 0`.
+- `attendancePercentage` = `round(presentDays / totalDays * 100)` if `totalDays > 0`, else **`null`** (no `startDate`, or one still in the future) — rendered `"—"`, never `0%`, excluded from the Average/At-Risk stat cards. Same "no data ≠ zero" convention as the dashboard's `averageRating`.
+- Calendar days, not school days — there's no school-calendar concept in the schema. Comparisons across students with different start dates or weekend-heavy periods are only rough. Accepted limitation, not solved here.
+- Color thresholds are `components/ui/ProgressBar.tsx`'s existing `colorByValue` (`>=90` green, `>=80` amber, else red) — reused as-is, it already matched the prototype's own thresholds exactly.
+
+**A real bug was found and fixed before this shipped** (first use of the new Coordinator/Implementor/Reviewer pipeline — see §8 for the full blow-by-blow). The first cut bounded `presentDays` only by `date <= today`, with no lower bound. Any `APPROVED` row dated *before* a student's `startDate` — backfilled data, an orientation day logged early, a `startDate` set after logs already existed — inflated the numerator without expanding the denominator, so the percentage could exceed 100%. Fixed by bounding `presentDays` per-student at their own `startDate` too: a flat `attendance.findMany` bucketed into a `Map<studentId, Date[]>` in JS (the same app-level aggregation shape `common/attendance-hours.ts` already uses), since a Prisma filtered relation `_count` can't express that per-row correlated bound. Proven closed by executing the real service against fixtures (pre-start, on-start, post-start, no-`startDate`, future-`startDate`, a `startDate` with a non-midnight time component, full attendance) — no case exceeds 100%.
+
+**The whole feature is currently inert on real data.** `Student.startDate` is never written anywhere in the app — no DTO carries it, no form collects it, the seed doesn't set one. Every student's percentage is `null` today; the table renders "—" throughout and the stat cards show `0`/`—`/`0`. The endpoint and page are correct; there's simply no data feeding them yet. Confirmed twice (both review rounds) that this is a module-5 (Student Management) data-entry gap, correctly left out of this module's scope rather than scope-creeping a `startDate` field into another module's form. **Recommended as the next thing to sequence** — until it's closed, this whole page displays nothing, and closing it is also what makes the just-fixed >100% bug reachable on real data for the first time.
+
+Also folded into the same pass: `use-attendance-oversight.ts` now surfaces `isError` (a failed request previously rendered identically to "zero students in the programme" — the same "absence looks like a real zero" mistake the `null`-handling above exists to avoid, just on the request layer instead of the data layer); and a stale `CLAUDE.md` line claiming `Attendance` "has no uniqueness constraint on `(studentId, date)`" was corrected — that constraint has existed since migration `20260811085904_attendance_one_per_day` and is precisely what rules out the *other* way this module's percentage could have exceeded 100% (two approved rows for one calendar day).
+
 ### Attendance forms — hours totals removed (client request, 2026-08-12)
 
 Two client-requested removals, both cosmetic — the underlying hours are still computed, validated, and used everywhere else:
@@ -403,6 +421,10 @@ Models: `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`, `Attend
 9. Evaluations cannot be edited or deleted once submitted, and there is no per-period uniqueness. Fine for now, but a mis-scored evaluation currently has no correction path.
 10. Supervisor password reset has an endpoint but no UI — the coordinator has no supervisor management page to hang it off yet.
 11. The coordinator dashboard has no server-side date range on the attendance trend — always the last 6 weeks from today. Fine at current scale; revisit if the query gets expensive.
+12. **`Student.startDate` is never written anywhere in the app** — no DTO carries it, no form collects it, the seed doesn't set one. Only consumer today is display (dashboard's `recentStudents`) plus the new attendance-oversight percentage (§5), which is entirely inert until this closes. Recommended as the next thing to sequence, ahead of module 9.
+13. **`npm run lint` in `app/server` is `eslint --fix` — it mutates the tree on a plain check**, silently reformatting whatever files have style drift, not just the ones you're touching. Bit both the Implementor and Reviewer during module 8 (each had to `git checkout --` five unrelated files). Use `npx eslint src` for a read-only check until a `lint:check` script exists.
+14. `getAttendanceOversight` fetches every `APPROVED` attendance row programme-wide on each request (two columns, unfiltered by student) — scales with programme-*years*, not just student count. Still correct and fine at current scale (1 row); the endpoint to prioritize first if/when server-side pagination is picked up off item 4.
+15. The `(studentId, date)` uniqueness guarantee that several modules now lean on (attendance-oversight's percentage math among them) technically only holds for rows written after migration `20260811085904_attendance_one_per_day`. A pre-migration row with a non-UTC-midnight time could in theory sit alongside a normalised row for the same calendar day and be double-counted. No such rows exist today (verified). Not worth code; worth knowing it's the assumption the metric rests on if this database is ever backfilled from an older source.
 
 ---
 
@@ -540,3 +562,39 @@ approving it then moved `totalHoursLogged` by exactly its hours and landed in
 the correct week's bucket; submitting an evaluation moved
 `averageRating`/`averageLevel`/`totalEvaluations` together. Cross-role access
 403/401. Test data removed afterward.
+
+### 2026-08-12 — Attendance oversight (Coordinator) — first module built via the Nex Coordinator/Implementor/Reviewer pipeline
+
+Environment change first: set up three Nex panes in this workspace — **Coordinator**
+(this session), **Code Implementor**, **Code Reviewer** — coordinating via
+`.agent-comms/{PLAN,IMPLEMENTATION_NOTES,REVIEW,QUESTIONS}.md` (gitignored) plus direct
+`nex pane send` messages. Coordinator writes the plan and never marks a module done on
+its own judgment — only a Reviewer `PASS` closes it. This module was the first one run
+through it end to end, including one full revision cycle.
+
+**Round 1 — FAIL.** Implementor built the module exactly to spec: `GET
+/coordinator/attendance`, the percentage definition in §5, the three stat cards, the nav
+entry. Reviewer found one real, correctly-scoped bug: `presentDays` had an upper bound
+(`date <= today`) but no lower bound, so an `APPROVED` row dated before a student's
+`startDate` could push the percentage past 100% — reachable the moment `startDate`
+becomes writable (item 12), not on today's data. Also flagged, non-blocking: a failed
+request looked identical to zero students, and a stale `CLAUDE.md` line about the
+attendance unique constraint.
+
+**Revision 1 — PASS.** Bounded `presentDays` per-student at their own `startDate` (flat
+query + JS bucketing, since a Prisma filtered relation count can't express a per-row
+correlated bound), pulled `isError` through the hook, corrected `CLAUDE.md`. Reviewer's
+second pass didn't just re-read the diff — it executed the real compiled service against
+fixtures (pre-start, on-start, post-start, no-`startDate`, future-`startDate`, a
+`startDate` with a non-midnight time component, full attendance) and independently
+checked the live database for the UTC-midnight invariant the whole fix depends on, before
+signing off.
+
+Full detail on the metric definition, the bug, and the fix lives in §5. Two operational
+notes worth keeping for next time: `nex pane send` reliably delivers text into a fresh
+Claude Code pane as *pasted, unsubmitted* input on the first message of a session — needs
+a follow-up `nex pane send-key ... enter`, every time, not just once. And a freshly
+briefed pane with auto-mode on can act on its own before being given a real task (the
+Reviewer pane self-prompted "review the current diff now" against an empty diff right
+after its briefing) — caught immediately, no harm done, but worth a firmer "stay idle"
+instruction in the initial briefing next time.

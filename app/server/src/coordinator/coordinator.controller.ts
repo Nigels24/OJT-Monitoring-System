@@ -209,6 +209,11 @@ export class CoordinatorController {
     return this.coordinatorService.getDashboard();
   }
 
+  @Get('attendance')
+  getAttendanceOversight() {
+    return this.coordinatorService.getAttendanceOversight();
+  }
+
   @Get('evaluations')
   listEvaluations() {
     return this.coordinatorService.listEvaluations();
@@ -227,10 +232,7 @@ export class CoordinatorController {
   // Recovery for a forgotten password. No current password required — see
   // CoordinatorService.resetStudentPassword.
   @Patch('students/:id/password')
-  resetStudentPassword(
-    @Param('id') id: string,
-    @Body() dto: ResetPasswordDto,
-  ) {
+  resetStudentPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto) {
     return this.coordinatorService.resetStudentPassword(id, dto.password);
   }
 
