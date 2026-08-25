@@ -51,6 +51,7 @@ const EMPTY_FORM = {
   yearLevel: "",
   establishmentId: "",
   requiredHours: "",
+  startDate: "",
   status: "ACTIVE" as StudentStatus,
 };
 
@@ -99,6 +100,7 @@ export function useStudents() {
     yearLevel: form.yearLevel || undefined,
     establishmentId: form.establishmentId || undefined,
     requiredHours: form.requiredHours ? Number(form.requiredHours) : undefined,
+    startDate: form.startDate ? new Date(form.startDate).toISOString() : undefined,
     status: form.status,
   });
 
@@ -176,6 +178,7 @@ export function useStudents() {
       yearLevel: student.yearLevel ?? "",
       establishmentId: student.establishmentId ?? "",
       requiredHours: student.requiredHours?.toString() ?? "",
+      startDate: student.startDate ? student.startDate.slice(0, 10) : "",
       status: student.status,
     });
     setIsDialogOpen(true);

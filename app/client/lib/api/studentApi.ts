@@ -54,6 +54,7 @@ export interface StudentDetailsRequest {
   yearLevel?: string;
   establishmentId?: string;
   requiredHours?: number;
+  startDate?: string;
   status?: StudentStatus;
 }
 

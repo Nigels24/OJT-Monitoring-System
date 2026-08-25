@@ -28,6 +28,7 @@ interface StudentDetails {
   yearLevel?: string;
   establishmentId?: string;
   requiredHours?: number;
+  startDate?: string;
   status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
 }
 
@@ -599,6 +600,7 @@ function studentProfileData(data: StudentDetails) {
     yearLevel: data.yearLevel,
     establishmentId: data.establishmentId,
     requiredHours: data.requiredHours,
+    startDate: data.startDate ? new Date(data.startDate) : undefined,
     status: data.status,
   };
 }

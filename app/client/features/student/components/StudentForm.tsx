@@ -279,6 +279,14 @@ export default function StudentForm({
             onChange={setField("requiredHours")}
             placeholder="500"
           />
+          <TextField
+            label="OJT Start Date"
+            labelIcon={CalendarDays}
+            fieldIcon={CalendarDays}
+            type="date"
+            value={form.startDate}
+            onChange={setField("startDate")}
+          />
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Status

@@ -138,6 +138,15 @@ class StudentDetailsDto {
   @Min(0)
   requiredHours?: number;
 
+  // The day the student's OJT begins. Read by the coordinator's attendance
+  // oversight (GET /coordinator/attendance), which measures approved days
+  // against the calendar days elapsed since this date — a student with no
+  // startDate reports a null percentage rather than a misleading 0%.
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsDateString()
+  startDate?: string;
+
   @IsOptional()
   @IsIn(['ACTIVE', 'PENDING', 'COMPLETED', 'INACTIVE'])
   status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
