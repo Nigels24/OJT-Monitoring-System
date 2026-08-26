@@ -2,6 +2,7 @@ import { Controller, Post, Patch, Body, UseGuards, Req } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { IsString, IsNotEmpty, MinLength } from 'class-validator';
 import { AuthService } from './auth.service';
+import { AuthedRequest } from './authed-request';
 
 class LoginDto {
   /** Username or email address — see AuthService.login. */
@@ -39,7 +40,10 @@ export class AuthController {
   /** Any signed-in user, any role, changing their own password. */
   @Patch('password')
   @UseGuards(AuthGuard('jwt'))
-  async changePassword(@Req() req: any, @Body() dto: ChangePasswordDto) {
+  async changePassword(
+    @Req() req: AuthedRequest,
+    @Body() dto: ChangePasswordDto,
+  ) {
     return this.authService.changePassword(
       req.user.userId,
       dto.currentPassword,

@@ -3,6 +3,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { IsDateString, IsOptional, IsString, MaxLength } from 'class-validator';
 import { StudentService } from './student.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
+import { AuthedRequest } from '../auth/authed-request';
 
 class SubmitAttendanceDto {
   @IsDateString()
@@ -37,17 +38,20 @@ export class StudentController {
   constructor(private studentService: StudentService) {}
 
   @Get('dashboard')
-  getDashboard(@Req() req: any) {
+  getDashboard(@Req() req: AuthedRequest) {
     return this.studentService.getDashboard(req.user.userId);
   }
 
   @Post('attendance')
-  submitAttendance(@Req() req: any, @Body() dto: SubmitAttendanceDto) {
+  submitAttendance(
+    @Req() req: AuthedRequest,
+    @Body() dto: SubmitAttendanceDto,
+  ) {
     return this.studentService.submitAttendance(req.user.userId, dto);
   }
 
   @Get('attendance')
-  getAttendanceHistory(@Req() req: any) {
+  getAttendanceHistory(@Req() req: AuthedRequest) {
     return this.studentService.getAttendanceHistory(req.user.userId);
   }
 }

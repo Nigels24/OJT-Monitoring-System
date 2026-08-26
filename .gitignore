@@ -1,1 +1,25 @@
+# Repo-wide ignores. Each project also has its own .gitignore
+# (app/server/.gitignore, app/client/.gitignore) for build output and env files.
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+.fuse_hidden*
+.idea/
+.vscode/
+
+# Agent + tool scratch that should never be committed
+.claude/settings.local.json
 .agent-comms/
+
+# Dependencies and build output (belt-and-braces; the sub-projects ignore these too)
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
+
+# Secrets
+.env
+.env.local
+.env.*.local

@@ -13,7 +13,14 @@ import { StudentModule } from './student/student.module';
 import { SupervisorModule } from './supervisor/supervisor.module';
 
 @Module({
-  imports: [AuthModule, PrismaModule, CoordinatorModule, EstablishmentModule, StudentModule, SupervisorModule],
+  imports: [
+    AuthModule,
+    PrismaModule,
+    CoordinatorModule,
+    EstablishmentModule,
+    StudentModule,
+    SupervisorModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })

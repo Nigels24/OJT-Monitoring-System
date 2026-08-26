@@ -5,6 +5,7 @@ import {
   SetMetadata,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import type { AuthedRequest } from './authed-request';
 
 export const Roles = (...roles: string[]) => SetMetadata('roles', roles);
 
@@ -19,8 +20,7 @@ export class RolesGuard implements CanActivate {
     ]);
     if (!requiredRoles) return true;
 
-    const request = context.switchToHttp().getRequest();
-    const user = request.user;
-    return requiredRoles.includes(user?.role);
+    const request = context.switchToHttp().getRequest<AuthedRequest>();
+    return requiredRoles.includes(request.user?.role);
   }
 }

@@ -4,6 +4,8 @@ How data and requests actually move through the OJT Monitoring System. Read `CLA
 first for what exists and the rules; this file is the *mechanics* — read it when you need
 to trace a bug across layers or add a new module that has to fit the same shape.
 
+Section references like "§2" point within this file unless prefixed with `CLAUDE.md`.
+
 ## 1. Request lifecycle (every module follows this)
 
 ```
@@ -51,16 +53,9 @@ Every subsequent request
         YES → proceed with the query
 ```
 
-**Why two checks:** `RolesGuard` only ever sees a role string off the JWT — it has no
-idea whose data is being touched. Every module re-derives ownership itself in the
-service layer. A new endpoint that skips step 2 and trusts an `id` in the request body
-is a cross-tenant data leak (e.g. a supervisor approving another establishment's
-attendance record just by knowing its id).
-
-**Route-guard vs security-boundary, client side:** `proxy.ts` (Next 16's middleware)
-reads the `ojt_role` cookie and redirects — but that cookie is forgeable in devtools.
-It only prevents an authenticated-but-wrong-role user from *seeing* a page; the actual
-enforcement for every read/write is the two-check chain above, running on the server.
+The *why* behind both checks, and the forgeable-cookie caveat on `proxy.ts`, are in
+CLAUDE.md §4. What matters here is the ordering above: the guard runs first and can only
+reject on role; ownership is a second, separate rejection thrown from inside the service.
 
 ## 3. Login → landing page flow
 
@@ -83,10 +78,8 @@ Every later navigation:
                                  (except /auth/login itself, where 401 = bad credentials, not session death)
 ```
 
-If the cookie's `Max-Age` and the JWT's `expiresIn` ever drift apart, a user can end up
-with a live cookie but a dead token: bounced to `/login`, every subsequent call 401s,
-and for STUDENT/SUPERVISOR the pages that would show a logout button don't exist yet on
-some routes — a real lock-out, not just an inconvenience. Keep the two in sync.
+(Cookie `Max-Age` must equal the JWT's `expiresIn` or the user is locked out — reasoning
+in CLAUDE.md §4, "Client conventions".)
 
 ## 4. Attendance → hours → dashboards (the data pipeline every hour figure depends on)
 
@@ -113,48 +106,49 @@ in src/common/attendance-hours.ts — the single shared function:
     - Coordinator dashboard:    totalHoursLogged aggregate
     - Attendance oversight:     presentDays (APPROVED rows within [startDate, today])
                                    ÷ totalDays (calendar days since startDate)
-                                   = attendancePercentage (null if no startDate — never a fake 0%)
+                                   = attendancePercentage
+                                     (null if startDate is missing OR still in the
+                                      future — never a fake 0%)
 ```
 
-`Student.startDate` is the newest input to this pipeline (§7/§8 of CLAUDE.md) — until it's
-set on a student, their attendance-oversight percentage is `null` throughout, regardless
-of how much approved attendance they have.
+`Student.startDate` is the newest input to this pipeline — until it is set on a student,
+their attendance-oversight percentage is `null` throughout, regardless of how much
+approved attendance they have. See CLAUDE.md §7 ("Needs live verification").
 
 ## 5. Evaluation scoring flow
 
+The rubric itself — nine criteria, three weighted categories, the formula and its bands —
+is in CLAUDE.md §4. The only thing worth tracing here is **what is stored versus what is
+recomputed**, because the two are deliberately different:
+
 ```
-Supervisor submits POST /supervisor/evaluations
-  9 criteria, 1–5 each, grouped into 3 categories:
-    Work Performance (40%): quality, quantity, efficiency
-    Professional Behavior (30%): attendance, teamwork, communication
-    Technical Skills (30%): knowledge, problemSolving, initiative
-    ↓  src/common/evaluation-scoring.ts
-  overall = WPavg×0.4 + PBavg×0.3 + TSavg×0.3
-  performanceLevel = band(overall)   [≥4.5 Excellent … else Poor]
-    ↓
-  overallRating + performanceLevel STORED on the row (never accepted from the request body —
-  forbidNonWhitelisted rejects an attempt to supply them)
-    ↓
-  categories breakdown recomputed on every READ (withBreakdown) — not stored, presentation-only
-    ↓
-  Supervisor's own list (scoped to establishment) and Coordinator's list (all establishments,
-  read-only) both call the same withBreakdown/pickCriteria helpers → identical shape
+POST /supervisor/evaluations  (9 criteria, 1–5 each)
+  → src/common/evaluation-scoring.ts
+      overallRating + performanceLevel  ──STORED on the row──▶ survive a later rubric change
+      (never accepted from the body; forbidNonWhitelisted rejects an attempt to supply them)
+  ← on every READ: `categories` breakdown RECOMPUTED by withBreakdown() — never stored
+      supervisor's list (own establishment) and coordinator's list (all establishments,
+      read-only) call the same withBreakdown/pickCriteria → identical shape
 ```
 
-## 6. Module dependency map (why the build order in CLAUDE.md §7 is what it is)
+So a rating shown next to a *stale* category breakdown is possible by design: the rating
+is historical, the breakdown is current.
+
+## 6. Module dependency map
+
+The build order lives in CLAUDE.md §7; this is only the graph that explains it.
 
 ```
 Auth ──┬─▶ Establishment ──┬─▶ Student Mgmt (Coordinator) ──┬─▶ Student self-service
-       │                   │                                 ├─▶ Supervisor ──▶ Evaluations
-       │                   │                                 └─▶ Attendance oversight
-       │                   │                                       (needs Student.startDate,
-       │                   │                                        landed in §7 "in progress")
-       │                   └─▶ Supervisor contact fields ─▶ Messaging (not started)
+       │                   │                                ├─▶ Supervisor ──▶ Evaluations
+       │                   │                                └─▶ Attendance oversight
+       │                   └─▶ Supervisor contact fields ─▶ Messaging
        └─▶ Password recovery (cuts across all three roles once accounts exist)
-
-Documents / Credentials: needs only Student Mgmt (establishment + student rows already
-exist) — no other blocker, which is why it's next regardless of Messaging's state.
 ```
+
+Documents / Credentials hang off Student Mgmt alone — the rows they need already exist,
+which is why they come next regardless of Messaging's state. Their remaining blocker is a
+design decision, not a dependency (CLAUDE.md §7).
 
 ## 7. Where to look for a given bug
 
@@ -162,8 +156,8 @@ exist) — no other blocker, which is why it's next regardless of Messaging's st
 |---|---|
 | Wrong/missing data for one student but not others | Ownership check in the service (§2) — is it filtering by the right profile id? |
 | Hours don't match across two pages | `src/common/attendance-hours.ts` usage — is one call site bypassing `totalHours()`? |
-| A field silently became `0` instead of blank | Missing `ToOptionalNumber()`/`EmptyToUndefined()` on that DTO field (CLAUDE.md §5) |
+| A field silently became `0` instead of blank | Missing `ToOptionalNumber()`/`EmptyToUndefined()` on that DTO field (CLAUDE.md §4, "Validation and DTOs") |
 | 400 on a request that looks right | An undeclared body property (`forbidNonWhitelisted`) — check the DTO lists every field the form sends |
 | User stuck bounced to `/login` in a loop | Cookie `Max-Age` vs JWT `expiresIn` drift, or a stale token past its 1-day expiry (§3) |
 | A role sees another role's/establishment's data | Missing or wrong ownership re-derivation in the service — never trust a body/param id directly |
-| Percentage/aggregate shows `0%`/`0` instead of blank | Should probably be `null`/absent instead — see the "no data vs zero" convention, CLAUDE.md §5 |
+| Percentage/aggregate shows `0%`/`0` instead of blank | Should probably be `null`/absent — see "no data vs zero", CLAUDE.md §4. **But** a real `0` is correct once that field has a backend; the absent-not-zero half applies only while the module is unbuilt |

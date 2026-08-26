@@ -55,11 +55,7 @@ export const CATEGORIES = [
 }>;
 
 export type PerformanceLevel =
-  | 'Excellent'
-  | 'Very Good'
-  | 'Good'
-  | 'Fair'
-  | 'Poor';
+  'Excellent' | 'Very Good' | 'Good' | 'Fair' | 'Poor';
 
 /**
  * Prototype bands. Ordered high→low and evaluated top-down, so the first

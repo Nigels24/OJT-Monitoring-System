@@ -10,14 +10,16 @@ import { Transform } from 'class-transformer';
  * evaluation score into a real score of 0.
  */
 export const EmptyToUndefined = () =>
-  Transform(({ value }) => (value === '' || value === null ? undefined : value));
+  Transform(({ value }: { value: unknown }) =>
+    value === '' || value === null ? undefined : value,
+  );
 
 /**
  * As above, but also coerces to a number. Use instead of `@Type(() => Number)`
  * on optional numeric fields.
  */
 export const ToOptionalNumber = () =>
-  Transform(({ value }) =>
+  Transform(({ value }: { value: unknown }) =>
     value === '' || value === null || value === undefined
       ? undefined
       : Number(value),

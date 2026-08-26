@@ -27,6 +27,7 @@ import {
 } from 'class-validator';
 import { SupervisorService } from './supervisor.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
+import { AuthedRequest } from '../auth/authed-request';
 import { EmptyToUndefined } from '../common/transforms';
 import { MAX_SCORE, MIN_SCORE } from '../common/evaluation-scoring';
 
@@ -117,17 +118,17 @@ export class SupervisorController {
   constructor(private supervisorService: SupervisorService) {}
 
   @Get('dashboard')
-  getDashboard(@Req() req: any) {
+  getDashboard(@Req() req: AuthedRequest) {
     return this.supervisorService.getDashboard(req.user.userId);
   }
 
   @Get('students')
-  getStudents(@Req() req: any) {
+  getStudents(@Req() req: AuthedRequest) {
     return this.supervisorService.getStudents(req.user.userId);
   }
 
   @Get('attendance')
-  getAttendance(@Req() req: any, @Query() query: AttendanceQueryDto) {
+  getAttendance(@Req() req: AuthedRequest, @Query() query: AttendanceQueryDto) {
     return this.supervisorService.getAttendance(
       req.user.userId,
       query.status,
@@ -137,7 +138,7 @@ export class SupervisorController {
 
   @Patch('students/:id/status')
   setStudentStatus(
-    @Req() req: any,
+    @Req() req: AuthedRequest,
     @Param('id') id: string,
     @Body() dto: SetStudentStatusDto,
   ) {
@@ -149,13 +150,13 @@ export class SupervisorController {
   }
 
   @Patch('attendance/:id/approve')
-  approveAttendance(@Req() req: any, @Param('id') id: string) {
+  approveAttendance(@Req() req: AuthedRequest, @Param('id') id: string) {
     return this.supervisorService.approveAttendance(req.user.userId, id);
   }
 
   @Patch('attendance/:id/decline')
   declineAttendance(
-    @Req() req: any,
+    @Req() req: AuthedRequest,
     @Param('id') id: string,
     @Body() dto: DeclineAttendanceDto,
   ) {
@@ -167,12 +168,15 @@ export class SupervisorController {
   }
 
   @Get('evaluations')
-  getEvaluations(@Req() req: any) {
+  getEvaluations(@Req() req: AuthedRequest) {
     return this.supervisorService.getEvaluations(req.user.userId);
   }
 
   @Post('evaluations')
-  createEvaluation(@Req() req: any, @Body() dto: CreateEvaluationDto) {
+  createEvaluation(
+    @Req() req: AuthedRequest,
+    @Body() dto: CreateEvaluationDto,
+  ) {
     return this.supervisorService.createEvaluation(req.user.userId, dto);
   }
 }

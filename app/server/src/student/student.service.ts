@@ -69,12 +69,14 @@ export class StudentService {
         requiredHours: student.requiredHours,
         remainingHours: Math.max(
           0,
-          Math.round((student.requiredHours - totalHours(approved)) * 100) / 100,
+          Math.round((student.requiredHours - totalHours(approved)) * 100) /
+            100,
         ),
         totalLogs: attendances.length,
         approvedCount: approved.length,
         pendingCount: attendances.filter((a) => a.status === 'PENDING').length,
-        declinedCount: attendances.filter((a) => a.status === 'DECLINED').length,
+        declinedCount: attendances.filter((a) => a.status === 'DECLINED')
+          .length,
       },
       recentAttendance: attendances.slice(0, 5).map(withHours),
     };
