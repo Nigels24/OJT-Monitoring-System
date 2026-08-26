@@ -561,9 +561,13 @@ nothing tracks message delivery. Decide the columns with the user before adding 
 `Attendance` splits AM/PM into four nullable `DateTime`s (`timeInAM`, `timeOutAM`,
 `timeInPM`, `timeOutPM`) and carries `@@unique([studentId, date])`. `submitAttendance`
 normalises `date` to UTC midnight on write, so one student gets at most one row per
-calendar day; a repeat submission is a readable `ConflictException` (409) rather than a
-raw constraint error. A submission must contain at least one complete session (AM or PM)
-with positive hours, else 400. It always lands `PENDING`.
+calendar day; a repeat submission against a PENDING or APPROVED row is a readable
+`ConflictException` (409, message distinguishes the two) rather than a raw constraint
+error. A repeat submission against a **DECLINED** row instead overwrites it in place —
+see §8 item 14. A submission must contain at least one complete session (AM or PM), and
+every *supplied* session's time out must be strictly later than its time in, checked
+per-session rather than on the combined total (an inverted PM pair no longer hides behind
+a valid AM session), else 400. It always lands `PENDING`.
 
 **Delete guards** (both `ConflictException` 409): `EstablishmentService.remove` when
 students or supervisors reference it; `CoordinatorService.removeStudent` when attendance,
@@ -748,6 +752,19 @@ Ordered roughly by how likely each is to bite.
     request (`Promise.all(rows.map(withSignedUrl))`) — an extra Supabase round trip per
     row, same scaling shape as item 4. Fine at current volume; revisit alongside item 3 if
     pagination work starts.
+14. **A DECLINED attendance row is corrected by resubmitting the same date, not by a
+    separate edit endpoint.** `submitAttendance` treats an existing row differently by its
+    status: PENDING/APPROVED still 409 (with a message naming which), but DECLINED is
+    updated in place — times overwritten, `status` reset to PENDING,
+    `declineReason`/`approvedById` cleared to `null`. There is still no PATCH/DELETE on
+    student attendance; this is the only correction path. If a real edit endpoint is ever
+    added, keep this decline-then-resubmit behavior rather than removing it — it's the only
+    way a student recovers hours from a declined log today.
+15. **`Button`'s `fullWidth` prop defaults to `true`**, so all pre-existing call sites keep
+    stretching to fill their container; only the two page-header buttons (coordinator
+    Students, coordinator Establishments) were set `fullWidth={false}` when this was added.
+    Flip the default to `false` once every call site has been audited and given an explicit
+    `fullWidth` where it actually wants full width — don't flip it piecemeal.
 
 ---
 

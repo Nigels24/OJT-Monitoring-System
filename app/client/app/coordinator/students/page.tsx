@@ -80,6 +80,7 @@ export default function StudentManagementPage() {
           <Button
             icon={Plus}
             onClick={handleOpenAddDialog}
+            fullWidth={false}
             className="self-start md:self-auto"
           >
             Add Student

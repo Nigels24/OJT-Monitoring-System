@@ -89,6 +89,7 @@ export default function EstablishmentManagementPage() {
             <Button
               icon={Plus}
               onClick={handleOpenAddDialog}
+              fullWidth={false}
               className="self-start md:self-auto"
             >
               Add Establishment

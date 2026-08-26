@@ -54,7 +54,7 @@ export default function Sidebar({
   };
 
   return (
-    <aside className="w-64 min-h-screen flex flex-col bg-gradient-to-b from-indigo-500 to-purple-700 text-white">
+    <aside className="w-64 sticky top-0 h-screen shrink-0 overflow-y-auto flex flex-col bg-gradient-to-b from-indigo-500 to-purple-700 text-white">
       <div className="p-5 border-b border-white/10">
         <div className="flex items-center gap-2 font-bold text-lg">
           <Building2 size={22} />

@@ -166,30 +166,61 @@ export class StudentService {
       );
     }
 
-    if (hoursForAttendance(times) <= 0) {
-      throw new BadRequestException('Time out must be later than time in');
+    // hoursForAttendance's total-only check would let an inverted session
+    // (timeOut before timeIn) through silently scored as 0 as long as the
+    // other session is positive — validate each supplied session on its own.
+    if (
+      hasAmSession &&
+      times.timeOutAM!.getTime() <= times.timeInAM!.getTime()
+    ) {
+      throw new BadRequestException(
+        'Morning time out must be later than time in',
+      );
+    }
+    if (
+      hasPmSession &&
+      times.timeOutPM!.getTime() <= times.timeInPM!.getTime()
+    ) {
+      throw new BadRequestException(
+        'Afternoon time out must be later than time in',
+      );
     }
 
     const existing = await this.prisma.client.attendance.findUnique({
       where: { studentId_date: { studentId: student.id, date } },
     });
-    if (existing) {
+    if (existing && existing.status !== 'DECLINED') {
       throw new ConflictException(
-        'You have already submitted attendance for this date',
+        existing.status === 'APPROVED'
+          ? 'This date has already been approved and cannot be resubmitted'
+          : 'You have already submitted attendance for this date',
       );
     }
 
-    const created = await this.prisma.client.attendance.create({
-      data: {
-        studentId: student.id,
-        date,
-        ...times,
-        remarks: data.remarks,
-        status: 'PENDING',
-      },
-    });
+    // A DECLINED row is corrected in place rather than blocked — otherwise the
+    // student would permanently lose those hours with no way to fix the log.
+    const record = existing
+      ? await this.prisma.client.attendance.update({
+          where: { id: existing.id },
+          data: {
+            ...times,
+            remarks: data.remarks,
+            status: 'PENDING',
+            declineReason: null,
+            approvedById: null,
+          },
+        })
+      : await this.prisma.client.attendance.create({
+          data: {
+            studentId: student.id,
+            date,
+            ...times,
+            remarks: data.remarks,
+            status: 'PENDING',
+          },
+        });
 
-    return withHours(created);
+    return withHours(record);
   }
 
   async getAttendanceHistory(userId: string) {
