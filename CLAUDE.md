@@ -624,22 +624,34 @@ Supervisor contact fields (blocks part of messaging's UI).
 ### Remaining build order
 
 1. **Verify `Student.startDate` live** (above).
-2. **Documents + Credentials** — **blocked on an undecided design. Ask the user before
-   writing code.** `@supabase/supabase-js` is installed and unused; nothing about file
-   storage has been chosen. The open questions:
-   - Does the browser upload straight to Supabase Storage and POST the resulting URL, or
-     does the server take multipart via `FileInterceptor`? *(The global `ValidationPipe`
-     runs `whitelist` + `forbidNonWhitelisted`; multipart bodies need an explicit story
-     against that — this is the reason to decide before coding, not after.)*
-   - Bucket name; public URLs or signed URLs, and with what TTL.
-   - Which env vars to add — §3 currently lists only `DATABASE_URL`, `DIRECT_URL`,
-     `JWT_SECRET`. A service-role key must not reach the client bundle.
-   - Allowed MIME types and a size cap.
-   - Who reviews a document, and with what states — `Document.status` is a free-form
-     `String` today (§6), not an enum, and has no reviewer or review-note column.
-
-   The data model is otherwise unblocked: establishment and student rows already exist.
+2. **Documents + Credentials** — storage design is **decided** (below). Build the upload
+   helper once; both modules use it.
 3. **Messaging** — needs supervisor contact fields first for the prototype's panels.
+
+### File storage — the decided design
+
+Settled, not open. Don't re-litigate it mid-task; if it needs to change, change it here
+first.
+
+| Question | Decision |
+|---|---|
+| Upload path | **Server-side multipart.** The client POSTs the file to Nest; Nest uploads it to Supabase Storage and stores the returned path. One code path, validation in one place, and the service key never reaches the browser. |
+| Bucket | One **private** bucket, `student-files`, with `documents/<studentId>/` and `credentials/<studentId>/` prefixes |
+| Read access | **Signed URLs, 1-hour TTL**, minted per request. These are ID scans and certificates — never a public bucket. `Document.fileUrl` / `Credential.fileUrl` store the **object path**, not a signed URL (a stored signed URL expires and rots). |
+| Env vars | `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, in `app/server/.env` only. **Never** a `NEXT_PUBLIC_*` var — that key bypasses row-level security and would ship in the client bundle. |
+| Limits | `application/pdf`, `image/png`, `image/jpeg`; 10 MB max. Reject anything else with a 400. |
+| Reviewer | **Coordinator.** The prototype has no supervisor-side documents screen. |
+| Review columns | Add `reviewedById`, `reviewNote`, `reviewedAt` to `Document`. Leave `status` as the existing free-form `String` (`PENDING` / `APPROVED` / `REJECTED`) rather than converting to an enum — converting is a destructive migration on a live DB for no gain right now. |
+| Credentials | No review state. A credential is uploaded and listed; that's all. |
+
+**The multipart gotcha.** `main.ts`'s global `ValidationPipe` runs `whitelist` +
+`forbidNonWhitelisted`, which rejects the fields a multipart body carries. The file must
+come through `@UploadedFile()` with `FileInterceptor`, and the DTO covers **only** the
+text fields alongside it. Validate the file's mimetype and size in the handler, not the
+DTO.
+
+**Shared helper.** Put the upload/sign/delete logic in `src/common/storage.ts` (or a
+small `StorageModule`) and use it from both modules — don't write it twice.
 
 ---
 
