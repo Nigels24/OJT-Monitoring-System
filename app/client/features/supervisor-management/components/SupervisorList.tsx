@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, UserCog, KeyRound } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  UserCog,
+  KeyRound,
+  Trash2,
+} from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import SearchInput from "@/components/ui/SearchInput";
 import { CoordinatorSupervisor } from "@/lib/api/supervisorManagementApi";
@@ -13,6 +19,7 @@ interface SupervisorListProps {
   onSearchChange: (value: string) => void;
   onPageChange: (page: number) => void;
   onResetPassword: (supervisor: CoordinatorSupervisor) => void;
+  onDelete: (supervisor: CoordinatorSupervisor) => void;
 }
 
 export default function SupervisorList({
@@ -24,6 +31,7 @@ export default function SupervisorList({
   onSearchChange,
   onPageChange,
   onResetPassword,
+  onDelete,
 }: SupervisorListProps) {
   // Seeded once from the prop. The parent's `search` is only ever changed by
   // the debounce below, so there is nothing to sync back the other way.
@@ -84,6 +92,13 @@ export default function SupervisorList({
             title="Reset password"
           >
             <KeyRound size={14} />
+          </button>
+          <button
+            onClick={() => onDelete(r)}
+            className="p-1 md:p-1.5 rounded-md border border-red-200 text-red-600 hover:bg-red-50"
+            aria-label={`Delete ${r.user.name}`}
+          >
+            <Trash2 size={14} />
           </button>
         </div>
       ),

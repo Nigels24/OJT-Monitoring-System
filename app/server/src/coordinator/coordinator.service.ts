@@ -593,6 +593,38 @@ export class CoordinatorService {
 
     return { id: studentId, deleted: true };
   }
+
+  async removeSupervisor(supervisorId: string) {
+    const supervisor = await this.prisma.client.supervisor.findUnique({
+      where: { id: supervisorId },
+      include: {
+        _count: {
+          select: { attendanceApprovals: true, evaluations: true },
+        },
+      },
+    });
+    if (!supervisor) {
+      throw new NotFoundException('Supervisor not found');
+    }
+
+    const { attendanceApprovals, evaluations } = supervisor._count;
+    if (attendanceApprovals > 0 || evaluations > 0) {
+      throw new ConflictException(
+        `Cannot delete this supervisor: ${attendanceApprovals} attendance approval(s) and ` +
+          `${evaluations} evaluation(s) reference them. Reassign these records to another ` +
+          'supervisor first.',
+      );
+    }
+
+    // Supervisor and User are separate rows; removing only the profile would
+    // strand a login with no profile.
+    await this.prisma.client.supervisor.delete({
+      where: { id: supervisorId },
+    });
+    await this.prisma.client.user.delete({ where: { id: supervisor.userId } });
+
+    return { id: supervisorId, deleted: true };
+  }
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;

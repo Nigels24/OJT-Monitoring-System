@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { clearSession } from "@/lib/auth";
 import ChangePasswordDialog from "@/features/account/ChangePasswordDialog";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import {
   LucideIcon,
   Building2,
@@ -40,6 +41,7 @@ export default function Sidebar({
   const pathname = usePathname();
   const router = useRouter();
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
 
   const handleLogout = () => {
     // Always clear first. `proxy.ts` trusts the role cookie for routing, so a
@@ -109,7 +111,9 @@ export default function Sidebar({
           <KeyRound size={18} />
         </button>
         <button
-          onClick={handleLogout}
+          onClick={() => {
+            setLogoutConfirmOpen(true);
+          }}
           aria-label="Logout"
           title="Logout"
           className="text-white/80 hover:text-white shrink-0"
@@ -122,6 +126,19 @@ export default function Sidebar({
         open={passwordDialogOpen}
         onClose={() => {
           setPasswordDialogOpen(false);
+        }}
+      />
+
+      <ConfirmDialog
+        open={logoutConfirmOpen}
+        title="Log Out?"
+        message="You'll need to sign in again to continue."
+        confirmLabel="Yes, log out"
+        icon={LogOut}
+        variant="danger"
+        onConfirm={handleLogout}
+        onCancel={() => {
+          setLogoutConfirmOpen(false);
         }}
       />
     </aside>

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   useGetSupervisorsQuery,
   useCreateSupervisorMutation,
+  useDeleteSupervisorMutation,
   CoordinatorSupervisor,
 } from "@/lib/api/supervisorManagementApi";
 import { useGetEstablishmentsQuery } from "@/lib/api/establishmentApi";
@@ -26,6 +27,9 @@ export function useSupervisorManagement() {
   const [resetTarget, setResetTarget] = useState<CoordinatorSupervisor | null>(
     null,
   );
+  const [deleteTarget, setDeleteTarget] = useState<CoordinatorSupervisor | null>(
+    null,
+  );
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -36,6 +40,7 @@ export function useSupervisorManagement() {
   const { data: establishments } = useGetEstablishmentsQuery();
   const [createSupervisor, { isLoading: isCreating }] =
     useCreateSupervisorMutation();
+  const [deleteSupervisor] = useDeleteSupervisorMutation();
 
   const setField =
     (key: keyof SupervisorForm) =>
@@ -64,6 +69,18 @@ export function useSupervisorManagement() {
     } catch (err: unknown) {
       const message = readError(err, "Failed to add supervisor.");
       setError(message);
+      showError(message);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    try {
+      await deleteSupervisor(deleteTarget.id).unwrap();
+      showSuccess(`"${deleteTarget.user.name}" has been removed.`);
+      setDeleteTarget(null);
+    } catch (err: unknown) {
+      const message = readError(err, "Failed to remove supervisor.");
       showError(message);
     }
   };
@@ -116,6 +133,7 @@ export function useSupervisorManagement() {
     isLoading,
     isCreating,
     resetTarget,
+    deleteTarget,
     isDialogOpen,
     search,
     page,
@@ -127,8 +145,10 @@ export function useSupervisorManagement() {
     setSearch,
     setPage,
     setResetTarget,
+    setDeleteTarget,
 
     handleSubmit,
+    handleDeleteConfirm,
     handleOpenAddDialog,
     closeDialog,
   };

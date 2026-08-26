@@ -289,4 +289,9 @@ export class CoordinatorController {
   ) {
     return this.coordinatorService.resetSupervisorPassword(id, dto.password);
   }
+
+  @Delete('supervisors/:id')
+  removeSupervisor(@Param('id') id: string) {
+    return this.coordinatorService.removeSupervisor(id);
+  }
 }

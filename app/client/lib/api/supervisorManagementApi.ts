@@ -75,6 +75,15 @@ export const supervisorManagementApi = createApi({
         body: { password },
       }),
     }),
+    deleteSupervisor: builder.mutation<{ id: string; deleted: boolean }, string>(
+      {
+        query: (id) => ({
+          url: `/coordinator/supervisors/${id}`,
+          method: "DELETE",
+        }),
+        invalidatesTags: ["CoordinatorSupervisor"],
+      },
+    ),
   }),
 });
 
@@ -82,4 +91,5 @@ export const {
   useGetSupervisorsQuery,
   useCreateSupervisorMutation,
   useResetSupervisorPasswordMutation,
+  useDeleteSupervisorMutation,
 } = supervisorManagementApi;

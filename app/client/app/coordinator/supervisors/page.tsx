@@ -6,6 +6,7 @@ import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
 import Button from "@/components/ui/Button";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { UserCog, Plus, Building2, UserX } from "lucide-react";
 import { useSupervisorManagement } from "@/features/supervisor-management/hooks/use-supervisor-management";
@@ -22,6 +23,7 @@ export default function SupervisorManagementPage() {
     isLoading,
     isCreating,
     resetTarget,
+    deleteTarget,
     isDialogOpen,
     search,
     page,
@@ -32,7 +34,9 @@ export default function SupervisorManagementPage() {
     setSearch,
     setPage,
     setResetTarget,
+    setDeleteTarget,
     handleSubmit,
+    handleDeleteConfirm,
     handleOpenAddDialog,
     closeDialog,
   } = useSupervisorManagement();
@@ -96,9 +100,24 @@ export default function SupervisorManagementPage() {
             onResetPassword={(supervisor) => {
               setResetTarget(supervisor);
             }}
+            onDelete={(supervisor) => {
+              setDeleteTarget(supervisor);
+            }}
           />
         </Card>
       </main>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Remove Supervisor?"
+        message={`This permanently deletes "${deleteTarget?.user.name}" and their login. Supervisors with attendance approvals or evaluations cannot be deleted — reassign those records first.`}
+        confirmLabel="Yes, remove"
+        variant="danger"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => {
+          setDeleteTarget(null);
+        }}
+      />
 
       <SupervisorFormDialog
         open={isDialogOpen}

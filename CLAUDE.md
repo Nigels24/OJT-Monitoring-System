@@ -108,7 +108,10 @@ table), `coordinator` (nav only), `account`.
 **UI primitives** (`components/ui/`): DataTable, StatCard, StatusBadge, ProgressBar,
 TrendChart, RankedBarList, ConfirmDialog, ViewDialog, TextField, TextArea, SelectField,
 SearchInput, Tabs, Card, Button, PageHeader, Avatar, DetailItem, Snackbar. Reuse these
-before adding a new one.
+before adding a new one. `TextField` auto-adds a show/hide eye toggle whenever
+`type="password"` — don't build a second one at the call site; a field that should stay
+plain text (the coordinator's issued-password fields, so it can be read back) uses
+`type="text"` instead, deliberately.
 
 `establishment`, `student` (coordinator side) and `supervisor` are the reference
 end-to-end vertical slices — **copy their shape when building a new domain.**
@@ -455,6 +458,7 @@ table; never derive one from the other.
 | POST | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | issues username + password |
 | GET | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | |
 | PATCH/DELETE | `/coordinator/students/:id` | COORDINATOR | delete is guarded, see §6 |
+| DELETE | `/coordinator/supervisors/:id` | COORDINATOR | delete is guarded, see §6 |
 | PATCH | `/coordinator/students/:id/password` · `/coordinator/supervisors/:id/password` | COORDINATOR | |
 | GET | `/coordinator/dashboard` | COORDINATOR | real aggregates |
 | GET | `/coordinator/attendance` | COORDINATOR | cross-establishment oversight |
@@ -571,9 +575,12 @@ every *supplied* session's time out must be strictly later than its time in, che
 per-session rather than on the combined total (an inverted PM pair no longer hides behind
 a valid AM session), else 400. It always lands `PENDING`.
 
-**Delete guards** (both `ConflictException` 409): `EstablishmentService.remove` when
+**Delete guards** (all `ConflictException` 409): `EstablishmentService.remove` when
 students or supervisors reference it; `CoordinatorService.removeStudent` when attendance,
-evaluations or documents reference the student.
+evaluations or documents reference the student; `CoordinatorService.removeSupervisor`
+when attendance approvals (the `"ApprovedBy"` relation) or evaluations reference the
+supervisor — same shape as `removeStudent`, both rows (`Supervisor` then `User`) deleted
+only once the counts are both zero.
 
 ### Migration history
 
@@ -625,9 +632,9 @@ needed (§7).
   other field, including `gender` and `endDate`, is read-only from this endpoint). The rest
   of the student portal is unbuilt; see "Partially built" below.
 - **Supervisor** — dashboard + attendance approval with required decline reasons.
-- **Supervisor Management (Coordinator)** — create, list, and password reset only (no
-  edit or delete — see §8 item 10). Table columns: name, username, email, establishment,
-  position.
+- **Supervisor Management (Coordinator)** — create, list, password reset, and delete
+  (guarded — see §6). No edit yet (§8 item 10). Table columns: name, username, email,
+  establishment, position.
 - **Evaluations** — 9-criterion weighted rubric; supervisor writes, coordinator reads
   across establishments.
 - **Password recovery** — self-service change for everyone, coordinator-issued reset for
@@ -744,13 +751,9 @@ Ordered roughly by how likely each is to bite.
    not "who approved this".
 9. Evaluations can't be edited or deleted once submitted, and there is no per-period
    uniqueness.
-10. **Supervisor Management (Coordinator) has no edit or delete.** Only create, list, and
-    password reset exist — neither endpoint nor UI for editing a supervisor's details/
-    establishment or deleting one. Both need delete-guard design first:
-    `Attendance.approvedById` references `Supervisor` (§8 item 8 — it's set on decline
-    too), so removing a supervisor needs the same shape of guard
-    `CoordinatorService.removeStudent` uses for students, or a reassignment strategy for
-    the historical rows it actioned. Don't build either speculatively.
+10. **Supervisor Management (Coordinator) has no edit.** Create, list, password reset, and
+    delete all exist; there is still no endpoint or UI for editing a supervisor's
+    details/establishment. Don't build it speculatively — add it when asked.
 11. The coordinator dashboard's attendance trend has no server-side date range; it is
     always the last 6 weeks from today.
 12. `Student.gender` and `Student.endDate` are readable on the Profile page but have
