@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
   Building2,
+  UserCog,
   Users,
   CalendarCheck,
   Star,
@@ -23,6 +24,11 @@ export const COORDINATOR_NAV = [
     label: "Establishment Management",
     href: "/coordinator/establishments",
     icon: Building2,
+  },
+  {
+    label: "Supervisor Management",
+    href: "/coordinator/supervisors",
+    icon: UserCog,
   },
   { label: "Student Management", href: "/coordinator/students", icon: Users },
   { label: "Attendance", href: "/coordinator/attendance", icon: CalendarCheck },

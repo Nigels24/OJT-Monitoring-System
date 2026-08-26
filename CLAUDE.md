@@ -74,7 +74,7 @@ OJT-Monitoring-System/
         ├── app/
         │   ├── page.tsx            # redirects to /login
         │   ├── login/
-        │   ├── coordinator/{dashboard,establishments,students,evaluations,attendance,documents,messages*}
+        │   ├── coordinator/{dashboard,establishments,supervisors,students,evaluations,attendance,documents,messages*}
         │   ├── student/{dashboard,attendance,documents,profile,credentials,messages*}
         │   └── supervisor/{dashboard,attendance,evaluation,messages*}
         │         (* = route folder exists, no page.tsx yet — unbuilt)
@@ -93,15 +93,17 @@ OJT-Monitoring-System/
 ```
 
 **Feature domains:** `establishment`, `student` (the *coordinator's* view of students),
-`student-portal` (the *student's own* view — do not conflate the two), `supervisor`,
+`student-portal` (the *student's own* view — do not conflate the two), `supervisor` (the
+*supervisor's own* approval-queue view), `supervisor-management` (the *coordinator's* view
+of supervisors — same create/list/reset-password split as student vs student-portal),
 `evaluation`, `attendance-oversight`, `document` (the *coordinator's* cross-student review
 queue — `student-portal` owns the student's own upload/list/delete view of the same
 table), `coordinator` (nav only), `account`.
 
 **API slices** (`lib/api/*.ts`): `authApi`, `establishmentApi`, `studentApi`,
-`studentPortalApi`, `supervisorApi`, `evaluationApi`, `dashboardApi`,
-`attendanceOversightApi`, `documentApi`. Each is registered in `lib/store.ts` — **reducer
-*and* middleware**.
+`studentPortalApi`, `supervisorApi`, `supervisorManagementApi`, `evaluationApi`,
+`dashboardApi`, `attendanceOversightApi`, `documentApi`. Each is registered in
+`lib/store.ts` — **reducer *and* middleware**.
 
 **UI primitives** (`components/ui/`): DataTable, StatCard, StatusBadge, ProgressBar,
 TrendChart, RankedBarList, ConfirmDialog, ViewDialog, TextField, TextArea, SelectField,
@@ -623,6 +625,9 @@ needed (§7).
   other field, including `gender` and `endDate`, is read-only from this endpoint). The rest
   of the student portal is unbuilt; see "Partially built" below.
 - **Supervisor** — dashboard + attendance approval with required decline reasons.
+- **Supervisor Management (Coordinator)** — create, list, and password reset only (no
+  edit or delete — see §8 item 10). Table columns: name, username, email, establishment,
+  position.
 - **Evaluations** — 9-criterion weighted rubric; supervisor writes, coordinator reads
   across establishments.
 - **Password recovery** — self-service change for everyone, coordinator-issued reset for
@@ -656,7 +661,7 @@ start date and confirm the oversight page shows a real percentage.
 | Module | Backend | Frontend |
 |---|---|---|
 | Student portal (Messages) | none — no endpoints exist | not built |
-| Supervisor | done | dashboard, approval, evaluation done; **Messages** not built; supervisor password reset has an endpoint but no UI button |
+| Supervisor | done | dashboard, approval, evaluation done; **Messages** not built |
 
 ### Not started
 
@@ -739,8 +744,13 @@ Ordered roughly by how likely each is to bite.
    not "who approved this".
 9. Evaluations can't be edited or deleted once submitted, and there is no per-period
    uniqueness.
-10. Supervisor password reset has an endpoint but no UI — there's no supervisor
-    management page to hang it off yet.
+10. **Supervisor Management (Coordinator) has no edit or delete.** Only create, list, and
+    password reset exist — neither endpoint nor UI for editing a supervisor's details/
+    establishment or deleting one. Both need delete-guard design first:
+    `Attendance.approvedById` references `Supervisor` (§8 item 8 — it's set on decline
+    too), so removing a supervisor needs the same shape of guard
+    `CoordinatorService.removeStudent` uses for students, or a reassignment strategy for
+    the historical rows it actioned. Don't build either speculatively.
 11. The coordinator dashboard's attendance trend has no server-side date range; it is
     always the last 6 weeks from today.
 12. `Student.gender` and `Student.endDate` are readable on the Profile page but have
@@ -765,6 +775,13 @@ Ordered roughly by how likely each is to bite.
     Students, coordinator Establishments) were set `fullWidth={false}` when this was added.
     Flip the default to `false` once every call site has been audited and given an explicit
     `fullWidth` where it actually wants full width — don't flip it piecemeal.
+16. **Fixed: `listSupervisors` used to leak `User.password` (the bcrypt hash) to the
+    client**, via a bare `include: { user: true, establishment: true }` — Prisma's
+    `include` returns every scalar column, unlike `select`. `listStudents` was already
+    correct. Now fixed to an explicit `select` (id, email, username, name, createdAt) the
+    same way. **This was the only bare `user: true`/`include` on a `User` relation in the
+    codebase** — if a future list endpoint adds one, check it doesn't reintroduce this;
+    always `select` explicitly on any relation to `User`.
 
 ---
 

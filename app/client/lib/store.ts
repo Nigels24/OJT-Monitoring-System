@@ -4,6 +4,7 @@ import { establishmentApi } from "./api/establishmentApi";
 import { studentApi } from "./api/studentApi";
 import { studentPortalApi } from "./api/studentPortalApi";
 import { supervisorApi } from "./api/supervisorApi";
+import { supervisorManagementApi } from "./api/supervisorManagementApi";
 import { evaluationApi } from "./api/evaluationApi";
 import { dashboardApi } from "./api/dashboardApi";
 import { attendanceOversightApi } from "./api/attendanceOversightApi";
@@ -16,6 +17,7 @@ export const store = configureStore({
     [studentApi.reducerPath]: studentApi.reducer,
     [studentPortalApi.reducerPath]: studentPortalApi.reducer,
     [supervisorApi.reducerPath]: supervisorApi.reducer,
+    [supervisorManagementApi.reducerPath]: supervisorManagementApi.reducer,
     [evaluationApi.reducerPath]: evaluationApi.reducer,
     [dashboardApi.reducerPath]: dashboardApi.reducer,
     [attendanceOversightApi.reducerPath]: attendanceOversightApi.reducer,
@@ -28,6 +30,7 @@ export const store = configureStore({
       studentApi.middleware,
       studentPortalApi.middleware,
       supervisorApi.middleware,
+      supervisorManagementApi.middleware,
       evaluationApi.middleware,
       dashboardApi.middleware,
       attendanceOversightApi.middleware,

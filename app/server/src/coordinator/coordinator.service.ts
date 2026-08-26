@@ -179,7 +179,19 @@ export class CoordinatorService {
 
   async listSupervisors() {
     return this.prisma.client.supervisor.findMany({
-      include: { user: true, establishment: true },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            name: true,
+            createdAt: true,
+          },
+        },
+        establishment: { select: { id: true, name: true } },
+      },
+      orderBy: { user: { createdAt: 'desc' } },
     });
   }
 
