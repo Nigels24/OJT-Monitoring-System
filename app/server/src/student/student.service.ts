@@ -16,6 +16,16 @@ interface SubmitAttendanceInput {
   remarks?: string;
 }
 
+interface UpdateProfileInput {
+  contactNumber?: string;
+  address?: string;
+}
+
+const PROFILE_INCLUDE = {
+  user: { select: { id: true, email: true, name: true } },
+  establishment: { select: { id: true, name: true } },
+} as const;
+
 @Injectable()
 export class StudentService {
   constructor(private prisma: PrismaService) {}
@@ -142,6 +152,26 @@ export class StudentService {
     });
 
     return attendances.map(withHours);
+  }
+
+  async getProfile(userId: string) {
+    const student = await this.prisma.client.student.findUnique({
+      where: { userId },
+      include: PROFILE_INCLUDE,
+    });
+    if (!student) {
+      throw new NotFoundException('Student profile not found');
+    }
+    return student;
+  }
+
+  async updateProfile(userId: string, data: UpdateProfileInput) {
+    const student = await this.getStudentByUserId(userId);
+    return this.prisma.client.student.update({
+      where: { id: student.id },
+      data,
+      include: PROFILE_INCLUDE,
+    });
   }
 }
 

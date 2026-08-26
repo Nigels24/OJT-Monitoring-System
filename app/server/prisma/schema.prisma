@@ -126,6 +126,8 @@ model Student {
   contactNumber String?
   address       String?
   yearLevel     String?
+  gender        String?
+  endDate       DateTime?
 
   attendances Attendance[]
   documents   Document[]

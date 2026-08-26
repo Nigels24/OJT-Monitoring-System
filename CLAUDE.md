@@ -66,7 +66,7 @@ OJT-Monitoring-System/
     │   ├── prisma/
     │   │   ├── schema.prisma
     │   │   ├── seed.ts             # bootstraps ONLY the coordinator
-    │   │   └── migrations/         # 10 migrations, listed in §6
+    │   │   └── migrations/         # 11 migrations, listed in §6
     │   ├── scripts/reset-coordinator.ts
     │   ├── test/                   # e2e only
     │   └── generated/prisma/       # gitignored — run `npx prisma generate`
@@ -450,8 +450,9 @@ table; never derive one from the other.
 | GET | `/coordinator/dashboard` | COORDINATOR | real aggregates |
 | GET | `/coordinator/attendance` | COORDINATOR | cross-establishment oversight |
 | GET | `/coordinator/evaluations` | COORDINATOR | read-only, all establishments |
-| GET | `/student/dashboard` · `/student/attendance` | STUDENT | own data only |
+| GET | `/student/dashboard` · `/student/attendance` · `/student/profile` | STUDENT | own data only |
 | POST | `/student/attendance` | STUDENT | one row per calendar day |
+| PATCH | `/student/profile` | STUDENT | `{ contactNumber?, address? }` — the only two fields a student may self-edit |
 | GET | `/supervisor/dashboard` · `/supervisor/students` · `/supervisor/attendance` | SUPERVISOR | scoped to own establishment |
 | PATCH | `/supervisor/students/:id/status` | SUPERVISOR | |
 | PATCH | `/supervisor/attendance/:id/approve` | SUPERVISOR | clears any `declineReason` |
@@ -558,6 +559,7 @@ evaluations or documents reference the student.
 | `20260811091601_attendance_decline_reason` | `Attendance.declineReason` — separate from the student's own `remarks`; never overwrite one with the other |
 | `20260811120804_user_username` | `User.username`, nullable, unique, no `@` |
 | `20260811234804_evaluation_rubric` | Replaced `score`/`feedback` with the 9 criteria, `overallRating`, `performanceLevel`, `periodStart`/`periodEnd`, `comments`, `recommendations`. Destructive — the table was empty |
+| `20260826023817_student_profile_fields` | `Student`: `gender`, `endDate` — both nullable, for the student Profile page |
 
 **Policy: one migration per module.** Add only the columns the current module needs.
 
@@ -572,7 +574,6 @@ evaluations or documents reference the student.
 
 ### Known schema gaps
 
-- **Student** — no `gender`, no `endDate`. Both are needed for the Profile screen.
 - **Supervisor** — no contact fields; the prototype's messaging panels show email + phone.
 - **Document / Credential** — store a `fileUrl` string with **no storage wired**.
   `@supabase/supabase-js` is installed but unused; Supabase Storage is the obvious fit.
@@ -587,7 +588,9 @@ evaluations or documents reference the student.
 - **Establishment (Coordinator)** — full CRUD, PSGC cascading address dropdowns.
 - **Student Management (Coordinator)** — full CRUD, computed hours, progress, stats,
   including a writable `Student.startDate`.
-- **Student self-service (dashboard + attendance only)** — logging and history. The rest
+- **Student self-service (dashboard, attendance, profile)** — logging and history, plus
+  `GET`/`PATCH /student/profile` (self-edit limited to `contactNumber` and `address`; every
+  other field, including `gender` and `endDate`, is read-only from this endpoint). The rest
   of the student portal is unbuilt; see "Partially built" below.
 - **Supervisor** — dashboard + attendance approval with required decline reasons.
 - **Evaluations** — 9-criterion weighted rubric; supervisor writes, coordinator reads
@@ -610,14 +613,13 @@ start date and confirm the oversight page shows a real percentage.
 
 | Module | Backend | Frontend |
 |---|---|---|
-| Student portal (beyond dashboard + attendance) | none — no endpoints exist for Documents, Credentials, Profile or Messages | not built |
+| Student portal (Documents, Credentials, Messages) | none — no endpoints exist | not built |
 | Supervisor | done | dashboard, approval, evaluation done; **Messages** not built; supervisor password reset has an endpoint but no UI button |
 
 ### Not started
 
 Messaging (models + `socket.io` installed, zero code) · Documents · Credentials ·
-Student **Profile** section (needs `gender` + `endDate` on `Student`) · Supervisor
-contact fields (blocks part of messaging's UI).
+Supervisor contact fields (blocks part of messaging's UI).
 
 ### Remaining build order
 
@@ -638,7 +640,6 @@ contact fields (blocks part of messaging's UI).
 
    The data model is otherwise unblocked: establishment and student rows already exist.
 3. **Messaging** — needs supervisor contact fields first for the prototype's panels.
-4. Student **Profile** — needs a `gender` + `endDate` migration.
 
 ---
 
@@ -681,6 +682,11 @@ Ordered roughly by how likely each is to bite.
     management page to hang it off yet.
 11. The coordinator dashboard's attendance trend has no server-side date range; it is
     always the last 6 weeks from today.
+12. `Student.gender` and `Student.endDate` are readable on the Profile page but have
+    **no write path anywhere** — the coordinator's `CreateStudentDto`/`StudentDetailsDto`
+    doesn't declare them and the student's own `PATCH /student/profile` deliberately
+    excludes them (self-edit is limited to `contactNumber`/`address`). They will read `—`
+    for every student until the coordinator's student form is extended to set them.
 
 ---
 

@@ -73,10 +73,38 @@ export interface SubmitAttendanceRequest {
   remarks?: string;
 }
 
+export interface StudentProfile {
+  id: string;
+  studentIdNumber: string;
+  course: string | null;
+  yearLevel: string | null;
+  school: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  middleInitial: string | null;
+  age: number | null;
+  dateOfBirth: string | null;
+  gender: string | null;
+  contactNumber: string | null;
+  address: string | null;
+  requiredHours: number;
+  startDate: string | null;
+  endDate: string | null;
+  status: string;
+  user: { id: string; email: string; name: string };
+  establishment: { id: string; name: string } | null;
+}
+
+/** The only two fields a student may edit on their own record. */
+export interface UpdateProfileRequest {
+  contactNumber?: string;
+  address?: string;
+}
+
 export const studentPortalApi = createApi({
   reducerPath: "studentPortalApi",
   baseQuery: baseQueryWithAuth,
-  tagTypes: ["MyDashboard", "MyAttendance"],
+  tagTypes: ["MyDashboard", "MyAttendance", "MyProfile"],
   endpoints: (builder) => ({
     getMyDashboard: builder.query<StudentDashboard, void>({
       query: () => "/student/dashboard",
@@ -98,6 +126,20 @@ export const studentPortalApi = createApi({
       // A new log changes the dashboard totals too.
       invalidatesTags: ["MyAttendance", "MyDashboard"],
     }),
+    getMyProfile: builder.query<StudentProfile, void>({
+      query: () => "/student/profile",
+      providesTags: ["MyProfile"],
+    }),
+    updateMyProfile: builder.mutation<StudentProfile, UpdateProfileRequest>({
+      query: (body) => ({
+        url: "/student/profile",
+        method: "PATCH",
+        body,
+      }),
+      // The dashboard's spread of the student record carries contactNumber
+      // and address too, so it goes stale alongside the profile.
+      invalidatesTags: ["MyProfile", "MyDashboard"],
+    }),
   }),
 });
 
@@ -105,4 +147,6 @@ export const {
   useGetMyDashboardQuery,
   useGetMyAttendanceQuery,
   useSubmitAttendanceMutation,
+  useGetMyProfileQuery,
+  useUpdateMyProfileMutation,
 } = studentPortalApi;
