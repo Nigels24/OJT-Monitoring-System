@@ -12,6 +12,7 @@ import {
   withBreakdown,
 } from '../supervisor/supervisor.service';
 import { performanceLevel } from '../common/evaluation-scoring';
+import { DOCUMENT_INCLUDE, withSignedUrl } from '../student/student.service';
 
 /** Fields the coordinator can set on a student, shared by create and update. */
 interface StudentDetails {
@@ -495,6 +496,57 @@ export class CoordinatorService {
       username: supervisor.user.username,
       passwordReset: true,
     };
+  }
+
+  /** Every document across every establishment — read/review oversight. */
+  async getDocuments() {
+    const documents = await this.prisma.client.document.findMany({
+      include: DOCUMENT_INCLUDE,
+      orderBy: { uploadedAt: 'desc' },
+    });
+
+    return Promise.all(documents.map(withSignedUrl));
+  }
+
+  async reviewDocument(
+    userId: string,
+    documentId: string,
+    status: 'APPROVED' | 'REJECTED',
+    reviewNote?: string,
+  ) {
+    const coordinator = await this.getCoordinatorByUserId(userId);
+
+    const document = await this.prisma.client.document.findUnique({
+      where: { id: documentId },
+    });
+    if (!document) {
+      throw new NotFoundException('Document not found');
+    }
+
+    const updated = await this.prisma.client.document.update({
+      where: { id: documentId },
+      data: {
+        status,
+        // Only meaningful for a rejection; a later approval should not still
+        // carry the reason it was once rejected for.
+        reviewNote: status === 'REJECTED' ? reviewNote : null,
+        reviewedById: coordinator.id,
+        reviewedAt: new Date(),
+      },
+      include: DOCUMENT_INCLUDE,
+    });
+
+    return withSignedUrl(updated);
+  }
+
+  private async getCoordinatorByUserId(userId: string) {
+    const coordinator = await this.prisma.client.coordinator.findUnique({
+      where: { userId },
+    });
+    if (!coordinator) {
+      throw new NotFoundException('Coordinator profile not found');
+    }
+    return coordinator;
   }
 
   async removeStudent(studentId: string) {

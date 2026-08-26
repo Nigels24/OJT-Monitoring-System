@@ -7,6 +7,7 @@ import {
   Param,
   Body,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import {
@@ -22,9 +23,11 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 import { CoordinatorService } from './coordinator.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
+import { AuthedRequest } from '../auth/authed-request';
 import { EmptyToUndefined, ToOptionalNumber } from '../common/transforms';
 
 // Usernames must not contain "@" so they can never shadow an email address
@@ -187,6 +190,21 @@ class ResetPasswordDto {
   password!: string;
 }
 
+class ReviewDocumentDto {
+  @IsIn(['APPROVED', 'REJECTED'])
+  status!: 'APPROVED' | 'REJECTED';
+
+  // Required only on rejection — same shape as Attendance's decline reason.
+  // @ValidateIf skips every check below when the condition is false, so an
+  // APPROVED body needs nothing here at all.
+  @ValidateIf((o: ReviewDocumentDto) => o.status === 'REJECTED')
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(3)
+  @MaxLength(500)
+  reviewNote?: string;
+}
+
 @Controller('coordinator')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles('COORDINATOR')
@@ -226,6 +244,25 @@ export class CoordinatorController {
   @Get('evaluations')
   listEvaluations() {
     return this.coordinatorService.listEvaluations();
+  }
+
+  @Get('documents')
+  getDocuments() {
+    return this.coordinatorService.getDocuments();
+  }
+
+  @Patch('documents/:id/review')
+  reviewDocument(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+    @Body() dto: ReviewDocumentDto,
+  ) {
+    return this.coordinatorService.reviewDocument(
+      req.user.userId,
+      id,
+      dto.status,
+      dto.reviewNote,
+    );
   }
 
   @Patch('students/:id')

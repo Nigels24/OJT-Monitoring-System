@@ -2,10 +2,17 @@ import {
   Injectable,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { hoursForAttendance, totalHours } from '../common/attendance-hours';
+import {
+  buildObjectPath,
+  deleteFile,
+  getSignedUrl,
+  uploadFile,
+} from '../common/storage';
 
 interface SubmitAttendanceInput {
   date: string;
@@ -21,10 +28,52 @@ interface UpdateProfileInput {
   address?: string;
 }
 
+interface UploadDocumentInput {
+  name: string;
+}
+
+interface UploadCredentialInput {
+  type: string;
+}
+
+/** Exported so the client's dropdown offers exactly these — no Prisma enum, no migration. */
+export const CREDENTIAL_TYPES = [
+  'RESUME',
+  'ENDORSEMENT_LETTER',
+  'MEDICAL_CERTIFICATE',
+  'PARENTAL_CONSENT',
+  'INSURANCE',
+  'CERTIFICATE_OF_REGISTRATION',
+  'OTHER',
+] as const;
+export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
+
 const PROFILE_INCLUDE = {
   user: { select: { id: true, email: true, name: true } },
   establishment: { select: { id: true, name: true } },
 } as const;
+
+/** Shared with `coordinator.service.ts` — the reviewer's cross-establishment list. */
+export const DOCUMENT_INCLUDE = {
+  student: {
+    select: {
+      id: true,
+      studentIdNumber: true,
+      user: { select: { name: true } },
+      establishment: { select: { id: true, name: true } },
+    },
+  },
+  reviewedBy: {
+    select: { id: true, user: { select: { name: true } } },
+  },
+} as const;
+
+export const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+]);
+export const MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024;
 
 @Injectable()
 export class StudentService {
@@ -172,6 +221,141 @@ export class StudentService {
       data,
       include: PROFILE_INCLUDE,
     });
+  }
+
+  async uploadDocument(
+    userId: string,
+    data: UploadDocumentInput,
+    file: Express.Multer.File | undefined,
+  ) {
+    const student = await this.getStudentByUserId(userId);
+    assertValidDocumentFile(file);
+
+    const path = buildObjectPath('documents', student.id, file.originalname);
+    await uploadFile(path, file.buffer, file.mimetype);
+
+    const created = await this.prisma.client.document.create({
+      data: {
+        studentId: student.id,
+        name: data.name,
+        fileUrl: path,
+        status: 'PENDING',
+      },
+    });
+
+    return withSignedUrl(created);
+  }
+
+  async getMyDocuments(userId: string) {
+    const student = await this.getStudentByUserId(userId);
+
+    const documents = await this.prisma.client.document.findMany({
+      where: { studentId: student.id },
+      orderBy: { uploadedAt: 'desc' },
+    });
+
+    return Promise.all(documents.map(withSignedUrl));
+  }
+
+  async deleteDocument(userId: string, documentId: string) {
+    const student = await this.getStudentByUserId(userId);
+
+    const document = await this.prisma.client.document.findUnique({
+      where: { id: documentId },
+    });
+    if (!document) {
+      throw new NotFoundException('Document not found');
+    }
+    if (document.studentId !== student.id) {
+      throw new ForbiddenException('This document does not belong to you');
+    }
+    // Once a coordinator has acted on it, the review record (and any note the
+    // student was given) should stay put rather than silently disappear.
+    if (document.status !== 'PENDING') {
+      throw new ConflictException(
+        'Only a document still pending review can be deleted',
+      );
+    }
+
+    await deleteFile(document.fileUrl);
+    await this.prisma.client.document.delete({ where: { id: documentId } });
+
+    return { id: documentId, deleted: true };
+  }
+
+  async uploadCredential(
+    userId: string,
+    data: UploadCredentialInput,
+    file: Express.Multer.File | undefined,
+  ) {
+    const student = await this.getStudentByUserId(userId);
+    assertValidDocumentFile(file);
+
+    const path = buildObjectPath('credentials', student.id, file.originalname);
+    await uploadFile(path, file.buffer, file.mimetype);
+
+    const created = await this.prisma.client.credential.create({
+      data: {
+        studentId: student.id,
+        type: data.type,
+        fileUrl: path,
+      },
+    });
+
+    return withSignedUrl(created);
+  }
+
+  async getMyCredentials(userId: string) {
+    const student = await this.getStudentByUserId(userId);
+
+    const credentials = await this.prisma.client.credential.findMany({
+      where: { studentId: student.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return Promise.all(credentials.map(withSignedUrl));
+  }
+
+  async deleteCredential(userId: string, credentialId: string) {
+    const student = await this.getStudentByUserId(userId);
+
+    const credential = await this.prisma.client.credential.findUnique({
+      where: { id: credentialId },
+    });
+    if (!credential) {
+      throw new NotFoundException('Credential not found');
+    }
+    if (credential.studentId !== student.id) {
+      throw new ForbiddenException('This credential does not belong to you');
+    }
+
+    // No review state to guard on — a credential is uploaded and listed,
+    // that's the whole lifecycle, so the student may delete any of their own.
+    await deleteFile(credential.fileUrl);
+    await this.prisma.client.credential.delete({ where: { id: credentialId } });
+
+    return { id: credentialId, deleted: true };
+  }
+}
+
+/** Replaces the stored object path with a freshly minted signed URL. */
+export async function withSignedUrl<T extends { fileUrl: string }>(
+  document: T,
+): Promise<T> {
+  return { ...document, fileUrl: await getSignedUrl(document.fileUrl) };
+}
+
+function assertValidDocumentFile(
+  file: Express.Multer.File | undefined,
+): asserts file is Express.Multer.File {
+  if (!file) {
+    throw new BadRequestException('A file is required');
+  }
+  if (!ALLOWED_DOCUMENT_MIME_TYPES.has(file.mimetype)) {
+    throw new BadRequestException('Only PDF, PNG or JPEG files are accepted');
+  }
+  if (file.size > MAX_DOCUMENT_SIZE_BYTES) {
+    throw new BadRequestException('File must be 10MB or smaller');
   }
 }
 

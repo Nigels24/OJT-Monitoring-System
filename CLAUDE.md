@@ -66,7 +66,7 @@ OJT-Monitoring-System/
     │   ├── prisma/
     │   │   ├── schema.prisma
     │   │   ├── seed.ts             # bootstraps ONLY the coordinator
-    │   │   └── migrations/         # 11 migrations, listed in §6
+    │   │   └── migrations/         # 12 migrations, listed in §6
     │   ├── scripts/reset-coordinator.ts
     │   ├── test/                   # e2e only
     │   └── generated/prisma/       # gitignored — run `npx prisma generate`
@@ -74,8 +74,8 @@ OJT-Monitoring-System/
         ├── app/
         │   ├── page.tsx            # redirects to /login
         │   ├── login/
-        │   ├── coordinator/{dashboard,establishments,students,evaluations,attendance,messages*}
-        │   ├── student/{dashboard,attendance,credentials*,documents*,messages*,profile*}
+        │   ├── coordinator/{dashboard,establishments,students,evaluations,attendance,documents,messages*}
+        │   ├── student/{dashboard,attendance,documents,profile,credentials,messages*}
         │   └── supervisor/{dashboard,attendance,evaluation,messages*}
         │         (* = route folder exists, no page.tsx yet — unbuilt)
         ├── features/<domain>/
@@ -94,12 +94,14 @@ OJT-Monitoring-System/
 
 **Feature domains:** `establishment`, `student` (the *coordinator's* view of students),
 `student-portal` (the *student's own* view — do not conflate the two), `supervisor`,
-`evaluation`, `attendance-oversight`, `coordinator` (nav only), `account`.
+`evaluation`, `attendance-oversight`, `document` (the *coordinator's* cross-student review
+queue — `student-portal` owns the student's own upload/list/delete view of the same
+table), `coordinator` (nav only), `account`.
 
 **API slices** (`lib/api/*.ts`): `authApi`, `establishmentApi`, `studentApi`,
 `studentPortalApi`, `supervisorApi`, `evaluationApi`, `dashboardApi`,
-`attendanceOversightApi`. Each is registered in `lib/store.ts` — **reducer *and*
-middleware**.
+`attendanceOversightApi`, `documentApi`. Each is registered in `lib/store.ts` — **reducer
+*and* middleware**.
 
 **UI primitives** (`components/ui/`): DataTable, StatCard, StatusBadge, ProgressBar,
 TrendChart, RankedBarList, ConfirmDialog, ViewDialog, TextField, TextArea, SelectField,
@@ -118,7 +120,10 @@ end-to-end vertical slices — **copy their shape when building a new domain.**
 1. `cd app/server && npm install && npx prisma generate`
    `generated/prisma` is gitignored (custom `prisma-client` generator output). **Nothing
    compiles until this runs.**
-2. Create `app/server/.env` (gitignored) with `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`.
+2. Create `app/server/.env` (gitignored) with `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`,
+   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (the last two back `src/common/storage.ts`
+   — see §7 "File storage"; a private `student-files` bucket must already exist in that
+   Supabase project's Storage, created once by hand, not by a migration).
    Loaded via `import 'dotenv/config'` in **both** `main.ts` and `app.module.ts` — the
    latter because e2e tests boot `AppModule` directly. There is no `@nestjs/config`.
 3. `cd app/client && npm install`. `.env.example` documents the single optional var
@@ -300,7 +305,7 @@ and "not measured yet" are different claims:
   exists.
 - `attendancePercentage` per student is `null` (rendered `—`) when there is no
   `startDate` or it is in the future — **never `0%`**.
-- Fields with literally no backend (unread messages, pending documents) are **absent
+- Fields with literally no backend (unread messages, pending credentials) are **absent
   from the response entirely**, not `0`.
 
 The first two rules are permanent. The third is **conditional — it holds only while the
@@ -379,13 +384,15 @@ silently freezes every dropdown below region for the rest of the session.
 order:
 
 1. `app/server/prisma/schema.prisma` — **only if the columns this module needs don't
-   already exist.** The model existing is not the test: `Document`, `Credential` and the
-   three messaging models are already modeled and migrated (§6) but *incomplete* —
-   `Document` still needs a reviewer, a review note and a reviewed-at; `Credential` has no
-   status at all. Read §6's schema block, then write one migration with only that
-   module's missing columns.
+   already exist.** The model existing is not the test: `Credential` and the three
+   messaging models are already modeled and migrated (§6) but *incomplete* — `Credential`
+   has no status at all; nothing tracks message delivery. Read §6's schema block, then
+   write one migration with only that module's missing columns. (`Document` went through
+   this exact step for its `reviewedById`/`reviewNote`/`reviewedAt` columns — see §6 for
+   the result.)
    **When naming a reviewer column, don't copy `Attendance.approvedById`** — it is set on
-   decline too, so it means "who actioned this". Call yours `reviewedById` and mean it.
+   decline too, so it means "who actioned this". `Document.reviewedById` follows this
+   rule; keep doing so.
 2. `app/server/src/<module>/<module>.service.ts` — ownership re-derived from
    `req.user.userId`, never from a body id.
 3. `app/server/src/<module>/<module>.controller.ts` — inline `class-validator` DTOs at the
@@ -450,9 +457,15 @@ table; never derive one from the other.
 | GET | `/coordinator/dashboard` | COORDINATOR | real aggregates |
 | GET | `/coordinator/attendance` | COORDINATOR | cross-establishment oversight |
 | GET | `/coordinator/evaluations` | COORDINATOR | read-only, all establishments |
-| GET | `/student/dashboard` · `/student/attendance` · `/student/profile` | STUDENT | own data only |
+| GET | `/coordinator/documents` | COORDINATOR | all documents, all establishments, each with a signed URL |
+| PATCH | `/coordinator/documents/:id/review` | COORDINATOR | `{ status: 'APPROVED'\|'REJECTED', reviewNote? }` — `reviewNote` required 3–500 chars when REJECTED |
+| GET | `/student/dashboard` · `/student/attendance` · `/student/profile` · `/student/documents` · `/student/credentials` | STUDENT | own data only |
 | POST | `/student/attendance` | STUDENT | one row per calendar day |
 | PATCH | `/student/profile` | STUDENT | `{ contactNumber?, address? }` — the only two fields a student may self-edit |
+| POST | `/student/documents` | STUDENT | multipart; `name` field + `file` part (PDF/PNG/JPEG, 10MB max); always lands PENDING |
+| DELETE | `/student/documents/:id` | STUDENT | own document, and only while still PENDING |
+| POST | `/student/credentials` | STUDENT | multipart; `type` field (one of `CREDENTIAL_TYPES`, exported from `student.service.ts`) + `file` part (PDF/PNG/JPEG, 10MB max) |
+| DELETE | `/student/credentials/:id` | STUDENT | own credential — no status guard, credentials have no review state |
 | GET | `/supervisor/dashboard` · `/supervisor/students` · `/supervisor/attendance` | SUPERVISOR | scoped to own establishment |
 | PATCH | `/supervisor/students/:id/status` | SUPERVISOR | |
 | PATCH | `/supervisor/attendance/:id/approve` | SUPERVISOR | clears any `declineReason` |
@@ -470,39 +483,52 @@ PostgreSQL via Supabase. `DATABASE_URL` pooled, `DIRECT_URL` direct.
 `Attendance`, `Document`, `Credential`, `Evaluation`, `Conversation`,
 `ConversationParticipant`, `Message`.
 
-`Document`, `Credential` and the three messaging models are **modeled and migrated but
-have no module yet**; `socket.io` / `@nestjs/websockets` are installed with no gateway
-written.
+`Document` and `Credential` are built (§7). The three messaging models are **modeled and
+migrated but have no module yet**; `socket.io` / `@nestjs/websockets` are installed with
+no gateway written.
 
 **Enums:** `Role` (STUDENT · SUPERVISOR · COORDINATOR) · `StudentStatus` (ACTIVE ·
 PENDING · COMPLETED · INACTIVE) · `AttendanceStatus` (PENDING · APPROVED · DECLINED) ·
 `EstablishmentStatus` (ACTIVE · INACTIVE).
 
-**The five unbuilt models, as they already exist in the DB.** Read this before writing a
-migration — the columns are there, and a "one migration per module" reflex will otherwise
-produce a redundant migration against a live database. *Scalar columns only below;
-`@relation` back-references and indexes are elided, so open `schema.prisma` before writing
-an `include`.*
+`Document` (built) actually looks like this — `status` stayed a plain `String`
+(`PENDING`/`APPROVED`/`REJECTED`) rather than becoming an enum, a deliberate call in §7:
 
 ```prisma
-model Document {                       // student uploads awaiting review
-  id         String   @id @default(cuid())
-  studentId  String                    // -> Student
-  name       String
-  fileUrl    String                    // no storage wired; see "Known schema gaps"
-  status     String   @default("PENDING")   // NOTE: plain String, NOT an enum,
-                                            // unlike AttendanceStatus
-  uploadedAt DateTime @default(now())
+model Document {
+  id           String       @id @default(cuid())
+  studentId    String                              // -> Student
+  name         String
+  fileUrl      String                              // object PATH, never a signed URL — see §7
+  status       String       @default("PENDING")    // PENDING · APPROVED · REJECTED
+  reviewedById String?
+  reviewedBy   Coordinator? @relation(fields: [reviewedById], references: [id])
+  reviewNote   String?                              // required by the service when REJECTED
+  reviewedAt   DateTime?
+  uploadedAt   DateTime     @default(now())
 }
+```
 
-model Credential {                     // certificates/requirements, no review state
+`Credential` (built) actually looks like this — no status/review columns, since credentials
+have no review state:
+
+```prisma
+model Credential {
   id        String   @id @default(cuid())
-  studentId String                     // -> Student
-  type      String
-  fileUrl   String
+  studentId String                              // -> Student
+  type      String                              // one of CREDENTIAL_TYPES, see student.service.ts
+  fileUrl   String                              // object PATH, never a signed URL — see §7
   createdAt DateTime @default(now())
 }
+```
 
+**The three unbuilt messaging models, as they already exist in the DB.** Read this before
+writing a migration — the columns are there, and a "one migration per module" reflex will
+otherwise produce a redundant migration against a live database. *Scalar columns only
+below; `@relation` back-references and indexes are elided, so open `schema.prisma` before
+writing an `include`.*
+
+```prisma
 model Conversation {
   id        String   @id @default(cuid())
   isGroup   Boolean  @default(false)
@@ -529,10 +555,8 @@ model Message {
 }
 ```
 
-What is **missing** from those models and will need a migration when the modules land:
-`Document` has no reviewer, no review note and no reviewed-at timestamp; `Credential` has
-no status at all; nothing tracks message delivery. Decide those with the user before
-adding columns.
+What is **missing** from those models and will need a migration when Messaging lands:
+nothing tracks message delivery. Decide the columns with the user before adding them.
 
 `Attendance` splits AM/PM into four nullable `DateTime`s (`timeInAM`, `timeOutAM`,
 `timeInPM`, `timeOutPM`) and carries `@@unique([studentId, date])`. `submitAttendance`
@@ -560,8 +584,12 @@ evaluations or documents reference the student.
 | `20260811120804_user_username` | `User.username`, nullable, unique, no `@` |
 | `20260811234804_evaluation_rubric` | Replaced `score`/`feedback` with the 9 criteria, `overallRating`, `performanceLevel`, `periodStart`/`periodEnd`, `comments`, `recommendations`. Destructive — the table was empty |
 | `20260826023817_student_profile_fields` | `Student`: `gender`, `endDate` — both nullable, for the student Profile page |
+| `20260826033058_document_review_fields` | `Document`: `reviewedById` (FK to `Coordinator`, `SET NULL` on delete), `reviewNote`, `reviewedAt` — all nullable |
 
-**Policy: one migration per module.** Add only the columns the current module needs.
+Credentials needed **no migration** — `Credential` already had every column its module
+needed (§7).
+
+**Policy: one migration per module, and only when the module actually needs new columns.**
 
 > **If `migrate dev` ever offers to reset the database, stop — it means drift again.**
 > This is a live Supabase DB with real data; `migrate reset` drops all of it. Reconcile
@@ -575,8 +603,6 @@ evaluations or documents reference the student.
 ### Known schema gaps
 
 - **Supervisor** — no contact fields; the prototype's messaging panels show email + phone.
-- **Document / Credential** — store a `fileUrl` string with **no storage wired**.
-  `@supabase/supabase-js` is installed but unused; Supabase Storage is the obvious fit.
 
 ---
 
@@ -599,6 +625,18 @@ evaluations or documents reference the student.
   students and supervisors, CLI for the coordinator.
 - **Coordinator dashboard stats** — every tile and chart backed by real aggregates.
 - **Attendance oversight (Coordinator)** — read-only cross-establishment attendance %.
+- **Documents** — student upload (multipart, PDF/PNG/JPEG, 10MB) with server-side Supabase
+  Storage (`src/common/storage.ts`, private `student-files` bucket, 1-hour signed URLs);
+  coordinator cross-establishment review queue (approve/reject, reject requires a 3–500
+  char note). Delete is student-side, own document, PENDING only, and removes the storage
+  object too.
+- **Credentials** — student upload/list/delete only, same storage helper and validation as
+  Documents, under the `credentials/<studentId>/` prefix. `type` is one of `CREDENTIAL_TYPES`
+  (`RESUME`, `ENDORSEMENT_LETTER`, `MEDICAL_CERTIFICATE`, `PARENTAL_CONSENT`, `INSURANCE`,
+  `CERTIFICATE_OF_REGISTRATION`, `OTHER`), a plain string constant, not a Prisma enum, so the
+  client's dropdown imports the same list rather than duplicating it. No review state and no
+  coordinator screen — a credential is uploaded and listed, full stop. Delete has no status
+  guard (unlike Documents' PENDING-only rule) since there is no status to guard on.
 
 **All three roles land on a real page after login. No role 404s.**
 
@@ -613,25 +651,23 @@ start date and confirm the oversight page shows a real percentage.
 
 | Module | Backend | Frontend |
 |---|---|---|
-| Student portal (Documents, Credentials, Messages) | none — no endpoints exist | not built |
+| Student portal (Messages) | none — no endpoints exist | not built |
 | Supervisor | done | dashboard, approval, evaluation done; **Messages** not built; supervisor password reset has an endpoint but no UI button |
 
 ### Not started
 
-Messaging (models + `socket.io` installed, zero code) · Documents · Credentials ·
-Supervisor contact fields (blocks part of messaging's UI).
+Messaging (models + `socket.io` installed, zero code) · Supervisor contact fields (blocks
+part of messaging's UI).
 
 ### Remaining build order
 
 1. **Verify `Student.startDate` live** (above).
-2. **Documents + Credentials** — storage design is **decided** (below). Build the upload
-   helper once; both modules use it.
-3. **Messaging** — needs supervisor contact fields first for the prototype's panels.
+2. **Messaging** — needs supervisor contact fields first for the prototype's panels.
 
 ### File storage — the decided design
 
 Settled, not open. Don't re-litigate it mid-task; if it needs to change, change it here
-first.
+first. **Implemented** by both Documents and Credentials (above).
 
 | Question | Decision |
 |---|---|
@@ -650,8 +686,17 @@ come through `@UploadedFile()` with `FileInterceptor`, and the DTO covers **only
 text fields alongside it. Validate the file's mimetype and size in the handler, not the
 DTO.
 
-**Shared helper.** Put the upload/sign/delete logic in `src/common/storage.ts` (or a
-small `StorageModule`) and use it from both modules — don't write it twice.
+**Shared helper.** The upload/sign/delete logic lives in `src/common/storage.ts`
+(`buildObjectPath`, `uploadFile`, `getSignedUrl`, `deleteFile`) — plain exported functions
+over a lazily-built Supabase client, not an injectable service, since there is no state to
+inject. Both `Document` and `Credential` upload/list/delete methods live in
+`student.service.ts` and call these same functions with different prefixes
+(`documents/<studentId>/` vs `credentials/<studentId>/`); `withSignedUrl` is generic over
+any `{ fileUrl }` record, so both reuse it unchanged. `student.service.ts` also exports
+`DOCUMENT_INCLUDE`, reused by `coordinator.service.ts` exactly the way
+`supervisor.service.ts` exports `EVALUATION_INCLUDE`/`withBreakdown` for the same
+coordinator read-side reuse — Credentials has no coordinator-side equivalent, so it needed
+no analogous export.
 
 ---
 
@@ -699,6 +744,10 @@ Ordered roughly by how likely each is to bite.
     doesn't declare them and the student's own `PATCH /student/profile` deliberately
     excludes them (self-edit is limited to `contactNumber`/`address`). They will read `—`
     for every student until the coordinator's student form is extended to set them.
+13. `getMyDocuments`/`getDocuments`/`getMyCredentials` mint a signed URL per row on every
+    request (`Promise.all(rows.map(withSignedUrl))`) — an extra Supabase round trip per
+    row, same scaling shape as item 4. Fine at current volume; revisit alongside item 3 if
+    pagination work starts.
 
 ---
 

@@ -147,8 +147,8 @@ Auth ──┬─▶ Establishment ──┬─▶ Student Mgmt (Coordinator) �
 ```
 
 Documents / Credentials hang off Student Mgmt alone — the rows they need already exist,
-which is why they come next regardless of Messaging's state. Their remaining blocker is a
-design decision, not a dependency (CLAUDE.md §7).
+which is why they came next regardless of Messaging's state. Both are built, sharing
+`src/common/storage.ts`; Messaging is next (CLAUDE.md §7).
 
 ## 7. Where to look for a given bug
 

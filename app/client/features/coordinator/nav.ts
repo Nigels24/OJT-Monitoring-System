@@ -4,6 +4,7 @@ import {
   Users,
   CalendarCheck,
   Star,
+  FileText,
 } from "lucide-react";
 
 /**
@@ -26,4 +27,5 @@ export const COORDINATOR_NAV = [
   { label: "Student Management", href: "/coordinator/students", icon: Users },
   { label: "Attendance", href: "/coordinator/attendance", icon: CalendarCheck },
   { label: "Evaluations", href: "/coordinator/evaluations", icon: Star },
+  { label: "Documents", href: "/coordinator/documents", icon: FileText },
 ];

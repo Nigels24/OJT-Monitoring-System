@@ -99,6 +99,8 @@ model Coordinator {
   id     String @id @default(cuid())
   userId String @unique
   user   User   @relation(fields: [userId], references: [id])
+
+  reviewedDocuments Document[]
 }
 
 model Student {
@@ -171,6 +173,16 @@ model Document {
   name       String
   fileUrl    String
   status     String   @default("PENDING")
+
+  // Who actioned this review, their note, and when. `reviewNote` is required
+  // by the service when status is REJECTED, mirroring
+  // Attendance.declineReason; unlike Attendance.approvedById, this column is
+  // named for what it actually means — the reviewer, not just "who approved".
+  reviewedById String?
+  reviewedBy   Coordinator? @relation(fields: [reviewedById], references: [id])
+  reviewNote   String?
+  reviewedAt   DateTime?
+
   uploadedAt DateTime @default(now())
 }
 

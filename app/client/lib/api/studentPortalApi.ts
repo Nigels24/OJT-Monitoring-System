@@ -101,10 +101,51 @@ export interface UpdateProfileRequest {
   address?: string;
 }
 
+export type DocumentStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+export interface StudentDocument {
+  id: string;
+  name: string;
+  /** A freshly minted 1-hour signed URL, never the raw storage path. */
+  fileUrl: string;
+  status: DocumentStatus;
+  /** The coordinator's explanation, set only when status is REJECTED. */
+  reviewNote: string | null;
+  reviewedAt: string | null;
+  uploadedAt: string;
+}
+
+/** Mirrors the server's CREDENTIAL_TYPES — no Prisma enum, so keep both lists in sync by hand. */
+export const CREDENTIAL_TYPES = [
+  "RESUME",
+  "ENDORSEMENT_LETTER",
+  "MEDICAL_CERTIFICATE",
+  "PARENTAL_CONSENT",
+  "INSURANCE",
+  "CERTIFICATE_OF_REGISTRATION",
+  "OTHER",
+] as const;
+
+export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
+
+export interface StudentCredential {
+  id: string;
+  type: CredentialType;
+  /** A freshly minted 1-hour signed URL, never the raw storage path. */
+  fileUrl: string;
+  createdAt: string;
+}
+
 export const studentPortalApi = createApi({
   reducerPath: "studentPortalApi",
   baseQuery: baseQueryWithAuth,
-  tagTypes: ["MyDashboard", "MyAttendance", "MyProfile"],
+  tagTypes: [
+    "MyDashboard",
+    "MyAttendance",
+    "MyProfile",
+    "MyDocuments",
+    "MyCredentials",
+  ],
   endpoints: (builder) => ({
     getMyDashboard: builder.query<StudentDashboard, void>({
       query: () => "/student/dashboard",
@@ -140,6 +181,53 @@ export const studentPortalApi = createApi({
       // and address too, so it goes stale alongside the profile.
       invalidatesTags: ["MyProfile", "MyDashboard"],
     }),
+    getMyDocuments: builder.query<StudentDocument[], void>({
+      query: () => "/student/documents",
+      providesTags: ["MyDocuments"],
+    }),
+    /** `body` is a FormData with `name` and `file` fields — see the Documents upload form. */
+    uploadDocument: builder.mutation<StudentDocument, FormData>({
+      query: (body) => ({
+        url: "/student/documents",
+        method: "POST",
+        body,
+      }),
+      // The dashboard's _count.documents changes on every upload too.
+      invalidatesTags: ["MyDocuments", "MyDashboard"],
+    }),
+    deleteDocument: builder.mutation<{ id: string; deleted: boolean }, string>(
+      {
+        query: (id) => ({
+          url: `/student/documents/${id}`,
+          method: "DELETE",
+        }),
+        invalidatesTags: ["MyDocuments", "MyDashboard"],
+      },
+    ),
+    getMyCredentials: builder.query<StudentCredential[], void>({
+      query: () => "/student/credentials",
+      providesTags: ["MyCredentials"],
+    }),
+    /** `body` is a FormData with `type` and `file` fields — see the Credentials upload form. */
+    uploadCredential: builder.mutation<StudentCredential, FormData>({
+      query: (body) => ({
+        url: "/student/credentials",
+        method: "POST",
+        body,
+      }),
+      // The dashboard's _count.credentials changes on every upload too.
+      invalidatesTags: ["MyCredentials", "MyDashboard"],
+    }),
+    deleteCredential: builder.mutation<
+      { id: string; deleted: boolean },
+      string
+    >({
+      query: (id) => ({
+        url: `/student/credentials/${id}`,
+        method: "DELETE",
+      }),
+      invalidatesTags: ["MyCredentials", "MyDashboard"],
+    }),
   }),
 });
 
@@ -149,4 +237,10 @@ export const {
   useSubmitAttendanceMutation,
   useGetMyProfileQuery,
   useUpdateMyProfileMutation,
+  useGetMyDocumentsQuery,
+  useUploadDocumentMutation,
+  useDeleteDocumentMutation,
+  useGetMyCredentialsQuery,
+  useUploadCredentialMutation,
+  useDeleteCredentialMutation,
 } = studentPortalApi;
