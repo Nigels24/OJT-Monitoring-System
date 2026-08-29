@@ -389,12 +389,12 @@ silently freezes every dropdown below region for the rest of the session.
 order:
 
 1. `app/server/prisma/schema.prisma` — **only if the columns this module needs don't
-   already exist.** The model existing is not the test: `Credential` and the three
-   messaging models are already modeled and migrated (§6) but *incomplete* — `Credential`
-   has no status at all; nothing tracks message delivery. Read §6's schema block, then
-   write one migration with only that module's missing columns. (`Document` went through
-   this exact step for its `reviewedById`/`reviewNote`/`reviewedAt` columns — see §6 for
-   the result.)
+   already exist.** The model existing is not the test — a model can be present and
+   migrated while still missing the columns its module needs. Read §6's schema block
+   first, then write one migration with only that module's missing columns. (`Document`
+   went through this exact step for its `reviewedById`/`reviewNote`/`reviewedAt` columns;
+   `Credential` and the three messaging models needed no migration at all — every column
+   their modules used was already there. See §6 for both outcomes.)
    **When naming a reviewer column, don't copy `Attendance.approvedById`** — it is set on
    decline too, so it means "who actioned this". `Document.reviewedById` follows this
    rule; keep doing so.
@@ -424,6 +424,12 @@ The two patterns in the table below are not interchangeable:
 - **Bare resource with per-handler `@Roles`** (`/establishments`) — only when reads are
   genuinely open to every signed-in role and just the writes are restricted.
   `EstablishmentController` is the single instance; don't add a second without a reason.
+- **Bare resource with no `@Roles` at all** (`/messages`) — a third shape, distinct from
+  both above: every handler is reachable by any authenticated role, because the resource
+  (a conversation) is the *same shape* for every role, not just open for reads.
+  `MessagesController` re-derives ownership per request from `req.user.userId` exactly
+  like a role-prefixed route would — `@Roles` is absent because there is no role to
+  restrict, not because the ownership check is skipped.
 
 ### Which feature domain?
 
@@ -477,6 +483,11 @@ table; never derive one from the other.
 | PATCH | `/supervisor/attendance/:id/approve` | SUPERVISOR | clears any `declineReason` |
 | PATCH | `/supervisor/attendance/:id/decline` | SUPERVISOR | `{ reason }`, 3–500 chars, required |
 | GET/POST | `/supervisor/evaluations` | SUPERVISOR | |
+| GET | `/messages/contacts` | any signed-in | who the caller may message, scoped by role (§7) |
+| GET | `/messages/conversations` | any signed-in | caller's conversations, most recent first, with unread count |
+| POST | `/messages/conversations` | any signed-in | `{ userId }` — find-or-create a 1:1; 403 if `userId` isn't in the caller's contacts |
+| GET | `/messages/conversations/:id` | any signed-in | cursor-paginated (`before` message id, `limit` default 50 max 100); marks `lastReadAt`; 403 unless a participant |
+| POST | `/messages/conversations/:id` | any signed-in | `{ content }`, 1–2000 chars; 403 unless a participant |
 | GET | `/` | **public** | `AppController`, no guard — health check only |
 
 ---
@@ -489,9 +500,9 @@ PostgreSQL via Supabase. `DATABASE_URL` pooled, `DIRECT_URL` direct.
 `Attendance`, `Document`, `Credential`, `Evaluation`, `Conversation`,
 `ConversationParticipant`, `Message`.
 
-`Document` and `Credential` are built (§7). The three messaging models are **modeled and
-migrated but have no module yet**; `socket.io` / `@nestjs/websockets` are installed with
-no gateway written.
+`Document`, `Credential` and Messaging are all built (§7). Messaging is **polling, not
+websockets** — `socket.io` / `@nestjs/websockets` / `@nestjs/platform-socket.io` were
+removed from `app/server/package.json`; see §7 for the reasoning.
 
 **Enums:** `Role` (STUDENT · SUPERVISOR · COORDINATOR) · `StudentStatus` (ACTIVE ·
 PENDING · COMPLETED · INACTIVE) · `AttendanceStatus` (PENDING · APPROVED · DECLINED) ·
@@ -528,11 +539,10 @@ model Credential {
 }
 ```
 
-**The three unbuilt messaging models, as they already exist in the DB.** Read this before
-writing a migration — the columns are there, and a "one migration per module" reflex will
-otherwise produce a redundant migration against a live database. *Scalar columns only
-below; `@relation` back-references and indexes are elided, so open `schema.prisma` before
-writing an `include`.*
+**The three messaging models, as built — no migration was needed.** They already existed
+in the DB with every column `messages.service.ts` needs. *Scalar columns only below;
+`@relation` back-references and indexes are elided, so open `schema.prisma` before writing
+an `include`.*
 
 ```prisma
 model Conversation {
@@ -561,8 +571,10 @@ model Message {
 }
 ```
 
-What is **missing** from those models and will need a migration when Messaging lands:
-nothing tracks message delivery. Decide the columns with the user before adding them.
+**Still missing, by design:** nothing tracks per-message delivery status — only
+`ConversationParticipant.lastReadAt`, which is enough for an unread *count* but not a
+per-message read receipt. Not needed for polling; would matter if a websocket gateway is
+ever added (§7).
 
 `Attendance` splits AM/PM into four nullable `DateTime`s (`timeInAM`, `timeOutAM`,
 `timeInPM`, `timeOutPM`) and carries `@@unique([studentId, date])`. `submitAttendance`
@@ -653,6 +665,18 @@ needed (§7).
   client's dropdown imports the same list rather than duplicating it. No review state and no
   coordinator screen — a credential is uploaded and listed, full stop. Delete has no status
   guard (unlike Documents' PENDING-only rule) since there is no status to guard on.
+- **Messaging (backend only)** — `GET /messages/contacts`, `GET`/`POST
+  /messages/conversations`, `GET`/`POST /messages/conversations/:id`. Bare `/messages`, no
+  `@Roles` (§5's third route shape); 1:1 conversations only (`isGroup` stays `false`,
+  `Conversation.name` stays `null` — group chat is out of scope); cursor-paginated message
+  history (`before`/`limit`, default 50, max 100) so a thread never loads in full; unread
+  count derived from `ConversationParticipant.lastReadAt`. **Polling, not websockets** —
+  `socket.io` / `@nestjs/websockets` / `@nestjs/platform-socket.io` were installed but
+  unused, and are now removed from `package.json`; the client is expected to poll with RTK
+  Query instead. Reasoning: polling is stateless, deploys to serverless/free tiers without
+  sticky connections, survives cold starts, and scales horizontally without a socket.io
+  Redis adapter — messages here are asynchronous by nature, and a gateway can be added
+  later without changing these endpoints. No client work yet; see "Partially built" below.
 
 **All three roles land on a real page after login. No role 404s.**
 
@@ -667,18 +691,22 @@ start date and confirm the oversight page shows a real percentage.
 
 | Module | Backend | Frontend |
 |---|---|---|
-| Student portal (Messages) | none — no endpoints exist | not built |
-| Supervisor | done | dashboard, approval, evaluation done; **Messages** not built |
+| Student portal (Messages) | done | not built |
+| Supervisor (Messages) | done | dashboard, approval, evaluation done; **Messages** not built |
+| Coordinator (Messages) | done | not built |
 
 ### Not started
 
-Messaging (models + `socket.io` installed, zero code) · Supervisor contact fields (blocks
-part of messaging's UI).
+Supervisor contact fields (the prototype's messaging panels show email + phone; `Supervisor`
+still has no such columns — see §6 "Known schema gaps"). Messaging's own endpoints don't
+need them (contacts return name + establishment only), so this doesn't block a client build,
+only matching the prototype's contact panel exactly.
 
 ### Remaining build order
 
 1. **Verify `Student.startDate` live** (above).
-2. **Messaging** — needs supervisor contact fields first for the prototype's panels.
+2. **Messaging client** — the backend is done (above); build the three role-side Messages
+   pages against it.
 
 ### File storage — the decided design
 
@@ -785,6 +813,12 @@ Ordered roughly by how likely each is to bite.
     same way. **This was the only bare `user: true`/`include` on a `User` relation in the
     codebase** — if a future list endpoint adds one, check it doesn't reintroduce this;
     always `select` explicitly on any relation to `User`.
+17. **`Student.establishmentId` is nullable** — a student not yet assigned to an
+    establishment. `MessagesService.getContacts` guards this (no `establishmentId` means no
+    supervisors to list, only coordinators); a naive `where: { establishmentId: student.establishmentId }`
+    against `Supervisor` (whose `establishmentId` is non-null) fails to typecheck and, if
+    forced, would return zero rows rather than erroring. Any future query that starts from
+    a student's `establishmentId` needs the same null check.
 
 ---
 

@@ -11,6 +11,7 @@ import { CoordinatorModule } from './coordinator/coordinator.module';
 import { EstablishmentModule } from './establishment/establishment.module';
 import { StudentModule } from './student/student.module';
 import { SupervisorModule } from './supervisor/supervisor.module';
+import { MessagesModule } from './messages/messages.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { SupervisorModule } from './supervisor/supervisor.module';
     EstablishmentModule,
     StudentModule,
     SupervisorModule,
+    MessagesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
