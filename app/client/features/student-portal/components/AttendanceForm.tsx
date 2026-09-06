@@ -1,4 +1,4 @@
-import { CalendarDays, Clock, Send, Sun, Moon, MessageSquare } from "lucide-react";
+import { CalendarDays, Clock, Send, Sun, Moon, MessageSquare, Info } from "lucide-react";
 import TextField from "@/components/ui/TextField";
 import TextArea from "@/components/ui/TextArea";
 import Button from "@/components/ui/Button";
@@ -8,6 +8,16 @@ interface AttendanceFormProps {
   form: AttendanceFormValues;
   error: string;
   isSubmitting: boolean;
+  /** Earliest loggable date — the student's OJT start date, if set. Undefined when the form is disabled. */
+  minDate?: string;
+  /** Latest loggable date — today. Undefined when the form is disabled. */
+  maxDate?: string;
+  /** True when the OJT period hasn't started yet, is complete, or bounds are unavailable — the whole form is inert. */
+  disabled: boolean;
+  /** Shown instead of the fields' normal helper text when disabled. */
+  disabledMessage?: string;
+  /** Non-blocking notice (e.g. past the scheduled end date but still working toward required hours) — form stays usable. */
+  noticeMessage?: string;
   setField: (
     key: keyof AttendanceFormValues,
   ) => (e: { target: { value: string } }) => void;
@@ -18,15 +28,29 @@ export default function AttendanceForm({
   form,
   error,
   isSubmitting,
+  minDate,
+  maxDate,
+  disabled,
+  disabledMessage,
+  noticeMessage,
   setField,
   onSubmit,
 }: AttendanceFormProps) {
-  // The server rejects future dates implicitly by being the record of what was
-  // worked; keeping the picker capped at today avoids the obvious mistake.
-  const today = new Date().toISOString().slice(0, 10);
-
   return (
     <form onSubmit={onSubmit} className="space-y-5">
+      {disabledMessage && (
+        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex items-start gap-2">
+          <Info size={16} className="shrink-0 mt-0.5" />
+          {disabledMessage}
+        </p>
+      )}
+      {noticeMessage && (
+        <p className="text-sm text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 flex items-start gap-2">
+          <Info size={16} className="shrink-0 mt-0.5" />
+          {noticeMessage}
+        </p>
+      )}
+
       {/* Total hours is deliberately not shown here — the client asked for the
           submit form to collect only the AM/PM times. The value is still
           computed and validated, just not displayed. */}
@@ -36,7 +60,9 @@ export default function AttendanceForm({
         fieldIcon={CalendarDays}
         type="date"
         required
-        max={today}
+        disabled={disabled}
+        min={minDate}
+        max={maxDate}
         value={form.date}
         onChange={setField("date")}
       />
@@ -55,6 +81,7 @@ export default function AttendanceForm({
             labelIcon={Clock}
             fieldIcon={Clock}
             type="time"
+            disabled={disabled}
             value={form.timeInAM}
             onChange={setField("timeInAM")}
           />
@@ -63,6 +90,7 @@ export default function AttendanceForm({
             labelIcon={Clock}
             fieldIcon={Clock}
             type="time"
+            disabled={disabled}
             value={form.timeOutAM}
             onChange={setField("timeOutAM")}
           />
@@ -83,6 +111,7 @@ export default function AttendanceForm({
             labelIcon={Clock}
             fieldIcon={Clock}
             type="time"
+            disabled={disabled}
             value={form.timeInPM}
             onChange={setField("timeInPM")}
           />
@@ -91,6 +120,7 @@ export default function AttendanceForm({
             labelIcon={Clock}
             fieldIcon={Clock}
             type="time"
+            disabled={disabled}
             value={form.timeOutPM}
             onChange={setField("timeOutPM")}
           />
@@ -101,17 +131,20 @@ export default function AttendanceForm({
         label="Remarks (optional)"
         labelIcon={MessageSquare}
         fieldIcon={MessageSquare}
+        disabled={disabled}
         value={form.remarks}
         onChange={setField("remarks")}
         placeholder="What did you work on?"
         rows={2}
       />
 
-      <p className="text-xs text-gray-500">
-        Fill in at least one complete session. Your supervisor must approve a
-        log before its hours count toward your required total, and you can only
-        submit once per day.
-      </p>
+      {!disabled && (
+        <p className="text-xs text-gray-500">
+          Fill in at least one complete session. Your supervisor must approve
+          a log before its hours count toward your required total, and you
+          can only submit once per day.
+        </p>
+      )}
 
       {error && (
         <p className="text-sm text-red-600 border border-red-200 bg-red-50 rounded-lg px-3 py-2">
@@ -120,7 +153,12 @@ export default function AttendanceForm({
       )}
 
       <div className="sm:w-56">
-        <Button type="submit" icon={Send} loading={isSubmitting}>
+        <Button
+          type="submit"
+          icon={Send}
+          loading={isSubmitting}
+          disabled={disabled}
+        >
           Submit Attendance
         </Button>
       </div>

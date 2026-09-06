@@ -1,9 +1,9 @@
-import {
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  CASCADE_TRANSACTION_OPTIONS,
+  deleteSupervisorCascade,
+} from '../common/cascade-delete';
 
 interface EstablishmentInput {
   name: string;
@@ -74,29 +74,51 @@ export class EstablishmentService {
     });
   }
 
+  /**
+   * Deletes an establishment and its supervisors, in one transaction.
+   *
+   * This used to refuse the delete whenever any student or supervisor
+   * referenced the establishment. Now:
+   *
+   * - supervisors are deleted through the same sequence the coordinator's own
+   *   delete uses (`deleteSupervisorCascade`), so approved attendance keeps
+   *   its hours and only loses its approver;
+   * - students are **not** deleted. Removing a placement doesn't remove the
+   *   trainee, so `establishmentId` is nulled and they can be reassigned —
+   *   which is what that column being nullable is for.
+   */
   async remove(id: string) {
     const establishment = await this.prisma.client.establishment.findUnique({
       where: { id },
-      include: {
-        _count: {
-          select: { students: true, supervisors: true },
-        },
-      },
+      select: { id: true },
     });
 
     if (!establishment) {
       throw new NotFoundException('Establishment not found');
     }
 
-    if (
-      establishment._count.students > 0 ||
-      establishment._count.supervisors > 0
-    ) {
-      throw new ConflictException(
-        `Cannot delete establishment with ${establishment._count.students} student(s) and ${establishment._count.supervisors} supervisor(s). Please reassign or remove these records first.`,
-      );
-    }
+    await this.prisma.client.$transaction(async (tx) => {
+      // Read inside the transaction: a supervisor created between an outside
+      // lookup and this delete would be left pointing at a dead row.
+      const supervisors = await tx.supervisor.findMany({
+        where: { establishmentId: id },
+        select: { id: true, userId: true },
+      });
 
-    return this.prisma.client.establishment.delete({ where: { id } });
+      // Sequential on purpose — each cascade is an ordered chain of writes,
+      // and they share the one transaction.
+      for (const supervisor of supervisors) {
+        await deleteSupervisorCascade(tx, supervisor.id, supervisor.userId);
+      }
+
+      await tx.student.updateMany({
+        where: { establishmentId: id },
+        data: { establishmentId: null },
+      });
+
+      await tx.establishment.delete({ where: { id } });
+    }, CASCADE_TRANSACTION_OPTIONS);
+
+    return { id, deleted: true };
   }
 }

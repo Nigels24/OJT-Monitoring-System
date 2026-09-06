@@ -4,11 +4,11 @@ import Sidebar from "@/components/layout/Sidebar";
 import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { Star, ClipboardCheck, Hourglass, TrendingUp } from "lucide-react";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { SUPERVISOR_NAV } from "@/features/supervisor/nav";
 import { useEvaluations } from "@/features/evaluation/hooks/use-evaluations";
-import { PERFORMANCE_LEVELS } from "@/features/evaluation/rubric";
 import EvaluationForm from "@/features/evaluation/components/EvaluationForm";
 import EvaluationList from "@/features/evaluation/components/EvaluationList";
 import EvaluationViewDialog from "@/features/evaluation/components/EvaluationViewDialog";
@@ -16,24 +16,43 @@ import EvaluationViewDialog from "@/features/evaluation/components/EvaluationVie
 export default function SupervisorEvaluationPage() {
   const currentUser = useCurrentUser();
   const {
+    sheet,
+    sheetLoading,
     form,
     error,
-    preview,
+    editTarget,
+    isEditing,
+    traineeName,
+    employedAt,
+    evaluator,
+    sectionTotals,
+    totalRating,
+    scoredCount,
+    totalItems,
+    incompleteSections,
+    allScored,
     students,
     isLoading,
     isSubmitting,
+    canModify,
     viewTarget,
+    deleteTarget,
     search,
     page,
     paged,
     totalPages,
     stats,
-    setField,
+    setStudentId,
+    setHeaderField,
+    setScore,
     setViewTarget,
+    setDeleteTarget,
     setSearch,
     setPage,
     handleSubmit,
+    startEdit,
     resetForm,
+    handleDeleteConfirm,
   } = useEvaluations();
 
   return (
@@ -49,7 +68,7 @@ export default function SupervisorEvaluationPage() {
         <div className="bg-gradient-to-r from-gray-800 to-gray-700 rounded-2xl p-4 md:p-6 mb-6">
           <PageHeader
             title="Evaluation"
-            subtitle="Rate your students' performance across nine criteria"
+            subtitle="The school's official on-the-job training performance evaluation sheet"
             icon={Star}
           />
         </div>
@@ -65,57 +84,64 @@ export default function SupervisorEvaluationPage() {
             label="Awaiting Evaluation"
             value={stats.pending}
             icon={Hourglass}
-            subtext="students not yet evaluated"
+            subtext="trainees not yet evaluated"
           />
           <StatCard
-            label="Average Rating"
-            value={stats.total === 0 ? "—" : stats.averageRating.toFixed(1)}
+            label="Average Total Rating"
+            value={stats.averageRating ?? "—"}
             icon={TrendingUp}
-            subtext={stats.averageLevel}
+            subtext={
+              stats.averageRating === null
+                ? "No evaluations yet"
+                : `out of ${stats.maxTotalRating ?? 95}`
+            }
           />
         </div>
 
         <Card className="mb-4">
           <h2 className="text-base md:text-lg font-semibold text-gray-800 mb-1 flex items-center gap-2">
             <ClipboardCheck size={18} className="text-blue-600" />
-            New Evaluation
+            {isEditing ? "Edit Evaluation" : "New Evaluation"}
           </h2>
           <p className="text-xs text-gray-500 mb-4">
-            Each criterion is scored 1–5. The overall rating is weighted —
-            Work Performance 40%, Professional Behavior 30%, Technical Skills
-            30% — and calculated on the server when you submit.
+            Nineteen items, each scored 1–5, in four sections. The total is
+            calculated on the server when you submit.
           </p>
           <EvaluationForm
+            sheet={sheet}
+            sheetLoading={sheetLoading}
             form={form}
             error={error}
-            preview={preview}
+            editTarget={editTarget}
+            isEditing={isEditing}
+            traineeName={traineeName}
+            employedAt={employedAt}
+            evaluator={evaluator}
+            sectionTotals={sectionTotals}
+            totalRating={totalRating}
+            scoredCount={scoredCount}
+            totalItems={totalItems}
+            incompleteSections={incompleteSections}
+            allScored={allScored}
             students={students ?? []}
             isSubmitting={isSubmitting}
-            setField={setField}
+            setStudentId={setStudentId}
+            setHeaderField={setHeaderField}
+            setScore={setScore}
             onSubmit={handleSubmit}
-            onReset={resetForm}
+            onCancelEdit={resetForm}
           />
-
-          <div className="mt-6 pt-4 border-t border-gray-200">
-            <h3 className="text-sm font-semibold text-gray-800 mb-2">
-              Performance levels
-            </h3>
-            <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-600">
-              {PERFORMANCE_LEVELS.map((l) => (
-                <span key={l.level}>
-                  <span className="font-medium text-gray-800">{l.level}</span>{" "}
-                  {l.range}
-                </span>
-              ))}
-            </div>
-          </div>
         </Card>
 
         <Card>
-          <h2 className="text-base md:text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <h2 className="text-base md:text-lg font-semibold text-gray-800 mb-1 flex items-center gap-2">
             <Star size={18} className="text-blue-600" />
-            Completed Evaluations
+            Submitted Evaluations
           </h2>
+          <p className="text-xs text-gray-500 mb-4">
+            Newest first. A trainee may have more than one — edit and delete are
+            offered only on sheets you wrote.
+          </p>
           <EvaluationList
             rows={paged}
             isLoading={isLoading}
@@ -125,6 +151,9 @@ export default function SupervisorEvaluationPage() {
             onSearchChange={setSearch}
             onPageChange={setPage}
             onView={setViewTarget}
+            onEdit={startEdit}
+            onDelete={setDeleteTarget}
+            canModify={canModify}
             emptyMessage="You haven't evaluated anyone yet."
           />
         </Card>
@@ -135,6 +164,22 @@ export default function SupervisorEvaluationPage() {
         evaluation={viewTarget}
         onClose={() => {
           setViewTarget(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete Evaluation?"
+        message={
+          deleteTarget
+            ? `Permanently delete the evaluation of ${deleteTarget.student.user.name} scored ${deleteTarget.totalRating}/${deleteTarget.maxTotalRating}? This cannot be undone.`
+            : ""
+        }
+        confirmLabel="Yes, delete permanently"
+        variant="danger"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => {
+          setDeleteTarget(null);
         }}
       />
     </div>

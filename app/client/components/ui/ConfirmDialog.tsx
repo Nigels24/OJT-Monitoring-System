@@ -57,8 +57,15 @@ export default function ConfirmDialog({
           >
             {confirmLabel}
           </button>
+          {/*
+            Cancel takes focus on open, not confirm: these dialogs guard
+            irreversible deletes, so a stray Enter must not be the thing that
+            destroys a record. The dialog unmounts when closed, so `autoFocus`
+            fires on every open.
+          */}
           <button
             onClick={onCancel}
+            autoFocus
             className="flex-1 h-11 rounded-lg bg-gray-500 hover:bg-gray-600 text-white font-medium transition-colors"
           >
             {cancelLabel}

@@ -24,8 +24,9 @@ interface SubmitAttendanceInput {
 }
 
 interface UpdateProfileInput {
-  contactNumber?: string;
-  address?: string;
+  /** `null` = explicitly cleared; `undefined` = not supplied, leave unchanged. */
+  contactNumber?: string | null;
+  address?: string | null;
 }
 
 interface UploadDocumentInput {
@@ -147,6 +148,43 @@ export class StudentService {
     const date = startOfUtcDay(data.date);
     if (Number.isNaN(date.getTime())) {
       throw new BadRequestException('date is not a valid date');
+    }
+
+    // Completion is determined by hours, not the calendar — a student who
+    // hasn't met requiredHours by their scheduled endDate keeps logging past
+    // it, so endDate is NOT a bound here. Only status COMPLETED closes
+    // logging.
+    if (student.status === 'COMPLETED') {
+      throw new BadRequestException(
+        'Your OJT is complete. Attendance can no longer be logged.',
+      );
+    }
+
+    // The submitted date must not be before the student's OJT start, and
+    // never in the future — compared as calendar dates, never timestamps,
+    // against Manila's calendar day rather than the server's (the server may
+    // run in UTC, where an early-morning Manila (UTC+8) submission can
+    // already be "tomorrow" while the server still reads "today").
+    //
+    // Two independent checks, not one combined range: startDate and "today"
+    // can legitimately be inconsistent with each other (e.g. an OJT period
+    // that hasn't started yet has startDate > today), so a single
+    // "between X and Y" message can render as an inverted, nonsensical range.
+    // Each bound gets its own message instead.
+    const today = manilaToday();
+    const lowerBound = student.startDate
+      ? toUtcDateOnly(student.startDate)
+      : null;
+
+    if (lowerBound && date.getTime() < lowerBound.getTime()) {
+      throw new BadRequestException(
+        `Your OJT period starts on ${formatDateOnly(lowerBound)}. You cannot log attendance before then.`,
+      );
+    }
+    if (date.getTime() > today.getTime()) {
+      throw new BadRequestException(
+        'Attendance cannot be logged for a future date.',
+      );
     }
 
     const times = {
@@ -417,6 +455,49 @@ function startOfUtcDay(value: string): Date {
       parsed.getUTCDate(),
     ),
   );
+}
+
+const MANILA_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+/**
+ * Strips a Date down to UTC midnight of its own UTC calendar date. Used to
+ * date-only-compare `Student.startDate`/`endDate` against a submitted
+ * attendance date, regardless of whether either carries a nonzero time
+ * component.
+ */
+function toUtcDateOnly(value: Date): Date {
+  return new Date(
+    Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()),
+  );
+}
+
+/**
+ * Today's calendar date in Asia/Manila (UTC+8), as a UTC-midnight Date —
+ * comparable with `startOfUtcDay`/`toUtcDateOnly` results. The server may run
+ * in UTC; without this shift, an early-morning Manila submission (already
+ * "today" there) could read as still "yesterday" on the server, or the
+ * reverse near midnight — either way misjudging whether a date is "in the
+ * future".
+ */
+function manilaToday(): Date {
+  const shifted = new Date(Date.now() + MANILA_UTC_OFFSET_MS);
+  return new Date(
+    Date.UTC(
+      shifted.getUTCFullYear(),
+      shifted.getUTCMonth(),
+      shifted.getUTCDate(),
+    ),
+  );
+}
+
+/** Formats a UTC-midnight date-only Date for an error message, e.g. "Dec 1, 2026". */
+function formatDateOnly(value: Date): string {
+  return value.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
 }
 
 function parseTime(value?: string): Date | null {

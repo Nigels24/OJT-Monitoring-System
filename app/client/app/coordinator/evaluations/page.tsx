@@ -12,7 +12,6 @@ import {
   useGetAllEvaluationsQuery,
   Evaluation,
 } from "@/lib/api/evaluationApi";
-import { previewLevel } from "@/features/evaluation/rubric";
 import EvaluationList from "@/features/evaluation/components/EvaluationList";
 import EvaluationViewDialog from "@/features/evaluation/components/EvaluationViewDialog";
 
@@ -40,8 +39,9 @@ export default function CoordinatorEvaluationsPage() {
         ev.student.user.name,
         ev.student.studentIdNumber,
         ev.student.course,
+        ev.trainingEmployedAt,
         ev.student.establishment?.name,
-        ev.performanceLevel,
+        ev.evaluatorName,
       ]
         .filter(Boolean)
         .join(" ")
@@ -55,16 +55,17 @@ export default function CoordinatorEvaluationsPage() {
 
   const stats = useMemo(() => {
     const all = evaluations ?? [];
+    // null, not 0, until something has been evaluated.
     const avg =
       all.length === 0
-        ? 0
+        ? null
         : Math.round(
-            (all.reduce((a, e) => a + e.overallRating, 0) / all.length) * 10,
+            (all.reduce((a, e) => a + e.totalRating, 0) / all.length) * 10,
           ) / 10;
     return {
       total: all.length,
       averageRating: avg,
-      averageLevel: all.length === 0 ? "—" : previewLevel(avg),
+      maxTotalRating: all[0]?.maxTotalRating ?? 95,
       establishments: new Set(
         all.map((e) => e.student.establishment?.id).filter(Boolean),
       ).size,
@@ -84,7 +85,7 @@ export default function CoordinatorEvaluationsPage() {
         <div className="bg-gradient-to-r from-gray-800 to-gray-700 rounded-2xl p-4 md:p-6 mb-6">
           <PageHeader
             title="Evaluations"
-            subtitle="Performance evaluations submitted by supervisors across all establishments"
+            subtitle="Official evaluation sheets submitted by supervisors across all establishments"
             icon={Star}
           />
         </div>
@@ -97,10 +98,14 @@ export default function CoordinatorEvaluationsPage() {
             variant="accent"
           />
           <StatCard
-            label="Average Rating"
-            value={stats.total === 0 ? "—" : stats.averageRating.toFixed(1)}
+            label="Average Total Rating"
+            value={stats.averageRating ?? "—"}
             icon={TrendingUp}
-            subtext={stats.averageLevel}
+            subtext={
+              stats.averageRating === null
+                ? "No evaluations yet"
+                : `out of ${stats.maxTotalRating}`
+            }
           />
           <StatCard
             label="Establishments Reporting"

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   useGetMyAttendanceQuery,
+  useGetMyProfileQuery,
   useSubmitAttendanceMutation,
   AttendanceStatus,
 } from "@/lib/api/studentPortalApi";
@@ -42,6 +43,32 @@ function spanHours(from: string, to: string): number {
   return minutes > 0 ? minutes / 60 : 0;
 }
 
+/**
+ * Today as `yyyy-mm-dd` in the browser's own local time zone (not UTC).
+ *
+ * `new Date().toISOString().slice(0, 10)` looks equivalent but isn't: it
+ * converts to UTC first, so a student in Asia/Manila (UTC+8) submitting in
+ * the early morning would see yesterday's date as the bound. Reading the
+ * local getters avoids that conversion entirely.
+ */
+function todayLocalDateString(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** `yyyy-mm-dd` -> "Dec 1, 2026", parsed as UTC so no local shift applies. */
+function formatDateLabel(dateOnly: string): string {
+  return new Date(`${dateOnly}T00:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 export function useAttendanceLog() {
   const [form, setForm] = useState<AttendanceFormValues>(EMPTY_FORM);
   const [error, setError] = useState("");
@@ -50,8 +77,61 @@ export function useAttendanceLog() {
   const { showSuccess, showError } = useSnackbar();
 
   const { data: attendance, isLoading } = useGetMyAttendanceQuery();
+  const { data: profile } = useGetMyProfileQuery();
   const [submitAttendance, { isLoading: isSubmitting }] =
     useSubmitAttendanceMutation();
+
+  // Mirrors the server's OJT-period rules (student.service.ts
+  // submitAttendance) — this is UX only, so a student sees why before they
+  // submit rather than after; the server re-validates regardless of what's
+  // sent here.
+  //
+  // Completion is by hours, not the calendar, so a scheduled endDate never
+  // blocks logging — only status COMPLETED does. That leaves four states:
+  //   1. NOT STARTED  — today < startDate: form disabled, no min/max shown.
+  //   2. ACTIVE        — form enabled, min=startDate, max=today.
+  //   3. PAST SCHEDULED END, not complete — form stays enabled with a
+  //      non-blocking notice; bounds are the same as ACTIVE.
+  //   4. COMPLETED     — form disabled.
+  const today = todayLocalDateString();
+  const startDate = profile?.startDate
+    ? profile.startDate.slice(0, 10)
+    : undefined;
+  const endDate = profile?.endDate ? profile.endDate.slice(0, 10) : undefined;
+
+  const isCompleted = profile?.status === "COMPLETED";
+  const isNotStarted = !isCompleted && !!startDate && today < startDate;
+  const isPastScheduledEnd =
+    !isCompleted && !isNotStarted && !!endDate && today > endDate;
+
+  let minDate: string | undefined;
+  let maxDate: string | undefined;
+  let isDisabled = isCompleted || isNotStarted;
+  let disabledMessage: string | undefined = isCompleted
+    ? "Your OJT is complete."
+    : isNotStarted
+      ? `Your OJT starts on ${formatDateLabel(startDate!)}. You'll be able to log attendance from then.`
+      : undefined;
+
+  if (!isDisabled) {
+    minDate = startDate;
+    maxDate = today;
+    // Safety net: bounds should never invert once NOT_STARTED is excluded
+    // above, but if they somehow do, disable rather than hand the native
+    // date input an impossible min/max pair (Chrome rejects the field
+    // outright with its own unstyled message in that case).
+    if (minDate && minDate > maxDate) {
+      minDate = undefined;
+      maxDate = undefined;
+      isDisabled = true;
+      disabledMessage = "Attendance logging is unavailable right now.";
+    }
+  }
+
+  const noticeMessage =
+    !isDisabled && isPastScheduledEnd
+      ? `Your scheduled OJT ended on ${formatDateLabel(endDate!)}. Keep logging until your required hours are met.`
+      : undefined;
 
   const setField =
     (key: keyof AttendanceFormValues) =>
@@ -72,8 +152,29 @@ export function useAttendanceLog() {
     e.preventDefault();
     setError("");
 
+    if (isDisabled) {
+      setError(disabledMessage ?? "Attendance logging is unavailable.");
+      return;
+    }
+
     if (!form.date) {
       setError("Pick the date you are logging.");
+      return;
+    }
+
+    // Mirrors the server's checks (student.service.ts submitAttendance) —
+    // never a combined "between X and Y" range, since startDate and today
+    // can legitimately be inconsistent with each other (e.g. an OJT period
+    // that hasn't started yet). endDate is not checked here — a scheduled
+    // end never blocks logging, only status COMPLETED does (handled above).
+    if (startDate && form.date < startDate) {
+      setError(
+        `Your OJT period starts on ${formatDateLabel(startDate)}. You cannot log attendance before then.`,
+      );
+      return;
+    }
+    if (form.date > today) {
+      setError("Attendance cannot be logged for a future date.");
       return;
     }
 
@@ -142,6 +243,11 @@ export function useAttendanceLog() {
     attendance,
     isLoading,
     isSubmitting,
+    minDate,
+    maxDate,
+    isDisabled,
+    disabledMessage,
+    noticeMessage,
     statusFilter,
     page,
     paged,

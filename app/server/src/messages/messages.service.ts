@@ -111,19 +111,107 @@ export class MessagesService {
     });
   }
 
-  /** The caller's conversations, most recent activity first. */
+  /**
+   * The caller's conversations, most recent activity first.
+   *
+   * A per-conversation fan-out here (N conversations = 3N concurrent
+   * queries) is what exhausted the connection pool under polling — this
+   * collapses it to a fixed number of bulk queries for the whole list,
+   * regardless of how many conversations the caller has.
+   */
   async getConversations(userId: string) {
     const participants =
       await this.prisma.client.conversationParticipant.findMany({
         where: { userId },
-        select: { conversationId: true },
+        select: {
+          conversationId: true,
+          lastReadAt: true,
+          conversation: { select: { createdAt: true } },
+        },
       });
+    if (participants.length === 0) {
+      return [];
+    }
 
-    const summaries = await Promise.all(
-      participants.map((p) =>
-        this.summarizeConversation(p.conversationId, userId),
-      ),
+    const ids = participants.map((p) => p.conversationId);
+    const EPOCH = new Date(0);
+    const conversationCreatedAtById = new Map(
+      participants.map((p) => [p.conversationId, p.conversation.createdAt]),
     );
+
+    const [others, lastMessages, unreadCounts] = await Promise.all([
+      // 1:1 conversations only (isGroup is always false), so this is exactly
+      // one row per conversation id — the other participant.
+      this.prisma.client.conversationParticipant.findMany({
+        where: { conversationId: { in: ids }, userId: { not: userId } },
+        select: {
+          conversationId: true,
+          user: { select: { id: true, name: true, role: true } },
+        },
+      }),
+      // distinct + orderBy picks the first row per conversationId under that
+      // order, i.e. the newest message — one round trip for every
+      // conversation's last message.
+      this.prisma.client.message.findMany({
+        where: { conversationId: { in: ids } },
+        distinct: ['conversationId'],
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          conversationId: true,
+          senderId: true,
+          content: true,
+          createdAt: true,
+        },
+      }),
+      // Each conversation keeps its own lastReadAt cutoff via an OR of
+      // (conversationId, createdAt gt) pairs — the database counts, so this
+      // returns one row per conversation rather than one per unread message
+      // (a never-read conversation's lastReadAt is null and reads as the
+      // epoch, same as before, but without fetching that conversation's
+      // full history to filter in JS).
+      this.prisma.client.message.groupBy({
+        by: ['conversationId'],
+        where: {
+          senderId: { not: userId },
+          OR: participants.map((p) => ({
+            conversationId: p.conversationId,
+            createdAt: { gt: p.lastReadAt ?? EPOCH },
+          })),
+        },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const otherById = new Map(others.map((o) => [o.conversationId, o.user]));
+    const lastMessageById = new Map(
+      lastMessages.map((m) => [
+        m.conversationId,
+        {
+          id: m.id,
+          senderId: m.senderId,
+          content: m.content,
+          createdAt: m.createdAt,
+        },
+      ]),
+    );
+
+    // Preserves the exact original semantics: unread = not sent by me AND
+    // created after MY lastReadAt for THAT conversation (null = epoch).
+    const unreadCountById = new Map(
+      unreadCounts.map((c) => [c.conversationId, c._count._all]),
+    );
+
+    const summaries = ids.map((id) => {
+      const lastMessage = lastMessageById.get(id) ?? null;
+      return {
+        id,
+        otherParticipant: otherById.get(id) ?? null,
+        lastMessage,
+        unreadCount: unreadCountById.get(id) ?? 0,
+        updatedAt: lastMessage?.createdAt ?? conversationCreatedAtById.get(id)!,
+      };
+    });
 
     return summaries.sort(
       (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),

@@ -24,3 +24,36 @@ export const ToOptionalNumber = () =>
       ? undefined
       : Number(value),
   );
+
+/**
+ * Treats an empty string as "clear this field" — SQL NULL.
+ *
+ * The counterpart to `EmptyToUndefined`, and the right choice for the
+ * **nullable** columns of an update DTO. Prisma reads `undefined` as "leave
+ * this column alone", so `EmptyToUndefined` makes a deliberately emptied box
+ * silently keep its old value; `null` is what actually clears it.
+ *
+ * The distinction that matters: a field **absent** from the request body still
+ * arrives as `undefined` and still means "leave unchanged". Only an explicit
+ * `""` (or `null`) clears.
+ *
+ * Only for columns that are nullable in `schema.prisma`. On a NOT NULL column
+ * (`Student.requiredHours`, `Student.status`) keep `EmptyToUndefined` /
+ * `ToOptionalNumber` — a `null` there is a write error, not a clear.
+ */
+export const EmptyToNull = () =>
+  Transform(({ value }: { value: unknown }) =>
+    value === '' || value === null ? null : value,
+  );
+
+/**
+ * As `EmptyToNull`, but coerces to a number. For **nullable** numeric columns
+ * (`Student.age`), where `ToOptionalNumber` would make a cleared field
+ * unclearable.
+ */
+export const ToNullableNumber = () =>
+  Transform(({ value }: { value: unknown }) => {
+    if (value === '' || value === null) return null;
+    if (value === undefined) return undefined;
+    return Number(value);
+  });

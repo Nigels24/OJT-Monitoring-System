@@ -28,7 +28,12 @@ import {
 import { CoordinatorService } from './coordinator.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { AuthedRequest } from '../auth/authed-request';
-import { EmptyToUndefined, ToOptionalNumber } from '../common/transforms';
+import {
+  EmptyToNull,
+  EmptyToUndefined,
+  ToNullableNumber,
+  ToOptionalNumber,
+} from '../common/transforms';
 
 // Usernames must not contain "@" so they can never shadow an email address
 // when AuthService.login matches an identifier against both columns.
@@ -67,73 +72,80 @@ class CreateSupervisorDto {
  * create and update; create adds the identity fields below.
  */
 class StudentDetailsDto {
+  // The nullable columns below use EmptyToNull, not EmptyToUndefined: on an
+  // edit, emptying a box has to persist as cleared rather than silently keep
+  // the old value. Absent from the body still means "leave unchanged".
+  // `requiredHours` and `status` stay on the undefined-based transforms — they
+  // are NOT NULL, so null there is a write error, not a clear.
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @IsString()
   @MaxLength(120)
-  firstName?: string;
+  firstName?: string | null;
 
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @IsString()
   @MaxLength(120)
-  lastName?: string;
+  lastName?: string | null;
 
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @IsString()
   @MaxLength(10)
-  middleInitial?: string;
+  middleInitial?: string | null;
 
   @IsOptional()
-  @ToOptionalNumber()
+  @ToNullableNumber()
   @IsInt()
   @Min(15)
   @Max(100)
-  age?: number;
+  age?: number | null;
 
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @IsDateString()
-  dateOfBirth?: string;
+  dateOfBirth?: string | null;
 
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @IsString()
   @MaxLength(200)
-  school?: string;
+  school?: string | null;
 
   // Philippine mobile format, matching the prototype's own input validation.
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @Matches(/^\d{11}$/, {
     message: 'contactNumber must be exactly 11 digits (e.g. 09123456789)',
   })
-  contactNumber?: string;
+  contactNumber?: string | null;
 
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @IsString()
   @MaxLength(255)
-  address?: string;
+  address?: string | null;
 
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @IsString()
   @MaxLength(120)
-  course?: string;
+  course?: string | null;
 
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @IsString()
   @MaxLength(30)
-  yearLevel?: string;
+  yearLevel?: string | null;
 
+  // Clearing the establishment select unassigns the student — Student
+  // .establishmentId is nullable for exactly that (see §8 item 17).
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @IsString()
   @IsNotEmpty()
-  establishmentId?: string;
+  establishmentId?: string | null;
 
   @IsOptional()
   @ToOptionalNumber()
@@ -146,9 +158,9 @@ class StudentDetailsDto {
   // against the calendar days elapsed since this date — a student with no
   // startDate reports a null percentage rather than a misleading 0%.
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @IsDateString()
-  startDate?: string;
+  startDate?: string | null;
 
   @IsOptional()
   @IsIn(['ACTIVE', 'PENDING', 'COMPLETED', 'INACTIVE'])

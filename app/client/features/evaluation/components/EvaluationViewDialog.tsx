@@ -1,9 +1,7 @@
 import { Star, User, Building2, CalendarDays, IdCard } from "lucide-react";
 import ViewDialog from "@/components/ui/ViewDialog";
 import DetailItem from "@/components/ui/DetailItem";
-import StatusBadge from "@/components/ui/StatusBadge";
 import { Evaluation } from "@/lib/api/evaluationApi";
-import { CATEGORIES, levelBadgeVariant } from "../rubric";
 
 interface EvaluationViewDialogProps {
   open: boolean;
@@ -11,6 +9,17 @@ interface EvaluationViewDialogProps {
   onClose: () => void;
 }
 
+function dateOrNull(iso: string | null): string | null {
+  return iso ? new Date(iso).toLocaleDateString() : null;
+}
+
+/**
+ * The filled-in sheet, read-only.
+ *
+ * Every section, item, letter and wording comes from the evaluation's own
+ * `sections` — the server sends them with the scores, so this renders the same
+ * sheet the supervisor filled in without a client-side copy of the form.
+ */
 export default function EvaluationViewDialog({
   open,
   evaluation,
@@ -19,29 +28,28 @@ export default function EvaluationViewDialog({
   return (
     <ViewDialog
       open={open}
-      title="Evaluation Details"
+      title="On-the-Job Training Performance Evaluation Sheet"
       icon={Star}
       onClose={onClose}
     >
       {evaluation && (
         <div className="space-y-4">
-          <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 flex items-center justify-between gap-4">
-            <div>
-              <div className="text-xs text-gray-500">Overall rating</div>
-              <div className="text-2xl font-semibold text-gray-900">
-                {evaluation.overallRating.toFixed(1)}
-                <span className="text-sm font-normal text-gray-500"> / 5</span>
-              </div>
-            </div>
-            <StatusBadge
-              label={evaluation.performanceLevel}
-              variant={levelBadgeVariant(evaluation.performanceLevel)}
-            />
+          <div className="rounded-lg border-2 border-gray-800 bg-gray-50 p-4 flex items-center justify-between gap-4">
+            <span className="text-sm font-bold tracking-wide text-gray-900">
+              TOTAL RATING
+            </span>
+            <span className="text-2xl font-bold text-gray-900 tabular-nums">
+              {evaluation.totalRating}
+              <span className="text-sm font-normal text-gray-500">
+                {" "}
+                / {evaluation.maxTotalRating}
+              </span>
+            </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
             <DetailItem
-              label="Student"
+              label="Name of the Trainee"
               value={evaluation.student.user.name}
               icon={User}
             />
@@ -51,85 +59,62 @@ export default function EvaluationViewDialog({
               icon={IdCard}
             />
             <DetailItem
-              label="Establishment"
-              value={evaluation.student.establishment?.name}
-              icon={Building2}
-            />
-            <DetailItem
-              label="Evaluator"
-              value={`${evaluation.supervisor.user.name}${
-                evaluation.supervisor.position
-                  ? ` (${evaluation.supervisor.position})`
-                  : ""
-              }`}
-              icon={User}
-            />
-            <DetailItem
-              label="Evaluation Period"
+              label="Training Employed at"
               value={
-                evaluation.periodStart || evaluation.periodEnd
-                  ? `${
-                      evaluation.periodStart
-                        ? new Date(evaluation.periodStart).toLocaleDateString()
-                        : "…"
-                    } – ${
-                      evaluation.periodEnd
-                        ? new Date(evaluation.periodEnd).toLocaleDateString()
-                        : "…"
-                    }`
-                  : null
+                evaluation.trainingEmployedAt ??
+                evaluation.student.establishment?.name
               }
-              icon={CalendarDays}
+              icon={Building2}
             />
             <DetailItem
               label="Date Evaluated"
               value={new Date(evaluation.createdAt).toLocaleDateString()}
               icon={CalendarDays}
             />
+            <DetailItem
+              label="Training Date Started"
+              value={dateOrNull(evaluation.trainingStartedAt)}
+              icon={CalendarDays}
+            />
+            <DetailItem
+              label="Training Date Ended"
+              value={dateOrNull(evaluation.trainingEndedAt)}
+              icon={CalendarDays}
+            />
           </div>
 
-          <div className="border-t border-gray-200 pt-4">
-            <h3 className="text-base font-semibold text-gray-800 mb-3">
-              Scores
-            </h3>
-            <div className="space-y-4">
-              {CATEGORIES.map((category) => {
-                const summary = evaluation.categories.find(
-                  (c) => c.key === category.key,
-                );
-                return (
-                  <div key={category.key}>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-900">
-                        {category.label}
-                        <span className="text-xs text-gray-500 font-normal">
-                          {" "}
-                          ({Math.round(category.weight * 100)}%)
+          <div className="space-y-4 border-t border-gray-200 pt-4">
+            {evaluation.sections.map((section) => (
+              <div key={section.key}>
+                <div className="flex items-center justify-between gap-3 bg-gray-800 text-white px-3 py-2 rounded-t-lg">
+                  <h3 className="text-xs md:text-sm font-bold tracking-wide">
+                    {section.numeral}. {section.label} ({section.maxPoints}{" "}
+                    POINTS)
+                  </h3>
+                  <span className="text-xs font-semibold shrink-0 tabular-nums">
+                    {section.total} / {section.maxPoints}
+                  </span>
+                </div>
+                <div className="rounded-b-lg border border-t-0 border-gray-300 divide-y divide-gray-100">
+                  {section.items.map((item) => (
+                    <div
+                      key={item.key}
+                      className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+                    >
+                      <span className="text-gray-600">
+                        <span className="font-semibold text-gray-500 mr-1.5">
+                          {item.letter}.
                         </span>
+                        {item.label}
                       </span>
-                      <span className="text-sm font-semibold text-gray-900">
-                        {summary ? summary.average.toFixed(1) : "—"}
+                      <span className="font-semibold text-gray-900 tabular-nums shrink-0">
+                        {item.score}
                       </span>
                     </div>
-                    <div className="rounded-lg border border-gray-200 divide-y divide-gray-100">
-                      {category.criteria.map((criterion) => (
-                        <div
-                          key={criterion.key}
-                          className="flex items-center justify-between px-3 py-2 text-sm"
-                        >
-                          <span className="text-gray-600">
-                            {criterion.label}
-                          </span>
-                          <span className="font-medium text-gray-900">
-                            {evaluation[criterion.key]} / 5
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
 
           {(evaluation.comments || evaluation.recommendations) && (
@@ -156,6 +141,20 @@ export default function EvaluationViewDialog({
               )}
             </div>
           )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 border-t border-gray-200 pt-4">
+            <DetailItem
+              label="Evaluated by"
+              value={evaluation.evaluatorName ?? evaluation.supervisor.user.name}
+              icon={User}
+            />
+            <DetailItem
+              label="Position"
+              value={
+                evaluation.evaluatorPosition ?? evaluation.supervisor.position
+              }
+            />
+          </div>
         </div>
       )}
     </ViewDialog>

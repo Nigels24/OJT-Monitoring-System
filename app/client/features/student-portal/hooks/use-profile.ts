@@ -47,9 +47,10 @@ export function useProfile() {
     setError("");
 
     try {
+      // `null`, not omitted — an emptied box must clear the stored value.
       await updateProfile({
-        contactNumber: form.contactNumber || undefined,
-        address: form.address || undefined,
+        contactNumber: form.contactNumber || null,
+        address: form.address || null,
       }).unwrap();
 
       setIsEditing(false);

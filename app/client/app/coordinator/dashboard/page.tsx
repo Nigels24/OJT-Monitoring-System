@@ -162,14 +162,13 @@ export default function CoordinatorDashboard() {
                 subtext={`of ${data.stats.activeStudents} active students`}
               />
               <StatCard
-                label="Avg. Performance"
+                label="Avg. Total Rating"
                 value={data.stats.averageRating ?? "—"}
                 icon={Star}
                 subtext={
-                  data.stats.averageLevel ??
-                  (data.stats.totalEvaluations === 0
+                  data.stats.averageRating === null
                     ? "No evaluations yet"
-                    : undefined)
+                    : `out of ${data.stats.maxTotalRating}`
                 }
               />
             </div>

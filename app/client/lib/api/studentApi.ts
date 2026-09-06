@@ -38,23 +38,38 @@ export interface Student {
     createdAt: string;
   };
   establishment?: { id: string; name: string } | null;
-  _count?: { credentials: number; documents: number } | null;
+  /**
+   * Dependent-row counts. The delete confirmation spells these out, since
+   * deleting a student now cascades through all four (see the server's
+   * `deleteStudentCascade`).
+   */
+  _count?: {
+    credentials: number;
+    documents: number;
+    attendances: number;
+    evaluations: number;
+  } | null;
 }
 
+/**
+ * `null` on a nullable field clears it; omitting the field leaves the stored
+ * value alone. `requiredHours` and `status` are NOT NULL server-side, so they
+ * are omit-only.
+ */
 export interface StudentDetailsRequest {
-  firstName?: string;
-  lastName?: string;
-  middleInitial?: string;
-  age?: number;
-  dateOfBirth?: string;
-  school?: string;
-  contactNumber?: string;
-  address?: string;
-  course?: string;
-  yearLevel?: string;
-  establishmentId?: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  middleInitial?: string | null;
+  age?: number | null;
+  dateOfBirth?: string | null;
+  school?: string | null;
+  contactNumber?: string | null;
+  address?: string | null;
+  course?: string | null;
+  yearLevel?: string | null;
+  establishmentId?: string | null;
   requiredHours?: number;
-  startDate?: string;
+  startDate?: string | null;
   status?: StudentStatus;
 }
 

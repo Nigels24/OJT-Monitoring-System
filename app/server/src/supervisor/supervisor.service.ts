@@ -6,11 +6,11 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { hoursForAttendance, totalHours } from '../common/attendance-hours';
 import {
-  CRITERIA,
-  CriteriaScores,
-  categoryBreakdown,
-  overallRating,
-  performanceLevel,
+  ItemScores,
+  pickItemScores,
+  scoreBreakdown,
+  sheetDefinition,
+  totalRating,
 } from '../common/evaluation-scoring';
 
 type AttendanceStatus = 'PENDING' | 'APPROVED' | 'DECLINED';
@@ -262,41 +262,31 @@ export class SupervisorService {
     }
   }
 
-  async createEvaluation(
-    userId: string,
-    data: CriteriaScores & {
-      studentId: string;
-      periodStart?: string;
-      periodEnd?: string;
-      comments?: string;
-      recommendations?: string;
-    },
-  ) {
-    const supervisor = await this.getSupervisorByUserId(userId);
+  /**
+   * Writes one official evaluation sheet.
+   *
+   * Repeatable by design — there is no uniqueness constraint on
+   * (studentId, supervisorId), because a student is evaluated more than once
+   * over a placement.
+   */
+  async createEvaluation(userId: string, data: EvaluationInput) {
+    const supervisor = await this.getSupervisorWithHeaderFields(userId);
+    const student = await this.verifyStudentUnderSupervisor(
+      data.studentId,
+      supervisor.establishmentId,
+    );
 
-    const student = await this.prisma.client.student.findUnique({
-      where: { id: data.studentId },
-    });
-    if (!student || student.establishmentId !== supervisor.establishmentId) {
-      throw new ForbiddenException(
-        'This student is not under your establishment',
-      );
-    }
-
-    const scores = pickCriteria(data);
-    // Derived here, never read from the request — otherwise a caller could
-    // submit nine low scores alongside an "Excellent" overall.
-    const rating = overallRating(scores);
+    const scores = pickItemScores(data);
 
     const created = await this.prisma.client.evaluation.create({
       data: {
         studentId: data.studentId,
         supervisorId: supervisor.id,
         ...scores,
-        overallRating: rating,
-        performanceLevel: performanceLevel(rating),
-        periodStart: data.periodStart ? new Date(data.periodStart) : null,
-        periodEnd: data.periodEnd ? new Date(data.periodEnd) : null,
+        // Derived here, never read from the request — otherwise a caller could
+        // submit nineteen low scores alongside a 95.
+        totalRating: totalRating(scores),
+        ...this.headerFields(data, supervisor, student),
         comments: data.comments,
         recommendations: data.recommendations,
       },
@@ -305,7 +295,153 @@ export class SupervisorService {
 
     // Same shape as the list endpoints, so a freshly created evaluation can be
     // rendered without a refetch.
-    return withBreakdown(created);
+    return withSectionTotals(created);
+  }
+
+  /**
+   * Edits an evaluation this supervisor wrote, recomputing the total.
+   *
+   * Ownership is `supervisorId`, not the establishment: `getEvaluations`
+   * deliberately shows everything written at the establishment, but a
+   * supervisor may only rewrite their own sheet.
+   */
+  async updateEvaluation(
+    userId: string,
+    evaluationId: string,
+    data: Omit<EvaluationInput, 'studentId'>,
+  ) {
+    const supervisor = await this.getSupervisorWithHeaderFields(userId);
+    const existing = await this.verifyEvaluationBelongsToSupervisor(
+      evaluationId,
+      supervisor.id,
+    );
+    const student = await this.verifyStudentUnderSupervisor(
+      existing.studentId,
+      supervisor.establishmentId,
+    );
+
+    const scores = pickItemScores(data);
+
+    const updated = await this.prisma.client.evaluation.update({
+      where: { id: evaluationId },
+      data: {
+        ...scores,
+        totalRating: totalRating(scores),
+        ...this.headerFields(data, supervisor, student),
+        comments: data.comments,
+        recommendations: data.recommendations,
+      },
+      include: EVALUATION_INCLUDE,
+    });
+
+    return withSectionTotals(updated);
+  }
+
+  /** Hard-deletes an evaluation this supervisor wrote. */
+  async removeEvaluation(userId: string, evaluationId: string) {
+    const supervisor = await this.getSupervisorByUserId(userId);
+    await this.verifyEvaluationBelongsToSupervisor(evaluationId, supervisor.id);
+
+    await this.prisma.client.evaluation.delete({ where: { id: evaluationId } });
+
+    return { id: evaluationId, deleted: true };
+  }
+
+  /**
+   * The form's header fields.
+   *
+   * `trainingEmployedAt`, `evaluatorName` and `evaluatorPosition` are
+   * snapshotted from the current rows rather than joined on read, so renaming
+   * or deleting a supervisor later cannot rewrite a sheet that was already
+   * signed off.
+   */
+  private headerFields(
+    data: Omit<EvaluationInput, 'studentId'>,
+    supervisor: { position: string | null; user: { name: string } },
+    student: { establishment: { name: string } | null },
+  ) {
+    return {
+      trainingStartedAt: data.trainingStartedAt
+        ? new Date(data.trainingStartedAt)
+        : null,
+      trainingEndedAt: data.trainingEndedAt
+        ? new Date(data.trainingEndedAt)
+        : null,
+      trainingEmployedAt: student.establishment?.name ?? null,
+      evaluatorName: supervisor.user.name,
+      evaluatorPosition: supervisor.position,
+    };
+  }
+
+  /** The supervisor plus the two columns the sheet's header snapshots. */
+  private async getSupervisorWithHeaderFields(userId: string) {
+    const supervisor = await this.prisma.client.supervisor.findUnique({
+      where: { userId },
+      select: {
+        id: true,
+        establishmentId: true,
+        position: true,
+        user: { select: { name: true } },
+      },
+    });
+    if (!supervisor) {
+      throw new NotFoundException('Supervisor profile not found');
+    }
+    return supervisor;
+  }
+
+  private async verifyStudentUnderSupervisor(
+    studentId: string,
+    establishmentId: string,
+  ) {
+    const student = await this.prisma.client.student.findUnique({
+      where: { id: studentId },
+      select: {
+        id: true,
+        establishmentId: true,
+        establishment: { select: { name: true } },
+      },
+    });
+    if (!student || student.establishmentId !== establishmentId) {
+      throw new ForbiddenException(
+        'This student is not under your establishment',
+      );
+    }
+    return student;
+  }
+
+  /**
+   * Guards edit and delete. Never trust the id in the path to imply ownership —
+   * without this, any supervisor could rewrite another's sheet by guessing a
+   * cuid.
+   */
+  private async verifyEvaluationBelongsToSupervisor(
+    evaluationId: string,
+    supervisorId: string,
+  ) {
+    const evaluation = await this.prisma.client.evaluation.findUnique({
+      where: { id: evaluationId },
+      select: { id: true, studentId: true, supervisorId: true },
+    });
+    if (!evaluation) {
+      throw new NotFoundException('Evaluation not found');
+    }
+    if (evaluation.supervisorId !== supervisorId) {
+      throw new ForbiddenException(
+        'This evaluation was written by a different supervisor',
+      );
+    }
+    return evaluation;
+  }
+
+  /**
+   * The blank official sheet — sections, items, printed letters and wording.
+   *
+   * Served rather than duplicated in the client, so the form's text has exactly
+   * one source (src/common/evaluation-scoring.ts).
+   */
+  getEvaluationSheet() {
+    return sheetDefinition();
   }
 
   /** Evaluations written for students at this supervisor's establishment. */
@@ -318,9 +454,19 @@ export class SupervisorService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return evaluations.map(withBreakdown);
+    return evaluations.map(withSectionTotals);
   }
 }
+
+/** What both create and update accept, before the server derives the rest. */
+export type EvaluationInput = ItemScores & {
+  studentId: string;
+  trainingStartedAt?: string;
+  trainingEndedAt?: string;
+  /** `null` = explicitly cleared; `undefined` = not supplied, leave unchanged. */
+  comments?: string | null;
+  recommendations?: string | null;
+};
 
 /** Shared shape so supervisor and coordinator lists render identically. */
 export const EVALUATION_INCLUDE = {
@@ -343,23 +489,16 @@ export const EVALUATION_INCLUDE = {
   },
 } as const;
 
-/** Narrows a request body down to just the nine scored criteria. */
-export function pickCriteria(source: Record<string, unknown>): CriteriaScores {
-  return Object.fromEntries(
-    CRITERIA.map((key) => [key, Number(source[key])]),
-  ) as CriteriaScores;
-}
-
 /**
- * Attaches the per-category averages. Recomputed on read rather than stored —
- * it is a presentation detail derived from the criteria, unlike overallRating
- * which is part of the record.
+ * Attaches the per-section totals. Recomputed on read rather than stored — they
+ * are a presentation detail derived from the nineteen items, unlike
+ * `totalRating`, which is part of the record.
  */
-export function withBreakdown<T extends CriteriaScores>(evaluation: T) {
-  return {
-    ...evaluation,
-    categories: categoryBreakdown(pickCriteria(evaluation)),
-  };
+export function withSectionTotals<T extends ItemScores>(evaluation: T) {
+  const { sections, maxTotalRating } = scoreBreakdown(
+    pickItemScores(evaluation),
+  );
+  return { ...evaluation, sections, maxTotalRating };
 }
 
 /** Monday 00:00 UTC of the current week. */

@@ -37,8 +37,8 @@ enum EstablishmentStatus {
 }
 
 model User {
-  id       String @id @default(cuid())
-  email    String @unique
+  id        String   @id @default(cuid())
+  email     String   @unique
   // Login name issued by the coordinator. Nullable because accounts created
   // before this existed have none — those still sign in with their email.
   // Logging in accepts either, so a username may never contain "@", which is
@@ -167,12 +167,12 @@ model Attendance {
 }
 
 model Document {
-  id         String   @id @default(cuid())
-  studentId  String
-  student    Student  @relation(fields: [studentId], references: [id])
-  name       String
-  fileUrl    String
-  status     String   @default("PENDING")
+  id        String  @id @default(cuid())
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id])
+  name      String
+  fileUrl   String
+  status    String  @default("PENDING")
 
   // Who actioned this review, their note, and when. `reviewNote` is required
   // by the service when status is REJECTED, mirroring
@@ -202,31 +202,64 @@ model Evaluation {
   supervisorId String
   supervisor   Supervisor @relation(fields: [supervisorId], references: [id])
 
-  // Nine criteria scored 1-5. Grouping and weights live in
-  // src/common/evaluation-scoring.ts — Work Performance 40%,
-  // Professional Behavior 30%, Technical Skills 30%.
-  quality        Int
-  quantity       Int
-  efficiency     Int
-  attendance     Int
-  teamwork       Int
-  communication  Int
-  knowledge      Int
-  problemSolving Int
-  initiative     Int
+  // The school's official ON-THE-JOB TRAINING PERFORMANCE EVALUATION SHEET:
+  // nineteen items, each scored 1-5 (5 OUTSTANDING ... 1 NEEDS IMPROVEMENT),
+  // in four sections. Columns are named by meaning rather than by the form's
+  // letters so the code stays readable; the letters, labels and per-section
+  // maximums live in src/common/evaluation-scoring.ts, which is the only place
+  // that knows how the items add up.
+  //
+  // No uniqueness constraint on (studentId, supervisorId): a student is
+  // deliberately evaluated more than once.
 
-  // Derived from the nine criteria and stored, never accepted from the client.
-  // Kept rather than computed on read so an evaluation keeps the rating and
-  // label it was given, even if the rubric or its bands are changed later.
-  overallRating    Float
-  performanceLevel String
+  // I. WORK ATTITUDES AND HABITS (25 points)
+  courtesy                 Int
+  patienceAndDiligence     Int
+  punctualityAndAttendance Int
+  neatnessOfReports        Int
+  punctualityOfReports     Int
 
-  periodStart     DateTime?
-  periodEnd       DateTime?
+  // II. WORK KNOWLEDGE (20 points)
+  technicalKnowledge      Int
+  relatesTheoryToPractice Int
+  openToCriticism         Int
+  discretion              Int
+
+  // III. PERSONALITY AND PERSONAL APPEARANCE (25 points)
+  neatAndWellGroomed     Int
+  properAttire           Int
+  poiseAndSelfConfidence Int
+  emotionalMaturity      Int
+  dealsWellWithCoworkers Int
+
+  // IV. PROFESSIONAL COMPETENCE (25 points)
+  performanceOfWork       Int
+  understandsInstructions Int
+  sharesSuggestions       Int
+  ethicalStandards        Int
+  speaksAudibly           Int
+
+  // The form's TOTAL RATING: the raw sum of the nineteen items, so always
+  // 19-95. Computed and stored server-side, never accepted from the client.
+  // Deliberately raw — the form has no percentage, letter grade or performance
+  // band, and the old Excellent/Very Good/Good/Fair/Poor labels were retired
+  // with the previous rubric.
+  totalRating Int
+
+  // The form's header fields. `trainingEmployedAt`, `evaluatorName` and
+  // `evaluatorPosition` are snapshots taken when the evaluation is written, so
+  // renaming or deleting a supervisor later cannot rewrite a signed record.
+  trainingStartedAt  DateTime?
+  trainingEndedAt    DateTime?
+  trainingEmployedAt String?
+  evaluatorName      String?
+  evaluatorPosition  String?
+
   comments        String?
   recommendations String?
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Conversation {

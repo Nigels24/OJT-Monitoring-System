@@ -29,7 +29,7 @@ import {
 } from './student.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { AuthedRequest } from '../auth/authed-request';
-import { EmptyToUndefined } from '../common/transforms';
+import { EmptyToNull } from '../common/transforms';
 
 class SubmitAttendanceDto {
   @IsDateString()
@@ -62,18 +62,20 @@ class SubmitAttendanceDto {
 // Declaring nothing else here is what makes forbidNonWhitelisted reject an
 // attempt to slip one in.
 class UpdateProfileDto {
+  // EmptyToNull so a student can actually erase a value they no longer want on
+  // file. Absent from the body still means "leave unchanged".
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @Matches(/^\d{11}$/, {
     message: 'contactNumber must be exactly 11 digits (e.g. 09123456789)',
   })
-  contactNumber?: string;
+  contactNumber?: string | null;
 
   @IsOptional()
-  @EmptyToUndefined()
+  @EmptyToNull()
   @IsString()
   @MaxLength(255)
-  address?: string;
+  address?: string | null;
 }
 
 // Multipart body: only the text field goes through the DTO. The file itself

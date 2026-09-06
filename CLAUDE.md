@@ -66,7 +66,7 @@ OJT-Monitoring-System/
     │   ├── prisma/
     │   │   ├── schema.prisma
     │   │   ├── seed.ts             # bootstraps ONLY the coordinator
-    │   │   └── migrations/         # 12 migrations, listed in §6
+    │   │   └── migrations/         # 13 migrations, listed in §6
     │   ├── scripts/reset-coordinator.ts
     │   ├── test/                   # e2e only
     │   └── generated/prisma/       # gitignored — run `npx prisma generate`
@@ -74,10 +74,9 @@ OJT-Monitoring-System/
         ├── app/
         │   ├── page.tsx            # redirects to /login
         │   ├── login/
-        │   ├── coordinator/{dashboard,establishments,supervisors,students,evaluations,attendance,documents,messages*}
-        │   ├── student/{dashboard,attendance,documents,profile,credentials,messages*}
-        │   └── supervisor/{dashboard,attendance,evaluation,messages*}
-        │         (* = route folder exists, no page.tsx yet — unbuilt)
+        │   ├── coordinator/{dashboard,establishments,supervisors,students,evaluations,attendance,documents,messages}
+        │   ├── student/{dashboard,attendance,documents,profile,credentials,messages}
+        │   └── supervisor/{dashboard,attendance,evaluation,messages}
         ├── features/<domain>/
         │   ├── nav.ts                   # only in coordinator/, supervisor/, student-portal/
         │   ├── hooks/use-<domain>.ts    # all state, RTK Query, filtering, handlers
@@ -98,12 +97,13 @@ OJT-Monitoring-System/
 of supervisors — same create/list/reset-password split as student vs student-portal),
 `evaluation`, `attendance-oversight`, `document` (the *coordinator's* cross-student review
 queue — `student-portal` owns the student's own upload/list/delete view of the same
-table), `coordinator` (nav only), `account`.
+table), `messaging` (one domain, all three roles — see §5 "Which feature domain?"),
+`coordinator` (nav only), `account`.
 
 **API slices** (`lib/api/*.ts`): `authApi`, `establishmentApi`, `studentApi`,
 `studentPortalApi`, `supervisorApi`, `supervisorManagementApi`, `evaluationApi`,
-`dashboardApi`, `attendanceOversightApi`, `documentApi`. Each is registered in
-`lib/store.ts` — **reducer *and* middleware**.
+`dashboardApi`, `attendanceOversightApi`, `documentApi`, `messagesApi`. Each is registered
+in `lib/store.ts` — **reducer *and* middleware**.
 
 **UI primitives** (`components/ui/`): DataTable, StatCard, StatusBadge, ProgressBar,
 TrendChart, RankedBarList, ConfirmDialog, ViewDialog, TextField, TextArea, SelectField,
@@ -111,7 +111,12 @@ SearchInput, Tabs, Card, Button, PageHeader, Avatar, DetailItem, Snackbar. Reuse
 before adding a new one. `TextField` auto-adds a show/hide eye toggle whenever
 `type="password"` — don't build a second one at the call site; a field that should stay
 plain text (the coordinator's issued-password fields, so it can be read back) uses
-`type="text"` instead, deliberately.
+`type="text"` instead, deliberately. `ConfirmDialog` gives **Cancel** the autofocus, not
+the confirm button — it guards irreversible deletes, so a stray Enter must not be what
+destroys a record. The copy for the three cascading-delete confirmations lives in
+`lib/format.ts` (`deleteStudentMessage`, `deleteSupervisorMessage`,
+`deleteEstablishmentMessage`, over a shared `countLabel` pluraliser) rather than inline in
+the pages, so the wording is checkable in one place.
 
 `establishment`, `student` (coordinator side) and `supervisor` are the reference
 end-to-end vertical slices — **copy their shape when building a new domain.**
@@ -282,22 +287,37 @@ and makes required create fields optional.
 - **`src/common/attendance-hours.ts`** (`hoursForAttendance`, `totalHours`) — the only
   place that turns the four AM/PM clock columns into hours. Reuse it. Completed hours
   count **APPROVED attendance only**.
-- **`src/common/evaluation-scoring.ts`** — the rubric. Nine criteria, 1–5 each, in three
-  weighted categories:
+- **`src/common/evaluation-scoring.ts`** — the school's official **ON-THE-JOB TRAINING
+  PERFORMANCE EVALUATION SHEET**, which replaced the prototype's 9-criterion weighted
+  rubric. Nineteen items, each scored 1–5 (5 OUTSTANDING · 4 VERY GOOD · 3 GOOD · 2 FAIR ·
+  1 NEEDS IMPROVEMENT), in four sections:
 
-  | Category | Weight | Criteria |
-  |---|---|---|
-  | Work Performance | 40% | quality, quantity, efficiency |
-  | Professional Behavior | 30% | attendance, teamwork, communication |
-  | Technical Skills | 30% | knowledge, problemSolving, initiative |
+  | § | Section | Max | Items |
+  |---|---|---|---|
+  | I | Work Attitudes and Habits | 25 | courtesy, patienceAndDiligence, punctualityAndAttendance, neatnessOfReports, punctualityOfReports |
+  | II | Work Knowledge | 20 | technicalKnowledge, relatesTheoryToPractice, openToCriticism, discretion |
+  | III | Personality and Personal Appearance | 25 | neatAndWellGroomed, properAttire, poiseAndSelfConfidence, emotionalMaturity, dealsWellWithCoworkers |
+  | IV | Professional Competence | 25 | performanceOfWork, understandsInstructions, sharesSuggestions, ethicalStandards, speaksAudibly |
 
-  `overall = WPavg×0.4 + PBavg×0.3 + TSavg×0.3`, banded into a performance level
-  (≥4.5 Excellent, ≥3.5 Very Good, ≥2.5 Good, ≥1.5 Fair, else Poor). `overallRating` and
-  `performanceLevel` are computed here and **stored on the row** — never accepted from
-  the request (`forbidNonWhitelisted` rejects a body that tries) — so a rating survives a
-  later change to the rubric's bands. The `categories` breakdown is recomputed on read
-  (`withBreakdown`, exported from `supervisor.service.ts` and reused by the coordinator's
-  read) so both lists share one shape.
+  `SECTIONS` carries each item's key, printed letter and exact wording, so the UI renders
+  from it rather than keeping a second copy of the form's text. `totalRating` is the
+  **raw sum out of 95** (`MAX_TOTAL_RATING`), computed here and **stored on the row**,
+  never accepted from the request (`forbidNonWhitelisted` rejects a body that tries).
+  There is deliberately **no percentage, letter grade or performance band** — the form has
+  none, and the old Excellent/Very Good/Good/Fair/Poor labels were retired with the old
+  rubric. Don't reintroduce them. Per-section totals are recomputed on read
+  (`withSectionTotals`, exported from `supervisor.service.ts` and reused by the
+  coordinator's read) so both lists share one shape. `pickItemScores` re-validates all
+  nineteen items as integers 1–5 and throws otherwise — a backstop behind the DTO.
+
+  **This file is the only copy of the form's text, including in the client.** The two
+  projects share no code, so rather than retyping nineteen wordings into the client (where
+  they would drift from the sheet the school issues), the structure is *served*:
+  `sheetDefinition()` backs `GET /supervisor/evaluations/form` for the blank form, and
+  `scoreBreakdown` puts each section's items — key, letter, wording **and score** — on
+  every evaluation that is read, so the coordinator's view dialog renders the filled-in
+  sheet straight from the response. Change the wording here and both roles follow; don't
+  add a client-side mirror.
 - **`PrismaService`** exposes the client as `.client` rather than extending
   `PrismaClient` — every query reads `this.prisma.client.<model>`.
 
@@ -482,7 +502,10 @@ table; never derive one from the other.
 | PATCH | `/supervisor/students/:id/status` | SUPERVISOR | |
 | PATCH | `/supervisor/attendance/:id/approve` | SUPERVISOR | clears any `declineReason` |
 | PATCH | `/supervisor/attendance/:id/decline` | SUPERVISOR | `{ reason }`, 3–500 chars, required |
-| GET/POST | `/supervisor/evaluations` | SUPERVISOR | |
+| GET | `/supervisor/evaluations/form` | SUPERVISOR | the **blank sheet's structure** — sections, item keys, printed letters, wording, the 1–5 legend and `maxTotalRating`. Static; the client renders the form from this instead of keeping its own copy of the form text |
+| GET/POST | `/supervisor/evaluations` | SUPERVISOR | POST takes all 19 items; repeatable — a student is evaluated more than once |
+| PATCH | `/supervisor/evaluations/:id` | SUPERVISOR | the whole sheet again, not a partial (every item is required on the form); recomputes `totalRating`. 403 unless the caller **wrote** it |
+| DELETE | `/supervisor/evaluations/:id` | SUPERVISOR | hard delete, same authorship check |
 | GET | `/messages/contacts` | any signed-in | who the caller may message, scoped by role (§7) |
 | GET | `/messages/conversations` | any signed-in | caller's conversations, most recent first, with unread count |
 | POST | `/messages/conversations` | any signed-in | `{ userId }` — find-or-create a 1:1; 403 if `userId` isn't in the caller's contacts |
@@ -576,6 +599,13 @@ model Message {
 per-message read receipt. Not needed for polling; would matter if a websocket gateway is
 ever added (§7).
 
+`Evaluation` is the official sheet: 19 `Int` item columns in section order, a stored
+`totalRating` (19–95), the form's header snapshots (`trainingEmployedAt`, `evaluatorName`,
+`evaluatorPosition` — captured at write time so a later supervisor rename or deletion
+cannot rewrite a signed record), `comments`, `recommendations` and `updatedAt`. **No
+uniqueness constraint on `(studentId, supervisorId)`** — repeat evaluations are the
+requirement. Item names and section maximums are in §4.
+
 `Attendance` splits AM/PM into four nullable `DateTime`s (`timeInAM`, `timeOutAM`,
 `timeInPM`, `timeOutPM`) and carries `@@unique([studentId, date])`. `submitAttendance`
 normalises `date` to UTC midnight on write, so one student gets at most one row per
@@ -587,12 +617,29 @@ every *supplied* session's time out must be strictly later than its time in, che
 per-session rather than on the combined total (an inverted PM pair no longer hides behind
 a valid AM session), else 400. It always lands `PENDING`.
 
-**Delete guards** (all `ConflictException` 409): `EstablishmentService.remove` when
-students or supervisors reference it; `CoordinatorService.removeStudent` when attendance,
-evaluations or documents reference the student; `CoordinatorService.removeSupervisor`
-when attendance approvals (the `"ApprovedBy"` relation) or evaluations reference the
-supervisor — same shape as `removeStudent`, both rows (`Supervisor` then `User`) deleted
-only once the counts are both zero.
+**Deletes cascade in the service layer, not the schema.** There is deliberately **no**
+`onDelete: Cascade` anywhere in `schema.prisma` and no migration behind this — the order
+is spelled out in `src/common/cascade-delete.ts` (`deleteStudentCascade`,
+`deleteSupervisorCascade`, plus the shared `CASCADE_TRANSACTION_OPTIONS`, since Prisma's
+5s default is too tight for a chain of round trips to a pooled Supabase instance). Each
+function takes a transaction client and **must** be called inside `$transaction`; a
+half-finished cascade strands a login with no profile.
+
+The three callers, and what each one spares:
+
+| Caller | Deletes | Deliberately keeps |
+|---|---|---|
+| `CoordinatorService.removeStudent` | attendance, documents, credentials, evaluations, own messages, participant rows, then `Student` + `User` | — |
+| `CoordinatorService.removeSupervisor` | evaluations, own messages, participant rows, then `Supervisor` + `User` | **attendance they approved** — rows stay, `approvedById` is nulled. A student's approved hours must survive their supervisor leaving |
+| `EstablishmentService.remove` | every supervisor at it, via `deleteSupervisorCascade` | **its students** — `establishmentId` is nulled so they can be reassigned. That column is nullable for exactly this |
+
+A 1:1 conversation is deleted only once it has **zero** participants; one whose other
+member is still around is kept, and `getConversations` already returns
+`otherParticipant: null` for that case (§8 item 17's null-guard habit).
+
+`removeStudent` also deletes the student's Supabase Storage objects, but **after** the
+commit and inside a try/catch that logs and returns success: an orphaned file is
+recoverable, a half-deleted database is not.
 
 ### Migration history
 
@@ -610,6 +657,7 @@ only once the counts are both zero.
 | `20260811234804_evaluation_rubric` | Replaced `score`/`feedback` with the 9 criteria, `overallRating`, `performanceLevel`, `periodStart`/`periodEnd`, `comments`, `recommendations`. Destructive — the table was empty |
 | `20260826023817_student_profile_fields` | `Student`: `gender`, `endDate` — both nullable, for the student Profile page |
 | `20260826033058_document_review_fields` | `Document`: `reviewedById` (FK to `Coordinator`, `SET NULL` on delete), `reviewNote`, `reviewedAt` — all nullable |
+| `20260905163310_official_evaluation_sheet` | **Rewrote `Evaluation` for the school's official form.** Dropped the 9 criteria, `overallRating`, `performanceLevel` and `periodStart`/`periodEnd`; added the 19 item columns, `totalRating`, `trainingStartedAt`/`trainingEndedAt`/`trainingEmployedAt`, `evaluatorName`/`evaluatorPosition` and `updatedAt`. Destructive — **the table was empty (verified: 0 rows)**, which is also why the new `NOT NULL` item columns could be added without defaults. Generated with `migrate diff` + `migrate deploy`, since `migrate dev` prompts on column drops. Touches no other table |
 
 Credentials needed **no migration** — `Credential` already had every column its module
 needed (§7).
@@ -647,10 +695,27 @@ needed (§7).
 - **Supervisor Management (Coordinator)** — create, list, password reset, and delete
   (guarded — see §6). No edit yet (§8 item 10). Table columns: name, username, email,
   establishment, position.
-- **Evaluations** — 9-criterion weighted rubric; supervisor writes, coordinator reads
-  across establishments.
+- **Evaluations** — the school's official 19-item / 4-section sheet, scored out of 95
+  (§4), end to end. Supervisor creates, **edits and deletes** their own; repeatable per
+  student; coordinator reads across establishments, read-only. Edit/delete authorship is
+  `supervisorId`, not the establishment — `getEvaluations` deliberately lists everything
+  written at the establishment, but only the author may rewrite a sheet, and the client
+  hides the buttons for the rest (`canModify`, comparing the row against
+  `/supervisor/dashboard`'s `supervisor.id`).
+  Client: the supervisor's form is laid out like the paper sheet — header block, printed
+  scale legend, four numbered sections of radio groups (1–5, **not** dropdowns — nineteen
+  dropdowns is unusable), live section totals and TOTAL RATING, read-only "Evaluated
+  by"/"Position" footer. Submit is disabled until all nineteen are scored, and names the
+  sections still missing rather than saying "fill in everything". Editing shows an amber
+  banner naming the student, date and current total, because a student legitimately has
+  several sheets and an edit must never read as a new one.
 - **Password recovery** — self-service change for everyone, coordinator-issued reset for
   students and supervisors, CLI for the coordinator.
+- **Cascading deletes** — student, supervisor and establishment delete for real, each in a
+  single `$transaction`, service-layer only (no `onDelete: Cascade`, no migration). The
+  old "cannot delete, set to INACTIVE instead" 409 guards are gone. Ordering, what each
+  cascade spares, and the post-commit storage cleanup are in §6; the confirmation dialogs
+  now state the exact counts they are about to destroy.
 - **Coordinator dashboard stats** — every tile and chart backed by real aggregates.
 - **Attendance oversight (Coordinator)** — read-only cross-establishment attendance %.
 - **Documents** — student upload (multipart, PDF/PNG/JPEG, 10MB) with server-side Supabase
@@ -665,18 +730,28 @@ needed (§7).
   client's dropdown imports the same list rather than duplicating it. No review state and no
   coordinator screen — a credential is uploaded and listed, full stop. Delete has no status
   guard (unlike Documents' PENDING-only rule) since there is no status to guard on.
-- **Messaging (backend only)** — `GET /messages/contacts`, `GET`/`POST
-  /messages/conversations`, `GET`/`POST /messages/conversations/:id`. Bare `/messages`, no
-  `@Roles` (§5's third route shape); 1:1 conversations only (`isGroup` stays `false`,
-  `Conversation.name` stays `null` — group chat is out of scope); cursor-paginated message
-  history (`before`/`limit`, default 50, max 100) so a thread never loads in full; unread
-  count derived from `ConversationParticipant.lastReadAt`. **Polling, not websockets** —
-  `socket.io` / `@nestjs/websockets` / `@nestjs/platform-socket.io` were installed but
-  unused, and are now removed from `package.json`; the client is expected to poll with RTK
-  Query instead. Reasoning: polling is stateless, deploys to serverless/free tiers without
-  sticky connections, survives cold starts, and scales horizontally without a socket.io
-  Redis adapter — messages here are asynchronous by nature, and a gateway can be added
-  later without changing these endpoints. No client work yet; see "Partially built" below.
+- **Messaging** — `GET /messages/contacts`, `GET`/`POST /messages/conversations`,
+  `GET`/`POST /messages/conversations/:id`. Bare `/messages`, no `@Roles` (§5's third route
+  shape); 1:1 conversations only (`isGroup` stays `false`, `Conversation.name` stays
+  `null` — group chat is out of scope); cursor-paginated message history (`before`/`limit`,
+  default 50, max 100) so a thread never loads in full; unread count derived from
+  `ConversationParticipant.lastReadAt`. **Polling, not websockets** — `socket.io` /
+  `@nestjs/websockets` / `@nestjs/platform-socket.io` were installed but unused, and are
+  removed from `app/server/package.json`. Reasoning: polling is stateless, deploys to
+  serverless/free tiers without sticky connections, survives cold starts, and scales
+  horizontally without a socket.io Redis adapter — messages here are asynchronous by
+  nature, and a gateway can be added later without changing these endpoints.
+  Client: one `messaging` domain (`lib/api/messagesApi.ts`, `features/messaging/`) shared
+  by all three role pages — same endpoints, same shapes (§5 "Which feature domain?").
+  Conversation list polls every 10s (`skipPollingIfUnfocused: true`); an open thread polls
+  every 3s and **deliberately does not** skip when unfocused, so a side-by-side two-window
+  demo keeps both windows live — don't "optimise" that away. Cursor pagination
+  (`GetMessagesRequest`'s `before`) is handled by the endpoint's own RTK Query
+  `serializeQueryArgs`/`merge` (one growing cache entry per conversation, not one per page)
+  rather than local component state — seeding local state from a polled query inside a
+  `useEffect` is exactly this repo's one pre-existing lint violation (§8 item 1) and must
+  not be reproduced. Two-pane layout (conversation list + open thread), collapsing to one
+  pane at a time below the `md` breakpoint.
 
 **All three roles land on a real page after login. No role 404s.**
 
@@ -689,24 +764,22 @@ start date and confirm the oversight page shows a real percentage.
 
 ### Partially built
 
-| Module | Backend | Frontend |
-|---|---|---|
-| Student portal (Messages) | done | not built |
-| Supervisor (Messages) | done | dashboard, approval, evaluation done; **Messages** not built |
-| Coordinator (Messages) | done | not built |
+Nothing. The evaluation client was the last item; `features/evaluation/rubric.ts` (the old
+weights, bands and `previewLevel`) is deleted, and no client file mentions `overallRating`,
+`performanceLevel`, `categories` or `averageLevel` any more. `stats.averageRating` on the
+coordinator dashboard is now an average **out of 95**, with `stats.maxTotalRating`
+alongside it.
 
 ### Not started
 
 Supervisor contact fields (the prototype's messaging panels show email + phone; `Supervisor`
 still has no such columns — see §6 "Known schema gaps"). Messaging's own endpoints don't
-need them (contacts return name + establishment only), so this doesn't block a client build,
-only matching the prototype's contact panel exactly.
+need them (contacts return name + establishment only), so nothing is blocked on this — it
+would only make the contact picker match the prototype's panel exactly.
 
 ### Remaining build order
 
-1. **Verify `Student.startDate` live** (above).
-2. **Messaging client** — the backend is done (above); build the three role-side Messages
-   pages against it.
+1. **Verify `Student.startDate` live** (above). The only item left.
 
 ### File storage — the decided design
 
@@ -776,9 +849,12 @@ Ordered roughly by how likely each is to bite.
 7. Password change doesn't invalidate already-issued JWTs — matters if a reset is
    because of a leak.
 8. `Attendance.approvedById` is set when **declining** too. It means "who actioned this",
-   not "who approved this".
-9. Evaluations can't be edited or deleted once submitted, and there is no per-period
-   uniqueness.
+   not "who approved this" — and it is nulled outright when that supervisor is deleted, so
+   a row reading `APPROVED` with `approvedById: null` is normal, not corruption.
+9. **Fixed: evaluations are editable, deletable and repeatable.** `PATCH`/`DELETE
+   /supervisor/evaluations/:id` exist and are guarded by authorship (§5). There is still no
+   uniqueness constraint on `(studentId, supervisorId)` and there should not be — multiple
+   sheets per student is the requirement, not an oversight.
 10. **Supervisor Management (Coordinator) has no edit.** Create, list, password reset, and
     delete all exist; there is still no endpoint or UI for editing a supervisor's
     details/establishment. Don't build it speculatively — add it when asked.
@@ -819,6 +895,35 @@ Ordered roughly by how likely each is to bite.
     against `Supervisor` (whose `establishmentId` is non-null) fails to typecheck and, if
     forced, would return zero rows rather than erroring. Any future query that starts from
     a student's `establishmentId` needs the same null check.
+18. **Next 16's `core-web-vitals` eslint config bundles the React Compiler's stricter hooks
+    rules**, two of which bit while building the Messaging client and apply repo-wide:
+    `react-hooks/set-state-in-effect` (item 1's pre-existing violation — don't add a
+    second) and `react-hooks/refs`, which forbids reading or writing a ref's `.current`
+    during render (the lazy-init form `if (ref.current == null) { ref.current = ... }` is
+    the one exception). Together they rule out the obvious way to fold a polled RTK Query
+    result into local component state (a `useEffect` calling `setState`, or a ref-guarded
+    version of the same). Two lint-clean alternatives, both used in `messagesApi.ts` /
+    `use-messaging.ts`: let the RTK Query endpoint itself accumulate pages via
+    `serializeQueryArgs`/`merge` (the request lifecycle, not a React render, does the
+    writing — see the `getMessages` endpoint), or compare a value against a *mirrored
+    state* snapshot (not a ref) and call setState conditionally in the render body — the
+    "adjusting state when a value changes" pattern from
+    https://react.dev/learn/you-might-not-need-an-effect, which this ruleset does allow.
+19. **Never `Promise.all` inside a Prisma interactive transaction.** An interactive
+    transaction is one connection and concurrent queries on it are unsupported — they do
+    not reliably error, they come back **wrong**. `deleteStudentCascade` originally read
+    its document and credential rows with `Promise.all`; one read returned `[]`, that
+    file silently never reached `deleteFile`, and the object was orphaned in storage while
+    the delete reported success. Caught only by checking the bucket after the fact. Every
+    statement inside a cascade is now sequential — keep it that way, including the
+    per-supervisor loop in `EstablishmentService.remove`.
+20. **A cascading delete leaves other API slices stale.** RTK Query tags are scoped to one
+    `createApi`, so `deleteStudent`'s `invalidatesTags: ["Student"]` cannot reach
+    `dashboardApi`, `attendanceOversightApi`, `documentApi` or `evaluationApi` — all of
+    which just lost rows. Their caches refetch on their own next mount/poll, so the tile
+    is stale only until the coordinator revisits that page. Fixing it properly means
+    either one shared `createApi` or an explicit cross-slice dispatch on delete; don't
+    bolt on a `resetApiState` per call site.
 
 ---
 

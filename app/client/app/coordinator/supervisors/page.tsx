@@ -13,6 +13,7 @@ import { useSupervisorManagement } from "@/features/supervisor-management/hooks/
 import SupervisorList from "@/features/supervisor-management/components/SupervisorList";
 import SupervisorFormDialog from "@/features/supervisor-management/components/SupervisorFormDialog";
 import ResetSupervisorPasswordDialog from "@/features/supervisor-management/components/ResetSupervisorPasswordDialog";
+import { deleteSupervisorMessage } from "@/lib/format";
 
 export default function SupervisorManagementPage() {
   const currentUser = useCurrentUser();
@@ -109,9 +110,16 @@ export default function SupervisorManagementPage() {
 
       <ConfirmDialog
         open={!!deleteTarget}
-        title="Remove Supervisor?"
-        message={`This permanently deletes "${deleteTarget?.user.name}" and their login. Supervisors with attendance approvals or evaluations cannot be deleted — reassign those records first.`}
-        confirmLabel="Yes, remove"
+        title="Delete Supervisor?"
+        message={
+          deleteTarget
+            ? deleteSupervisorMessage(deleteTarget.user.name, {
+                evaluations: deleteTarget._count?.evaluations ?? 0,
+                attendanceApprovals: deleteTarget._count?.attendanceApprovals ?? 0,
+              })
+            : ""
+        }
+        confirmLabel="Yes, delete permanently"
         variant="danger"
         onConfirm={handleDeleteConfirm}
         onCancel={() => {

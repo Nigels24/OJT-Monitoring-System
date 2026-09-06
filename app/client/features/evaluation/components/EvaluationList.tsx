@@ -1,8 +1,14 @@
-import { Search, ChevronLeft, ChevronRight, Eye, Star } from "lucide-react";
+import {
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  Star,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
-import StatusBadge from "@/components/ui/StatusBadge";
 import { Evaluation } from "@/lib/api/evaluationApi";
-import { levelBadgeVariant } from "../rubric";
 
 interface EvaluationListProps {
   rows: Evaluation[];
@@ -15,14 +21,21 @@ interface EvaluationListProps {
   onSearchChange: (value: string) => void;
   onPageChange: (page: number) => void;
   onView: (evaluation: Evaluation) => void;
+  /**
+   * Supervisor only, and only for sheets they wrote. The coordinator passes
+   * neither — evaluations belong to the supervisor who wrote them.
+   */
+  onEdit?: (evaluation: Evaluation) => void;
+  onDelete?: (evaluation: Evaluation) => void;
+  canModify?: (evaluation: Evaluation) => boolean;
   emptyMessage?: string;
 }
 
-function period(ev: Evaluation): string {
-  if (!ev.periodStart && !ev.periodEnd) return "—";
+function trainingPeriod(ev: Evaluation): string {
+  if (!ev.trainingStartedAt && !ev.trainingEndedAt) return "—";
   const fmt = (d: string | null) =>
     d ? new Date(d).toLocaleDateString() : "…";
-  return `${fmt(ev.periodStart)} – ${fmt(ev.periodEnd)}`;
+  return `${fmt(ev.trainingStartedAt)} – ${fmt(ev.trainingEndedAt)}`;
 }
 
 export default function EvaluationList({
@@ -35,6 +48,9 @@ export default function EvaluationList({
   onSearchChange,
   onPageChange,
   onView,
+  onEdit,
+  onDelete,
+  canModify,
   emptyMessage = "No evaluations yet.",
 }: EvaluationListProps) {
   const columns: DataTableColumn<Evaluation>[] = [
@@ -49,7 +65,7 @@ export default function EvaluationList({
     },
     {
       key: "student",
-      label: "Student",
+      label: "Trainee",
       render: (r) => (
         <div>
           <div className="font-semibold text-gray-900">
@@ -66,39 +82,33 @@ export default function EvaluationList({
           {
             key: "establishment",
             label: "Establishment",
-            render: (r: Evaluation) => r.student.establishment?.name ?? "—",
+            render: (r: Evaluation) =>
+              r.trainingEmployedAt ?? r.student.establishment?.name ?? "—",
           },
         ]
       : []),
-    { key: "period", label: "Evaluation Period", render: period },
+    { key: "training", label: "Training Period", render: trainingPeriod },
     {
-      key: "overallRating",
-      label: "Overall Rating",
+      key: "totalRating",
+      label: "Total Rating",
       render: (r) => (
-        <span className="font-semibold text-gray-900">
-          {r.overallRating.toFixed(1)}
+        <span className="font-semibold text-gray-900 tabular-nums">
+          {r.totalRating}
+          <span className="text-xs font-normal text-gray-500">
+            /{r.maxTotalRating}
+          </span>
         </span>
       ),
     },
     {
-      key: "performanceLevel",
-      label: "Performance Level",
-      render: (r) => (
-        <StatusBadge
-          label={r.performanceLevel}
-          variant={levelBadgeVariant(r.performanceLevel)}
-        />
-      ),
-    },
-    {
       key: "evaluator",
-      label: "Evaluator",
+      label: "Evaluated by",
       render: (r) => (
         <div>
-          <div>{r.supervisor.user.name}</div>
-          {r.supervisor.position && (
+          <div>{r.evaluatorName ?? r.supervisor.user.name}</div>
+          {(r.evaluatorPosition ?? r.supervisor.position) && (
             <div className="text-xs text-gray-500">
-              {r.supervisor.position}
+              {r.evaluatorPosition ?? r.supervisor.position}
             </div>
           )}
         </div>
@@ -107,20 +117,54 @@ export default function EvaluationList({
     {
       key: "createdAt",
       label: "Date",
-      render: (r) => new Date(r.createdAt).toLocaleDateString(),
+      render: (r) => (
+        <div>
+          <div>{new Date(r.createdAt).toLocaleDateString()}</div>
+          {r.updatedAt !== r.createdAt && (
+            <div className="text-xs text-gray-500">
+              edited {new Date(r.updatedAt).toLocaleDateString()}
+            </div>
+          )}
+        </div>
+      ),
     },
     {
       key: "actions",
       label: "Actions",
-      render: (r) => (
-        <button
-          onClick={() => onView(r)}
-          className="p-1 md:p-1.5 rounded-md border border-blue-200 text-blue-600 hover:bg-blue-50"
-          aria-label={`View ${r.student.user.name}'s evaluation`}
-        >
-          <Eye size={14} />
-        </button>
-      ),
+      render: (r) => {
+        // The server 403s a non-author anyway; not offering the button keeps
+        // the UI honest about what this supervisor may do.
+        const mine = canModify ? canModify(r) : false;
+        return (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => onView(r)}
+              className="p-1 md:p-1.5 rounded-md border border-blue-200 text-blue-600 hover:bg-blue-50"
+              aria-label={`View ${r.student.user.name}'s evaluation`}
+            >
+              <Eye size={14} />
+            </button>
+            {mine && onEdit && (
+              <button
+                onClick={() => onEdit(r)}
+                className="p-1 md:p-1.5 rounded-md border border-amber-200 text-amber-600 hover:bg-amber-50"
+                aria-label={`Edit ${r.student.user.name}'s evaluation`}
+              >
+                <Pencil size={14} />
+              </button>
+            )}
+            {mine && onDelete && (
+              <button
+                onClick={() => onDelete(r)}
+                className="p-1 md:p-1.5 rounded-md border border-red-200 text-red-600 hover:bg-red-50"
+                aria-label={`Delete ${r.student.user.name}'s evaluation`}
+              >
+                <Trash2 size={14} />
+              </button>
+            )}
+          </div>
+        );
+      },
     },
   ];
 
@@ -137,7 +181,7 @@ export default function EvaluationList({
             onSearchChange(e.target.value);
             onPageChange(1);
           }}
-          placeholder="Search by student, ID, course or performance level..."
+          placeholder="Search by trainee, ID, course or evaluator..."
           className="w-full h-10 md:h-12 pl-9 md:pl-11 pr-3 md:pr-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-900 placeholder-gray-400"
         />
       </div>

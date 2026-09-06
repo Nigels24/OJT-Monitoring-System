@@ -34,6 +34,11 @@ export default function StudentAttendancePage() {
     error,
     isLoading,
     isSubmitting,
+    minDate,
+    maxDate,
+    isDisabled,
+    disabledMessage,
+    noticeMessage,
     statusFilter,
     page,
     paged,
@@ -99,6 +104,11 @@ export default function StudentAttendancePage() {
               form={form}
               error={error}
               isSubmitting={isSubmitting}
+              minDate={minDate}
+              maxDate={maxDate}
+              disabled={isDisabled}
+              disabledMessage={disabledMessage}
+              noticeMessage={noticeMessage}
               setField={setField}
               onSubmit={handleSubmit}
             />

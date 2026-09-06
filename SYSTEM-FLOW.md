@@ -148,9 +148,9 @@ Auth ──┬─▶ Establishment ──┬─▶ Student Mgmt (Coordinator) �
 
 Documents / Credentials hang off Student Mgmt alone — the rows they need already exist,
 which is why they came next regardless of Messaging's state. Both are built, sharing
-`src/common/storage.ts`. Messaging's backend is also built now — polling (RTK Query), not
-a websocket gateway; see CLAUDE.md §7. Its client is what's left (CLAUDE.md §7 "Remaining
-build order").
+`src/common/storage.ts`. Messaging is now fully built too, backend and client — polling
+(RTK Query), not a websocket gateway; see CLAUDE.md §7. The only item left in the build
+order is verifying `Student.startDate` live (CLAUDE.md §7).
 
 ## 7. Where to look for a given bug
 

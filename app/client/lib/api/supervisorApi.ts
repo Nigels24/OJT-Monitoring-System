@@ -57,6 +57,9 @@ export interface SupervisorStudent {
   requiredHours: number;
   status: string;
   completedHours: number;
+  /** The evaluation sheet's Training Date Started / Ended prefill. */
+  startDate: string | null;
+  endDate: string | null;
   user: { id: string; email: string; name: string };
 }
 

@@ -84,23 +84,30 @@ export function useStudents() {
       setForm((f) => ({ ...f, [key]: e.target.value }));
     };
 
-  /** Strips blanks so the server sees "not supplied" rather than "". */
+  /**
+   * Blanks go as `null` so an emptied box actually clears the column — the
+   * server reads an *absent* field as "leave unchanged", so omitting them
+   * would silently restore the old value on every edit.
+   *
+   * `requiredHours` is the exception: it is NOT NULL server-side, so a blank
+   * stays omitted rather than becoming a null write.
+   */
   const detailsPayload = () => ({
-    firstName: form.firstName || undefined,
-    lastName: form.lastName || undefined,
-    middleInitial: form.middleInitial || undefined,
-    age: form.age ? Number(form.age) : undefined,
+    firstName: form.firstName || null,
+    lastName: form.lastName || null,
+    middleInitial: form.middleInitial || null,
+    age: form.age ? Number(form.age) : null,
     dateOfBirth: form.dateOfBirth
       ? new Date(form.dateOfBirth).toISOString()
-      : undefined,
-    school: form.school || undefined,
-    contactNumber: form.contactNumber || undefined,
-    address: form.address || undefined,
-    course: form.course || undefined,
-    yearLevel: form.yearLevel || undefined,
-    establishmentId: form.establishmentId || undefined,
+      : null,
+    school: form.school || null,
+    contactNumber: form.contactNumber || null,
+    address: form.address || null,
+    course: form.course || null,
+    yearLevel: form.yearLevel || null,
+    establishmentId: form.establishmentId || null,
     requiredHours: form.requiredHours ? Number(form.requiredHours) : undefined,
-    startDate: form.startDate ? new Date(form.startDate).toISOString() : undefined,
+    startDate: form.startDate ? new Date(form.startDate).toISOString() : null,
     status: form.status,
   });
 

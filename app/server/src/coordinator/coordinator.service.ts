@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   ConflictException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
@@ -9,32 +10,47 @@ import { PrismaService } from '../prisma/prisma.service';
 import { totalHours } from '../common/attendance-hours';
 import {
   EVALUATION_INCLUDE,
-  withBreakdown,
+  withSectionTotals,
 } from '../supervisor/supervisor.service';
-import { performanceLevel } from '../common/evaluation-scoring';
+import { MAX_TOTAL_RATING } from '../common/evaluation-scoring';
 import { DOCUMENT_INCLUDE, withSignedUrl } from '../student/student.service';
+import {
+  CASCADE_TRANSACTION_OPTIONS,
+  deleteStudentCascade,
+  deleteSupervisorCascade,
+} from '../common/cascade-delete';
+import { deleteFile } from '../common/storage';
 
 /** Fields the coordinator can set on a student, shared by create and update. */
+/**
+ * On the nullable fields, `null` and `undefined` mean different things:
+ * `null` = the coordinator emptied the box, clear the column; `undefined` =
+ * the field wasn't in the request at all, leave the column alone. The DTO's
+ * `EmptyToNull`/`ToNullableNumber` transforms are what produce that split.
+ * `requiredHours` and `status` are NOT NULL, so they stay undefined-only.
+ */
 interface StudentDetails {
   name?: string;
-  firstName?: string;
-  lastName?: string;
-  middleInitial?: string;
-  age?: number;
-  dateOfBirth?: string;
-  school?: string;
-  contactNumber?: string;
-  address?: string;
-  course?: string;
-  yearLevel?: string;
-  establishmentId?: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  middleInitial?: string | null;
+  age?: number | null;
+  dateOfBirth?: string | null;
+  school?: string | null;
+  contactNumber?: string | null;
+  address?: string | null;
+  course?: string | null;
+  yearLevel?: string | null;
+  establishmentId?: string | null;
   requiredHours?: number;
-  startDate?: string;
+  startDate?: string | null;
   status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
 }
 
 @Injectable()
 export class CoordinatorService {
+  private readonly logger = new Logger(CoordinatorService.name);
+
   constructor(private prisma: PrismaService) {}
 
   /** Rejects an email or username already claimed by another account. */
@@ -164,7 +180,14 @@ export class CoordinatorService {
             timeOutPM: true,
           },
         },
-        _count: { select: { credentials: true, documents: true } },
+        _count: {
+          select: {
+            credentials: true,
+            documents: true,
+            attendances: true,
+            evaluations: true,
+          },
+        },
       },
       orderBy: { user: { createdAt: 'desc' } },
     });
@@ -190,6 +213,10 @@ export class CoordinatorService {
           },
         },
         establishment: { select: { id: true, name: true } },
+        // What deleting this supervisor would take with it (evaluations) and
+        // what it would merely un-attribute (attendance approvals). The
+        // confirmation dialog states both.
+        _count: { select: { evaluations: true, attendanceApprovals: true } },
       },
       orderBy: { user: { createdAt: 'desc' } },
     });
@@ -244,7 +271,7 @@ export class CoordinatorService {
         distinct: ['studentId'],
       }),
       this.prisma.client.evaluation.aggregate({
-        _avg: { overallRating: true },
+        _avg: { totalRating: true },
       }),
       this.prisma.client.evaluation.count(),
       this.prisma.client.establishment.findMany({
@@ -279,7 +306,10 @@ export class CoordinatorService {
       }),
     ]);
 
-    const averageRating = evaluationAgg._avg.overallRating;
+    // The official sheet's TOTAL RATING, averaged across evaluations — a raw
+    // score out of 95, not a percentage. `averageLevel` is gone with the old
+    // rubric's performance bands; the form has no such label.
+    const averageRating = evaluationAgg._avg?.totalRating ?? null;
 
     return {
       stats: {
@@ -296,8 +326,7 @@ export class CoordinatorService {
         // of zero and "no data yet" are different things.
         averageRating:
           averageRating == null ? null : Math.round(averageRating * 10) / 10,
-        averageLevel:
-          averageRating == null ? null : performanceLevel(averageRating),
+        maxTotalRating: MAX_TOTAL_RATING,
         totalEvaluations: evaluationCount,
       },
       // The prototype charted present/late/absent. Those states do not exist —
@@ -423,7 +452,7 @@ export class CoordinatorService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return evaluations.map(withBreakdown);
+    return evaluations.map(withSectionTotals);
   }
 
   async updateStudent(studentId: string, data: StudentDetails) {
@@ -561,67 +590,69 @@ export class CoordinatorService {
     return coordinator;
   }
 
+  /**
+   * Deletes a student outright, along with every row that references them.
+   *
+   * This used to refuse the delete whenever attendance, evaluations or
+   * documents existed, and told the coordinator to set the student INACTIVE
+   * instead. It is now a real cascade: the ordering lives in
+   * `deleteStudentCascade` and runs inside one transaction, so a failure
+   * part-way through rolls everything back rather than orphaning rows.
+   */
   async removeStudent(studentId: string) {
     const student = await this.prisma.client.student.findUnique({
       where: { id: studentId },
-      include: {
-        _count: {
-          select: { attendances: true, evaluations: true, documents: true },
-        },
-      },
+      select: { userId: true },
     });
     if (!student) {
       throw new NotFoundException('Student not found');
     }
 
-    const { attendances, evaluations, documents } = student._count;
-    if (attendances > 0 || evaluations > 0 || documents > 0) {
-      throw new ConflictException(
-        `Cannot delete this student: ${attendances} attendance record(s), ` +
-          `${evaluations} evaluation(s) and ${documents} document(s) reference them. ` +
-          'Set the student to INACTIVE instead.',
-      );
-    }
+    const orphanedFiles = await this.prisma.client.$transaction(
+      (tx) => deleteStudentCascade(tx, studentId, student.userId),
+      CASCADE_TRANSACTION_OPTIONS,
+    );
 
-    // Student and User are separate rows; removing only the profile would
-    // strand a login with no profile.
-    await this.prisma.client.credential.deleteMany({
-      where: { studentId },
-    });
-    await this.prisma.client.student.delete({ where: { id: studentId } });
-    await this.prisma.client.user.delete({ where: { id: student.userId } });
+    // Supabase Storage is not part of the transaction, so the objects go only
+    // after the commit. A leftover file is recoverable; a half-deleted
+    // database is not — so a storage failure is logged and the delete still
+    // reports success.
+    await Promise.all(
+      orphanedFiles.map(async (path) => {
+        try {
+          await deleteFile(path);
+        } catch (err) {
+          this.logger.error(
+            `Student ${studentId} was deleted but its storage object ${path} was not: ` +
+              (err instanceof Error ? err.message : String(err)),
+          );
+        }
+      }),
+    );
 
     return { id: studentId, deleted: true };
   }
 
+  /**
+   * Deletes a supervisor and their login.
+   *
+   * Their evaluations go with them, but attendance they actioned stays and
+   * merely loses its approver — a student's approved hours must survive their
+   * supervisor leaving. See `deleteSupervisorCascade`.
+   */
   async removeSupervisor(supervisorId: string) {
     const supervisor = await this.prisma.client.supervisor.findUnique({
       where: { id: supervisorId },
-      include: {
-        _count: {
-          select: { attendanceApprovals: true, evaluations: true },
-        },
-      },
+      select: { userId: true },
     });
     if (!supervisor) {
       throw new NotFoundException('Supervisor not found');
     }
 
-    const { attendanceApprovals, evaluations } = supervisor._count;
-    if (attendanceApprovals > 0 || evaluations > 0) {
-      throw new ConflictException(
-        `Cannot delete this supervisor: ${attendanceApprovals} attendance approval(s) and ` +
-          `${evaluations} evaluation(s) reference them. Reassign these records to another ` +
-          'supervisor first.',
-      );
-    }
-
-    // Supervisor and User are separate rows; removing only the profile would
-    // strand a login with no profile.
-    await this.prisma.client.supervisor.delete({
-      where: { id: supervisorId },
-    });
-    await this.prisma.client.user.delete({ where: { id: supervisor.userId } });
+    await this.prisma.client.$transaction(
+      (tx) => deleteSupervisorCascade(tx, supervisorId, supervisor.userId),
+      CASCADE_TRANSACTION_OPTIONS,
+    );
 
     return { id: supervisorId, deleted: true };
   }
@@ -682,13 +713,26 @@ function buildWeeklyTrend(
 }
 
 /** Maps the flat DTO onto Student columns, skipping anything not supplied. */
+/**
+ * Passes the three-way state of a date field through to Prisma intact:
+ * absent -> `undefined` (leave the column alone), explicitly cleared ->
+ * `null`, otherwise the parsed `Date`. The old `value ? new Date(value) :
+ * undefined` collapsed "cleared" into "unchanged", so a date could never be
+ * removed once set.
+ */
+function toNullableDate(value?: string | null): Date | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  return new Date(value);
+}
+
 function studentProfileData(data: StudentDetails) {
   return {
     firstName: data.firstName,
     lastName: data.lastName,
     middleInitial: data.middleInitial,
     age: data.age,
-    dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : undefined,
+    dateOfBirth: toNullableDate(data.dateOfBirth),
     school: data.school,
     contactNumber: data.contactNumber,
     address: data.address,
@@ -696,7 +740,7 @@ function studentProfileData(data: StudentDetails) {
     yearLevel: data.yearLevel,
     establishmentId: data.establishmentId,
     requiredHours: data.requiredHours,
-    startDate: data.startDate ? new Date(data.startDate) : undefined,
+    startDate: toNullableDate(data.startDate),
     status: data.status,
   };
 }

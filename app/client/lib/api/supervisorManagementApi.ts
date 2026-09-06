@@ -20,6 +20,12 @@ export interface CoordinatorSupervisor {
     createdAt: string;
   };
   establishment?: { id: string; name: string } | null;
+  /**
+   * What deleting this supervisor would destroy (`evaluations`) versus merely
+   * un-attribute (`attendanceApprovals` — the attendance rows are kept and
+   * only lose their approver). The delete confirmation states both.
+   */
+  _count?: { evaluations: number; attendanceApprovals: number } | null;
 }
 
 export interface CreateSupervisorRequest {

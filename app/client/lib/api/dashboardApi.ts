@@ -50,9 +50,14 @@ export interface CoordinatorDashboard {
     presentToday: number;
     pendingApprovals: number;
     totalHoursLogged: number;
-    /** null when nothing has been evaluated — distinct from an average of 0. */
+    /**
+     * Average TOTAL RATING of the official evaluation sheet, out of
+     * `maxTotalRating` (95). null when nothing has been evaluated — distinct
+     * from an average of 0. The old `averageLevel` performance band is gone
+     * with the retired rubric.
+     */
     averageRating: number | null;
-    averageLevel: string | null;
+    maxTotalRating: number;
     totalEvaluations: number;
   };
   attendanceTrend: AttendanceTrendPoint[];

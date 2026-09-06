@@ -97,8 +97,9 @@ export interface StudentProfile {
 
 /** The only two fields a student may edit on their own record. */
 export interface UpdateProfileRequest {
-  contactNumber?: string;
-  address?: string;
+  /** `null` clears the field; omitting it leaves the stored value alone. */
+  contactNumber?: string | null;
+  address?: string | null;
 }
 
 export type DocumentStatus = "PENDING" | "APPROVED" | "REJECTED";

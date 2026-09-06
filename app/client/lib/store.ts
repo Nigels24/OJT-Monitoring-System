@@ -9,6 +9,7 @@ import { evaluationApi } from "./api/evaluationApi";
 import { dashboardApi } from "./api/dashboardApi";
 import { attendanceOversightApi } from "./api/attendanceOversightApi";
 import { documentApi } from "./api/documentApi";
+import { messagesApi } from "./api/messagesApi";
 
 export const store = configureStore({
   reducer: {
@@ -22,6 +23,7 @@ export const store = configureStore({
     [dashboardApi.reducerPath]: dashboardApi.reducer,
     [attendanceOversightApi.reducerPath]: attendanceOversightApi.reducer,
     [documentApi.reducerPath]: documentApi.reducer,
+    [messagesApi.reducerPath]: messagesApi.reducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware().concat(
@@ -34,7 +36,8 @@ export const store = configureStore({
       evaluationApi.middleware,
       dashboardApi.middleware,
       attendanceOversightApi.middleware,
-      documentApi.middleware
+      documentApi.middleware,
+      messagesApi.middleware
     ),
 });
 

@@ -22,6 +22,7 @@ import StudentList from "@/features/student/components/StudentList";
 import StudentViewDialog from "@/features/student/components/StudentViewDialog";
 import StudentEditDialog from "@/features/student/components/StudentEditDialog";
 import ResetPasswordDialog from "@/features/student/components/ResetPasswordDialog";
+import { deleteStudentMessage } from "@/lib/format";
 
 
 export default function StudentManagementPage() {
@@ -140,9 +141,18 @@ export default function StudentManagementPage() {
 
       <ConfirmDialog
         open={!!deleteTarget}
-        title="Remove Student?"
-        message={`This permanently deletes "${deleteTarget?.user.name}" and their login. Students with attendance, evaluations or documents cannot be deleted — set them to Inactive instead.`}
-        confirmLabel="Yes, remove"
+        title="Delete Student?"
+        message={
+          deleteTarget
+            ? deleteStudentMessage(deleteTarget.user.name, {
+                attendances: deleteTarget._count?.attendances ?? 0,
+                evaluations: deleteTarget._count?.evaluations ?? 0,
+                documents: deleteTarget._count?.documents ?? 0,
+                credentials: deleteTarget._count?.credentials ?? 0,
+              })
+            : ""
+        }
+        confirmLabel="Yes, delete permanently"
         variant="danger"
         onConfirm={handleDeleteConfirm}
         onCancel={() => {

@@ -6,6 +6,7 @@ import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import { deleteEstablishmentMessage } from "@/lib/format";
 import Button from "@/components/ui/Button";
 import {
   Building2,
@@ -117,8 +118,15 @@ export default function EstablishmentManagementPage() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Delete Establishment?"
-        message={`This will permanently remove "${deleteTarget?.name}" and cannot be undone.`}
-        confirmLabel="Yes, delete it!"
+        message={
+          deleteTarget
+            ? deleteEstablishmentMessage(deleteTarget.name, {
+                supervisors: deleteTarget._count?.supervisors ?? 0,
+                students: deleteTarget._count?.students ?? 0,
+              })
+            : ""
+        }
+        confirmLabel="Yes, delete permanently"
         variant="danger"
         onConfirm={handleDeleteConfirm}
         onCancel={() => {
