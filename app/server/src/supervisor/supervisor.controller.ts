@@ -211,8 +211,8 @@ export class SupervisorController {
    * there is no `evaluations/:id` GET to shadow it.
    */
   @Get('evaluations/form')
-  getEvaluationSheet() {
-    return this.supervisorService.getEvaluationSheet();
+  getEvaluationSheet(@Req() req: AuthedRequest) {
+    return this.supervisorService.getEvaluationSheet(req.user.userId);
   }
 
   @Get('evaluations')

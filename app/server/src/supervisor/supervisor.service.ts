@@ -2,6 +2,8 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { hoursForAttendance, totalHours } from '../common/attendance-hours';
@@ -17,6 +19,8 @@ type AttendanceStatus = 'PENDING' | 'APPROVED' | 'DECLINED';
 
 @Injectable()
 export class SupervisorService {
+  private readonly logger = new Logger(SupervisorService.name);
+
   constructor(private prisma: PrismaService) {}
 
   private async getSupervisorByUserId(userId: string) {
@@ -43,7 +47,11 @@ export class SupervisorService {
       throw new NotFoundException('Supervisor profile not found');
     }
 
-    const [students, attendances] = await Promise.all([
+    // allSettled, not all: the evaluation page reads this endpoint too, so one
+    // rejected query used to take down more than the dashboard. Each half
+    // degrades to empty, the reason is logged, and `failedSections` tells the
+    // client what to offer a retry for.
+    const settled = await Promise.allSettled([
       this.prisma.client.student.findMany({
         where: { establishmentId: supervisor.establishmentId },
         select: { id: true, status: true, requiredHours: true },
@@ -60,7 +68,25 @@ export class SupervisorService {
           student: { select: { status: true } },
         },
       }),
-    ]);
+    ] as const);
+
+    const failedSections = new Set<string>();
+    const fail = (section: string, reason: unknown) => {
+      failedSections.add(section);
+      this.logger.error(
+        `Supervisor dashboard section "${section}" failed: ` +
+          (reason instanceof Error ? reason.message : String(reason)),
+      );
+    };
+
+    const students = settledOr(settled[0], [], 'students', fail);
+    const attendances = settledOr(settled[1], [], 'attendance', fail);
+
+    if (settled.every((result) => result.status === 'rejected')) {
+      throw new ServiceUnavailableException(
+        'The dashboard is temporarily unavailable. Please try again.',
+      );
+    }
 
     const approved = attendances.filter((a) => a.status === 'APPROVED');
     const weekStart = startOfWeek();
@@ -71,6 +97,8 @@ export class SupervisorService {
     );
 
     return {
+      /** Sections whose data could not be loaded; the client offers a retry. */
+      failedSections: [...failedSections],
       supervisor: {
         id: supervisor.id,
         name: supervisor.user.name,
@@ -295,30 +323,24 @@ export class SupervisorService {
 
     // Same shape as the list endpoints, so a freshly created evaluation can be
     // rendered without a refetch.
-    return withSectionTotals(created);
+    return { ...withSectionTotals(created), canModify: true };
   }
 
   /**
    * Edits an evaluation this supervisor wrote, recomputing the total.
    *
-   * Ownership is `supervisorId`, not the establishment: `getEvaluations`
-   * deliberately shows everything written at the establishment, but a
-   * supervisor may only rewrite their own sheet.
+   * Authorship (`supervisorId`) is the only guard, and it is sufficient: the
+   * student's current placement is irrelevant to a sheet you already signed.
+   * Requiring the student to still be at your establishment locked the author
+   * out of their own sheet the moment the student moved.
    */
   async updateEvaluation(
     userId: string,
     evaluationId: string,
     data: Omit<EvaluationInput, 'studentId'>,
   ) {
-    const supervisor = await this.getSupervisorWithHeaderFields(userId);
-    const existing = await this.verifyEvaluationBelongsToSupervisor(
-      evaluationId,
-      supervisor.id,
-    );
-    const student = await this.verifyStudentUnderSupervisor(
-      existing.studentId,
-      supervisor.establishmentId,
-    );
+    const supervisor = await this.getSupervisorByUserId(userId);
+    await this.verifyEvaluationBelongsToSupervisor(evaluationId, supervisor.id);
 
     const scores = pickItemScores(data);
 
@@ -327,14 +349,20 @@ export class SupervisorService {
       data: {
         ...scores,
         totalRating: totalRating(scores),
-        ...this.headerFields(data, supervisor, student),
+        // Only the two editable header dates. `trainingEmployedAt`,
+        // `evaluatorName` and `evaluatorPosition` are write-time snapshots and
+        // are deliberately NOT recomputed here: re-deriving them from the
+        // student's *current* placement would blank the establishment on a
+        // sheet whose student has since been unassigned, which is the same
+        // placement-governs-the-sheet coupling this change removes.
+        ...trainingDates(data),
         comments: data.comments,
         recommendations: data.recommendations,
       },
       include: EVALUATION_INCLUDE,
     });
 
-    return withSectionTotals(updated);
+    return { ...withSectionTotals(updated), canModify: true };
   }
 
   /** Hard-deletes an evaluation this supervisor wrote. */
@@ -361,12 +389,7 @@ export class SupervisorService {
     student: { establishment: { name: string } | null },
   ) {
     return {
-      trainingStartedAt: data.trainingStartedAt
-        ? new Date(data.trainingStartedAt)
-        : null,
-      trainingEndedAt: data.trainingEndedAt
-        ? new Date(data.trainingEndedAt)
-        : null,
+      ...trainingDates(data),
       trainingEmployedAt: student.establishment?.name ?? null,
       evaluatorName: supervisor.user.name,
       evaluatorPosition: supervisor.position,
@@ -440,22 +463,78 @@ export class SupervisorService {
    * Served rather than duplicated in the client, so the form's text has exactly
    * one source (src/common/evaluation-scoring.ts).
    */
-  getEvaluationSheet() {
-    return sheetDefinition();
+  async getEvaluationSheet(userId: string) {
+    const supervisor = await this.getSupervisorWithHeaderFields(userId);
+    const establishment = await this.prisma.client.establishment.findUnique({
+      where: { id: supervisor.establishmentId },
+      select: { name: true },
+    });
+
+    return {
+      ...sheetDefinition(),
+      // The header/footer blanks as they will be filled in for this
+      // supervisor. Served here rather than read off the dashboard so the form
+      // depends on one endpoint, not two.
+      evaluator: {
+        name: supervisor.user.name,
+        position: supervisor.position,
+      },
+      employedAt: establishment?.name ?? null,
+    };
   }
 
-  /** Evaluations written for students at this supervisor's establishment. */
+  /**
+   * Sheets this supervisor wrote, plus sheets for students currently placed
+   * with them.
+   *
+   * The union matters: filtering on the student's *current* establishment
+   * alone made a supervisor's own sheet vanish the moment the student was
+   * unassigned or moved (which the establishment cascade does routinely, since
+   * it nulls `establishmentId` rather than deleting students). Authorship is
+   * permanent; placement is not.
+   */
   async getEvaluations(userId: string) {
     const supervisor = await this.getSupervisorByUserId(userId);
 
     const evaluations = await this.prisma.client.evaluation.findMany({
-      where: { student: { establishmentId: supervisor.establishmentId } },
+      where: {
+        OR: [
+          { supervisorId: supervisor.id },
+          { student: { establishmentId: supervisor.establishmentId } },
+        ],
+      },
       include: EVALUATION_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
 
-    return evaluations.map(withSectionTotals);
+    // Authorship travels with the row. The client used to derive this by
+    // comparing against /supervisor/dashboard's supervisor.id, so a slow or
+    // failing dashboard silently hid edit and delete on the supervisor's own
+    // sheets with no explanation.
+    return evaluations.map((evaluation) => ({
+      ...withSectionTotals(evaluation),
+      canModify: evaluation.supervisorId === supervisor.id,
+    }));
   }
+}
+
+/**
+ * The sheet's two editable header dates. Absent or emptied becomes `null` — on
+ * an edit the client always sends the whole sheet, so a missing date here means
+ * the supervisor cleared it.
+ */
+function trainingDates(data: {
+  trainingStartedAt?: string;
+  trainingEndedAt?: string;
+}) {
+  return {
+    trainingStartedAt: data.trainingStartedAt
+      ? new Date(data.trainingStartedAt)
+      : null,
+    trainingEndedAt: data.trainingEndedAt
+      ? new Date(data.trainingEndedAt)
+      : null,
+  };
 }
 
 /** What both create and update accept, before the server derives the rest. */
@@ -513,4 +592,16 @@ function startOfWeek(): Date {
       now.getUTCDate() - daysSinceMonday,
     ),
   );
+}
+
+/** See the identical helper in coordinator.service.ts. */
+function settledOr<T>(
+  result: PromiseSettledResult<T>,
+  fallback: T,
+  section: string,
+  onFail: (section: string, reason: unknown) => void,
+): T {
+  if (result.status === 'fulfilled') return result.value;
+  onFail(section, result.reason);
+  return fallback;
 }

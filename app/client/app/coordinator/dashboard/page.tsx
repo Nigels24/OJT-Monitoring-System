@@ -29,6 +29,8 @@ import {
   useGetCoordinatorDashboardQuery,
   RecentStudent,
 } from "@/lib/api/dashboardApi";
+import { formatDateOnly } from "@/lib/format";
+import SectionError from "@/components/ui/SectionError";
 
 // Charting the statuses that actually exist. The prototype showed
 // present/late/absent; attendance has no such states.
@@ -62,8 +64,7 @@ const STUDENT_COLUMNS: DataTableColumn<RecentStudent>[] = [
   {
     key: "startDate",
     label: "Start Date",
-    render: (r) =>
-      r.startDate ? new Date(r.startDate).toLocaleDateString() : "—",
+    render: (r) => formatDateOnly(r.startDate),
   },
   {
     key: "hours",
@@ -106,7 +107,19 @@ const STUDENT_COLUMNS: DataTableColumn<RecentStudent>[] = [
 export default function CoordinatorDashboard() {
   const currentUser = useCurrentUser();
   const userName = currentUser?.name || "Admin";
-  const { data, isLoading, error } = useGetCoordinatorDashboardQuery();
+  const { data, isLoading, error, refetch, isFetching } =
+    useGetCoordinatorDashboardQuery();
+
+  /**
+   * Sections the endpoint reported as failed. It returns empty defaults for
+   * these rather than a 500, so everything that loaded still renders and only
+   * the broken part shows a retry.
+   */
+  const failed = (section: string) =>
+    data?.failedSections.includes(section) ?? false;
+  const retry = () => {
+    void refetch();
+  };
 
   const hasTrendData =
     data?.attendanceTrend.some(
@@ -141,6 +154,13 @@ export default function CoordinatorDashboard() {
           </Card>
         ) : (
           <>
+            {failed("stats") && (
+              <SectionError
+                label="The summary figures"
+                onRetry={retry}
+                retrying={isFetching}
+              />
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
               <StatCard
                 label="Total Students"
@@ -209,6 +229,13 @@ export default function CoordinatorDashboard() {
                 <p className="text-xs text-gray-500 mb-3">
                   Attendance logs by week, grouped by approval status.
                 </p>
+                {failed("attendanceTrend") && (
+                  <SectionError
+                    label="The attendance trend"
+                    onRetry={retry}
+                    retrying={isFetching}
+                  />
+                )}
                 {hasTrendData ? (
                   <TrendChart
                     title=""
@@ -223,7 +250,15 @@ export default function CoordinatorDashboard() {
                 )}
               </Card>
 
-              {data.topEstablishments.length > 0 ? (
+              {failed("topEstablishments") ? (
+                <Card>
+                  <SectionError
+                    label="Top establishments"
+                    onRetry={retry}
+                    retrying={isFetching}
+                  />
+                </Card>
+              ) : data.topEstablishments.length > 0 ? (
                 <RankedBarList
                   title="Top Establishments by Student Count"
                   icon={PieChart}
@@ -260,7 +295,13 @@ export default function CoordinatorDashboard() {
                   View all
                 </Link>
               </div>
-              {data.recentStudents.length === 0 ? (
+              {failed("recentStudents") ? (
+                <SectionError
+                  label="Recently added students"
+                  onRetry={retry}
+                  retrying={isFetching}
+                />
+              ) : data.recentStudents.length === 0 ? (
                 <p className="text-gray-500 text-sm py-8 text-center">
                   No students yet — add one from Student Management.
                 </p>

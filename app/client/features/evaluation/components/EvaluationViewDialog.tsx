@@ -2,6 +2,7 @@ import { Star, User, Building2, CalendarDays, IdCard } from "lucide-react";
 import ViewDialog from "@/components/ui/ViewDialog";
 import DetailItem from "@/components/ui/DetailItem";
 import { Evaluation } from "@/lib/api/evaluationApi";
+import { formatDateOnly } from "@/lib/format";
 
 interface EvaluationViewDialogProps {
   open: boolean;
@@ -10,7 +11,7 @@ interface EvaluationViewDialogProps {
 }
 
 function dateOrNull(iso: string | null): string | null {
-  return iso ? new Date(iso).toLocaleDateString() : null;
+  return iso ? formatDateOnly(iso) : null;
 }
 
 /**

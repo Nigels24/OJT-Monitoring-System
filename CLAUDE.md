@@ -251,7 +251,24 @@ controller file**. `main.ts`'s global `ValidationPipe` runs with `whitelist`,
 `forbidNonWhitelisted` and `transform`, so an undeclared body property is a **400, not a
 silent drop** — a DTO must declare every field its form sends.
 
-Two shared transforms in `src/common/transforms.ts`, **mandatory for optional fields**:
+Four shared transforms in `src/common/transforms.ts`. The first two are **mandatory for
+optional fields on a create DTO**; the second two are **mandatory for nullable fields on
+an update DTO**, because Prisma reads `undefined` as "leave this column alone" — so
+`EmptyToUndefined` on an update silently restores the value the user just cleared:
+
+| Transform | Empty input becomes | Use on |
+|---|---|---|
+| `EmptyToUndefined()` | `undefined` | create DTOs; any NOT NULL column |
+| `ToOptionalNumber()` | `undefined` | optional numbers on a NOT NULL column (`requiredHours`) |
+| `EmptyToNull()` | `null` | **nullable** columns on an update DTO |
+| `ToNullableNumber()` | `null` | **nullable** numbers on an update DTO (`age`) |
+
+A field **absent** from the body is `undefined` either way and always means "leave
+unchanged" — only an explicit `""`/`null` clears. The client must therefore send `null`
+rather than omitting the key (`|| null`, not `|| undefined`), and a service that maps a
+date must preserve all three states (`toNullableDate` in `coordinator.service.ts`).
+
+The original two, in detail:
 
 - `EmptyToUndefined()` — an HTML form posts `""` for a cleared input; `@IsOptional()`
   alone only skips `null`/`undefined`.
@@ -318,6 +335,15 @@ and makes required create fields optional.
   every evaluation that is read, so the coordinator's view dialog renders the filled-in
   sheet straight from the response. Change the wording here and both roles follow; don't
   add a client-side mirror.
+- **`src/common/dates.ts`** — every calendar-date comparison. Date-only columns
+  (`Attendance.date`, `Student.startDate`/`endDate`) are stored as **UTC midnight of the
+  intended day**, so comparisons must be between values this module produced.
+  **`manilaToday()` is the only correct "today"** — `startOfUtcDay(new Date())` reads the
+  *server's* UTC day, which only rolls over at 08:00 Manila, so the write and read paths
+  disagreed by a day every night. The client mirror is `formatDateOnly`/
+  `formatWeekdayOnly` in `lib/format.ts` (both force `timeZone: "UTC"`); `createdAt`/
+  `updatedAt`/`uploadedAt` are real instants and stay local.
+- **`src/common/cascade-delete.ts`** — delete ordering, see §6.
 - **`PrismaService`** exposes the client as `.client` rather than extending
   `PrismaClient` — every query reads `this.prisma.client.<model>`.
 
@@ -502,7 +528,7 @@ table; never derive one from the other.
 | PATCH | `/supervisor/students/:id/status` | SUPERVISOR | |
 | PATCH | `/supervisor/attendance/:id/approve` | SUPERVISOR | clears any `declineReason` |
 | PATCH | `/supervisor/attendance/:id/decline` | SUPERVISOR | `{ reason }`, 3–500 chars, required |
-| GET | `/supervisor/evaluations/form` | SUPERVISOR | the **blank sheet's structure** — sections, item keys, printed letters, wording, the 1–5 legend and `maxTotalRating`. Static; the client renders the form from this instead of keeping its own copy of the form text |
+| GET | `/supervisor/evaluations/form` | SUPERVISOR | the **blank sheet's structure** — sections, item keys, printed letters, wording, the 1–5 legend and `maxTotalRating` — plus `evaluator` and `employedAt`, the header/footer blanks as they will be stamped for this supervisor. The client renders the whole form from this one endpoint instead of keeping its own copy of the form text or reading the dashboard |
 | GET/POST | `/supervisor/evaluations` | SUPERVISOR | POST takes all 19 items; repeatable — a student is evaluated more than once |
 | PATCH | `/supervisor/evaluations/:id` | SUPERVISOR | the whole sheet again, not a partial (every item is required on the form); recomputes `totalRating`. 403 unless the caller **wrote** it |
 | DELETE | `/supervisor/evaluations/:id` | SUPERVISOR | hard delete, same authorship check |
@@ -917,7 +943,24 @@ Ordered roughly by how likely each is to bite.
     the delete reported success. Caught only by checking the bucket after the fact. Every
     statement inside a cascade is now sequential — keep it that way, including the
     per-supervisor loop in `EstablishmentService.remove`.
-20. **A cascading delete leaves other API slices stale.** RTK Query tags are scoped to one
+20. **Fixed: the dashboards degrade instead of 500ing.** Both `getDashboard`s use
+    `Promise.allSettled` with per-section empty defaults, log every rejection reason, and
+    return `failedSections: string[]`; the client renders what loaded and shows an inline
+    retry (`components/ui/SectionError.tsx`). All queries failing still throws 503. The
+    same principle covers signed URLs: `withSignedUrl` returns `fileUrl: null` for a
+    missing object rather than throwing inside `Promise.all` and taking out the list —
+    `components/ui/FileLink.tsx` renders those rows as "Unavailable".
+21. **A student with no establishment is a real state, not an edge case.** The
+    establishment cascade nulls `Student.establishmentId`, and the coordinator's form can
+    now clear it deliberately. What handles it: `submitAttendance` rejects with 400 (the
+    supervisor's queue is establishment-scoped, so anything logged could never be
+    approved) and the client mirrors that as a disabled form; `getEvaluations` returns
+    authored-by-me UNION placed-with-me so a supervisor keeps their own sheets;
+    `MessagesService.getContacts` already guarded it (item 17). **Attendance rows written
+    while the student was assigned stay invisible to every supervisor until the student is
+    reassigned** — verified that reassigning restores them, which is the recovery path.
+    Any new query that starts from a student's `establishmentId` needs the same thought.
+22. **A cascading delete leaves other API slices stale.** RTK Query tags are scoped to one
     `createApi`, so `deleteStudent`'s `invalidatesTags: ["Student"]` cannot reach
     `dashboardApi`, `attendanceOversightApi`, `documentApi` or `evaluationApi` — all of
     which just lost rows. Their caches refetch on their own next mount/poll, so the tile

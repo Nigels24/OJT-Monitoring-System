@@ -22,9 +22,11 @@ import {
 } from "@/lib/api/supervisorApi";
 import { SUPERVISOR_NAV } from "@/features/supervisor/nav";
 import StudentRoster from "@/features/supervisor/components/StudentRoster";
+import SectionError from "@/components/ui/SectionError";
 
 export default function SupervisorDashboardPage() {
-  const { data, isLoading, error } = useGetSupervisorDashboardQuery();
+  const { data, isLoading, error, refetch, isFetching } =
+    useGetSupervisorDashboardQuery();
   const { data: students, isLoading: studentsLoading } =
     useGetSupervisorStudentsQuery();
 
@@ -60,6 +62,21 @@ export default function SupervisorDashboardPage() {
           </Card>
         ) : (
           <>
+            {/* The endpoint returns empty defaults plus failedSections rather
+                than a 500, so a broken half degrades to a retry here. */}
+            {data.failedSections.length > 0 && (
+              <SectionError
+                label={
+                  data.failedSections.includes("attendance")
+                    ? "Your attendance figures"
+                    : "Your student figures"
+                }
+                onRetry={() => {
+                  void refetch();
+                }}
+                retrying={isFetching}
+              />
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
               <StatCard
                 label="Total Students"

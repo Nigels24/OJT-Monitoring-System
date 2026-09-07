@@ -34,6 +34,14 @@ export interface EvaluationSheet {
   minScore: number;
   maxScore: number;
   maxTotalRating: number;
+  /**
+   * The header/footer blanks as they will be filled in for the signed-in
+   * supervisor. Served with the sheet so the form needs one endpoint, not two —
+   * these used to come off /supervisor/dashboard, which meant a failing
+   * dashboard blanked the footer.
+   */
+  evaluator: { name: string; position: string | null };
+  employedAt: string | null;
 }
 
 /** A blank-sheet item with the score it was given. */
@@ -63,6 +71,12 @@ export interface Evaluation {
   evaluatorPosition: string | null;
   comments: string | null;
   recommendations: string | null;
+  /**
+   * Whether the caller may edit or delete this sheet — true only for its
+   * author, and always false for a coordinator. Decided server-side, so the
+   * UI never has to derive authorship from a second request.
+   */
+  canModify: boolean;
   createdAt: string;
   updatedAt: string;
   student: {

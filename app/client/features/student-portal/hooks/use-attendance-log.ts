@@ -87,12 +87,15 @@ export function useAttendanceLog() {
   // sent here.
   //
   // Completion is by hours, not the calendar, so a scheduled endDate never
-  // blocks logging — only status COMPLETED does. That leaves four states:
+  // blocks logging — only status COMPLETED does. That leaves five states:
   //   1. NOT STARTED  — today < startDate: form disabled, no min/max shown.
   //   2. ACTIVE        — form enabled, min=startDate, max=today.
   //   3. PAST SCHEDULED END, not complete — form stays enabled with a
   //      non-blocking notice; bounds are the same as ACTIVE.
   //   4. COMPLETED     — form disabled.
+  //   5. UNASSIGNED    — no establishment: form disabled. Nothing a student
+  //      logs here could ever be approved, because the supervisor's queue is
+  //      scoped to an establishment.
   const today = todayLocalDateString();
   const startDate = profile?.startDate
     ? profile.startDate.slice(0, 10)
@@ -100,18 +103,27 @@ export function useAttendanceLog() {
   const endDate = profile?.endDate ? profile.endDate.slice(0, 10) : undefined;
 
   const isCompleted = profile?.status === "COMPLETED";
-  const isNotStarted = !isCompleted && !!startDate && today < startDate;
+  // `profile &&` so this doesn't flash "unassigned" while the profile loads.
+  const isUnassigned = !!profile && !profile.establishment;
+  const isNotStarted =
+    !isCompleted && !isUnassigned && !!startDate && today < startDate;
   const isPastScheduledEnd =
-    !isCompleted && !isNotStarted && !!endDate && today > endDate;
+    !isCompleted &&
+    !isUnassigned &&
+    !isNotStarted &&
+    !!endDate &&
+    today > endDate;
 
   let minDate: string | undefined;
   let maxDate: string | undefined;
-  let isDisabled = isCompleted || isNotStarted;
+  let isDisabled = isCompleted || isUnassigned || isNotStarted;
   let disabledMessage: string | undefined = isCompleted
     ? "Your OJT is complete."
-    : isNotStarted
-      ? `Your OJT starts on ${formatDateLabel(startDate!)}. You'll be able to log attendance from then.`
-      : undefined;
+    : isUnassigned
+      ? "You are not assigned to an establishment yet. Contact your coordinator."
+      : isNotStarted
+        ? `Your OJT starts on ${formatDateLabel(startDate!)}. You'll be able to log attendance from then.`
+        : undefined;
 
   if (!isDisabled) {
     minDate = startDate;

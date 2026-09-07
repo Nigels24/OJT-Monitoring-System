@@ -4,7 +4,6 @@ import {
   ChevronRight,
   Check,
   X,
-  Eye,
   FileText,
 } from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
@@ -12,6 +11,7 @@ import StatusBadge, { BadgeVariant } from "@/components/ui/StatusBadge";
 import SelectField from "@/components/ui/SelectField";
 import { CoordinatorDocument } from "@/lib/api/documentApi";
 import type { DocumentStatus } from "@/lib/api/studentPortalApi";
+import FileLink from "@/components/ui/FileLink";
 
 interface DocumentsReviewTableProps {
   rows: CoordinatorDocument[];
@@ -119,15 +119,7 @@ export default function DocumentsReviewTable({
         const busy = actioningId === r.id;
         return (
           <div className="flex gap-2">
-            <a
-              href={r.fileUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-2 py-1.5 rounded-md border border-blue-200 text-blue-700 hover:bg-blue-50 inline-flex items-center gap-1 text-xs font-medium"
-            >
-              <Eye size={14} />
-              View
-            </a>
+            <FileLink href={r.fileUrl} label={r.name} />
             <button
               onClick={() => onApprove(r)}
               disabled={busy || r.status === "APPROVED"}

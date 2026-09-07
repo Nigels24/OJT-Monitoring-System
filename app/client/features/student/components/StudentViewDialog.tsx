@@ -14,6 +14,7 @@ import ViewDialog from "@/components/ui/ViewDialog";
 import DetailItem from "@/components/ui/DetailItem";
 import ProgressBar from "@/components/ui/ProgressBar";
 import { Student } from "@/lib/api/studentApi";
+import { formatDateOnly } from "@/lib/format";
 
 interface StudentViewDialogProps {
   open: boolean;
@@ -59,11 +60,7 @@ export default function StudentViewDialog({
             <DetailItem label="Age" value={student.age} icon={User} />
             <DetailItem
               label="Date of Birth"
-              value={
-                student.dateOfBirth
-                  ? new Date(student.dateOfBirth).toLocaleDateString()
-                  : null
-              }
+              value={formatDateOnly(student.dateOfBirth, "")|| null}
               icon={CalendarDays}
             />
             <DetailItem
@@ -107,11 +104,7 @@ export default function StudentViewDialog({
               />
               <DetailItem
                 label="Start Date"
-                value={
-                  student.startDate
-                    ? new Date(student.startDate).toLocaleDateString()
-                    : null
-                }
+                value={formatDateOnly(student.startDate, "") || null}
                 icon={CalendarDays}
               />
             </div>

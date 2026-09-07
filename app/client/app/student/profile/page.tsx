@@ -22,6 +22,7 @@ import {
 import { STUDENT_NAV } from "@/features/student-portal/nav";
 import { useProfile } from "@/features/student-portal/hooks/use-profile";
 import ProfileEditForm from "@/features/student-portal/components/ProfileEditForm";
+import { formatDateOnly } from "@/lib/format";
 
 export default function StudentProfilePage() {
   const {
@@ -90,11 +91,7 @@ export default function StudentProfilePage() {
                 <DetailItem label="Gender" value={data.gender} icon={Users} />
                 <DetailItem
                   label="Date of Birth"
-                  value={
-                    data.dateOfBirth
-                      ? new Date(data.dateOfBirth).toLocaleDateString()
-                      : null
-                  }
+                  value={formatDateOnly(data.dateOfBirth, "") || null}
                   icon={Cake}
                 />
                 <DetailItem label="Course" value={data.course} icon={GraduationCap} />
@@ -121,20 +118,12 @@ export default function StudentProfilePage() {
                 />
                 <DetailItem
                   label="Start Date"
-                  value={
-                    data.startDate
-                      ? new Date(data.startDate).toLocaleDateString()
-                      : null
-                  }
+                  value={formatDateOnly(data.startDate, "") || null}
                   icon={CalendarClock}
                 />
                 <DetailItem
                   label="End Date"
-                  value={
-                    data.endDate
-                      ? new Date(data.endDate).toLocaleDateString()
-                      : null
-                  }
+                  value={formatDateOnly(data.endDate, "") || null}
                   icon={CalendarClock}
                 />
                 <DetailItem label="Status" value={data.status} icon={UserCircle} />

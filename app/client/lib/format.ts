@@ -1,4 +1,40 @@
 /**
+ * Renders a **date-only** column (`Attendance.date`, `Student.startDate` /
+ * `endDate` / `dateOfBirth`, `Evaluation.trainingStartedAt` / `trainingEndedAt`).
+ *
+ * Those are stored as UTC midnight of the intended calendar day, so they must
+ * be read back in UTC. Plain `new Date(iso).toLocaleDateString()` converts to
+ * the viewer's zone first and shifts the day backwards for anyone west of UTC —
+ * a Monday log renders as Sunday.
+ *
+ * **Do not use this for `createdAt`, `updatedAt` or `uploadedAt`.** Those are
+ * real instants and are correctly shown in the viewer's own local time.
+ */
+export function formatDateOnly(
+  iso: string | null | undefined,
+  fallback = "\u2014",
+): string {
+  if (!iso) return fallback;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return fallback;
+  return date.toLocaleDateString(undefined, { timeZone: "UTC" });
+}
+
+/** The weekday of a date-only column, e.g. "Mon". Same UTC rule as above. */
+export function formatWeekdayOnly(
+  iso: string | null | undefined,
+  fallback = "\u2014",
+): string {
+  if (!iso) return fallback;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return fallback;
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    timeZone: "UTC",
+  });
+}
+
+/**
  * `1 document`, `2 documents` — a count with its noun, pluralised.
  *
  * Pass `plural` explicitly for anything an `s` doesn't fix.

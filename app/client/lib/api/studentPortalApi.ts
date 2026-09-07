@@ -108,7 +108,12 @@ export interface StudentDocument {
   id: string;
   name: string;
   /** A freshly minted 1-hour signed URL, never the raw storage path. */
-  fileUrl: string;
+  /**
+   * Short-lived signed URL, minted per request. `null` when the stored object
+   * is missing — the row is shown as unavailable rather than the whole list
+   * failing to load.
+   */
+  fileUrl: string | null;
   status: DocumentStatus;
   /** The coordinator's explanation, set only when status is REJECTED. */
   reviewNote: string | null;
@@ -133,7 +138,12 @@ export interface StudentCredential {
   id: string;
   type: CredentialType;
   /** A freshly minted 1-hour signed URL, never the raw storage path. */
-  fileUrl: string;
+  /**
+   * Short-lived signed URL, minted per request. `null` when the stored object
+   * is missing — the row is shown as unavailable rather than the whole list
+   * failing to load.
+   */
+  fileUrl: string | null;
   createdAt: string;
 }
 

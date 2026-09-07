@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, CalendarCheck } from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import StatusBadge, { BadgeVariant } from "@/components/ui/StatusBadge";
 import { AttendanceRecord, AttendanceStatus } from "@/lib/api/studentPortalApi";
+import { formatDateOnly, formatWeekdayOnly } from "@/lib/format";
 
 interface AttendanceTableProps {
   rows: AttendanceRecord[];
@@ -47,7 +48,7 @@ export default function AttendanceTable({
       label: "Date",
       render: (r) => (
         <span className="font-medium text-gray-900 whitespace-nowrap">
-          {new Date(r.date).toLocaleDateString()}
+          {formatDateOnly(r.date)}
         </span>
       ),
     },
@@ -55,7 +56,7 @@ export default function AttendanceTable({
       key: "day",
       label: "Day",
       render: (r) =>
-        new Date(r.date).toLocaleDateString([], { weekday: "short" }),
+        formatWeekdayOnly(r.date),
     },
     {
       key: "am",

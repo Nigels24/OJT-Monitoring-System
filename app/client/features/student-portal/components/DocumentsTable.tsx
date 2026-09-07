@@ -1,7 +1,8 @@
-import { FileText, Eye, Trash2 } from "lucide-react";
+import { FileText, Trash2 } from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import StatusBadge, { BadgeVariant } from "@/components/ui/StatusBadge";
 import { StudentDocument, DocumentStatus } from "@/lib/api/studentPortalApi";
+import FileLink from "@/components/ui/FileLink";
 
 interface DocumentsTableProps {
   rows: StudentDocument[];
@@ -63,15 +64,7 @@ export default function DocumentsTable({
       label: "Actions",
       render: (r) => (
         <div className="flex gap-2">
-          <a
-            href={r.fileUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-2 py-1.5 rounded-md border border-blue-200 text-blue-700 hover:bg-blue-50 inline-flex items-center gap-1 text-xs font-medium"
-          >
-            <Eye size={14} />
-            View
-          </a>
+          <FileLink href={r.fileUrl} label={r.name} />
           {r.status === "PENDING" && (
             <button
               onClick={() => onDelete(r)}

@@ -41,6 +41,13 @@ export interface RecentStudent {
 }
 
 export interface CoordinatorDashboard {
+  /**
+   * Sections whose queries failed. The endpoint returns empty defaults for
+   * these rather than a 500, so the page renders what loaded and offers a
+   * retry. One of "stats", "attendanceTrend", "topEstablishments",
+   * "recentStudents".
+   */
+  failedSections: string[];
   stats: {
     totalStudents: number;
     activeStudents: number;

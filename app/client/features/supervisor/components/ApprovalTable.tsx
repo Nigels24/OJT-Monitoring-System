@@ -11,6 +11,7 @@ import StatusBadge, { BadgeVariant } from "@/components/ui/StatusBadge";
 import SelectField from "@/components/ui/SelectField";
 import { SupervisorAttendance } from "@/lib/api/supervisorApi";
 import type { AttendanceStatus } from "@/lib/api/studentPortalApi";
+import { formatDateOnly } from "@/lib/format";
 
 interface ApprovalTableProps {
   rows: SupervisorAttendance[];
@@ -74,7 +75,7 @@ export default function ApprovalTable({
       label: "Date",
       render: (r) => (
         <span className="font-medium text-gray-900 whitespace-nowrap">
-          {new Date(r.date).toLocaleDateString()}
+          {formatDateOnly(r.date)}
         </span>
       ),
     },

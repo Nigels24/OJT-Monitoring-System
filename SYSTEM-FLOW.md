@@ -88,9 +88,26 @@ Student submits attendance
   POST /student/attendance { date, timeInAM?, timeOutAM?, timeInPM?, timeOutPM? }
     date normalised to UTC midnight (startOfUtcDay) — one row per calendar day,
     enforced by @@unique([studentId, date]) AND a pre-insert check (readable 409, not a raw constraint error)
-    must contain ≥1 complete session (AM or PM) with positive hours, else 400
+
+    OJT-PERIOD GUARD, in this order, all 400 (src/common/dates.ts does the date math):
+      status COMPLETED                → "Your OJT is complete."
+      no establishmentId              → "You are not assigned to an establishment yet."
+                                         (nothing logged here could ever be approved —
+                                          the supervisor's queue is establishment-scoped)
+      date < Student.startDate        → names the start date
+      date > manilaToday()            → "Attendance cannot be logged for a future date."
+      NOTE: endDate is deliberately NOT a bound. Completion is by hours, not the
+      calendar, so a student short of requiredHours keeps logging past their
+      scheduled end; only status COMPLETED closes logging.
+
+    must contain ≥1 complete session (AM or PM), and each supplied session's
+      time out must be strictly later than its time in (checked per session, not
+      on the combined total), else 400
     hours computed server-side (hoursForAttendance) and stored on the row
     always lands PENDING
+
+    A DECLINED row for the same date is UPDATED in place (status back to PENDING,
+      declineReason/approvedById cleared); PENDING or APPROVED is a 409.
        ↓
 Supervisor approves/declines
   PATCH /supervisor/attendance/:id/approve   → clears any declineReason
@@ -111,28 +128,71 @@ in src/common/attendance-hours.ts — the single shared function:
                                       future — never a fake 0%)
 ```
 
+**"Today" is always Manila's calendar day, never the server's.** `manilaToday()` in
+`src/common/dates.ts` is the only correct source; `startOfUtcDay(new Date())` is not.
+The server may run in UTC, where the day rolls over at 08:00 Manila — the write path
+used Manila while the coordinator's dashboard and oversight used UTC, so between 00:00
+and 07:59 Manila they disagreed by a day and "Present Today" read 0 while students had
+already logged. The client has the mirror-image rule: date-only columns render through
+`formatDateOnly`/`formatWeekdayOnly` in `lib/format.ts` (both force `timeZone: "UTC"`,
+since those columns are stored as UTC midnight), while `createdAt`/`updatedAt`/
+`uploadedAt` are real instants and stay in the viewer's local time.
+
 `Student.startDate` is the newest input to this pipeline — until it is set on a student,
 their attendance-oversight percentage is `null` throughout, regardless of how much
 approved attendance they have. See CLAUDE.md §7 ("Needs live verification").
 
 ## 5. Evaluation scoring flow
 
-The rubric itself — nine criteria, three weighted categories, the formula and its bands —
-is in CLAUDE.md §4. The only thing worth tracing here is **what is stored versus what is
-recomputed**, because the two are deliberately different:
+The sheet itself — four sections, nineteen items, the wording and the per-section
+maximums — is in CLAUDE.md §4. What is worth tracing here is **where the form's text
+lives** and **what is stored versus recomputed**, because both are deliberate.
 
 ```
-POST /supervisor/evaluations  (9 criteria, 1–5 each)
-  → src/common/evaluation-scoring.ts
-      overallRating + performanceLevel  ──STORED on the row──▶ survive a later rubric change
-      (never accepted from the body; forbidNonWhitelisted rejects an attempt to supply them)
-  ← on every READ: `categories` breakdown RECOMPUTED by withBreakdown() — never stored
-      supervisor's list (own establishment) and coordinator's list (all establishments,
-      read-only) call the same withBreakdown/pickCriteria → identical shape
+The form's text has exactly ONE source: src/common/evaluation-scoring.ts (SECTIONS).
+The two projects share no code, so rather than retyping nineteen wordings into the
+client (where they would drift from the sheet the school issues), it is SERVED:
+
+  GET /supervisor/evaluations/form   → sheetDefinition()
+        sections[] { key, numeral, label, maxPoints, items[] { key, letter, label } }
+        scale[] (5 OUTSTANDING … 1 NEEDS IMPROVEMENT), maxTotalRating (95)
+        evaluator { name, position } + employedAt
+          ↳ the header/footer blanks as they will be stamped for THIS supervisor,
+            served here so the form needs one endpoint, not two (it used to read
+            them off /supervisor/dashboard, which blanked the footer when that failed)
+
+POST /supervisor/evaluations   (19 items, 1–5 each)
+  → totalRating = raw sum, 19–95  ──STORED on the row──▶ survives a later rubric change
+      never accepted from the body; forbidNonWhitelisted rejects an attempt to supply it
+  → trainingEmployedAt / evaluatorName / evaluatorPosition  ──STORED SNAPSHOTS──▶
+      captured once, at write time, so a later supervisor rename, a student transfer or
+      a deleted establishment cannot rewrite a sheet that was already signed
+  → there is deliberately NO percentage, letter grade or performance band. The old
+      Excellent/Very Good/Good/Fair/Poor labels were retired with the old rubric.
+
+PATCH /supervisor/evaluations/:id   (the whole sheet again, not a partial)
+  → recomputes totalRating and rewrites the two editable header DATES only.
+      The three snapshots above are NOT recomputed — re-deriving them from the
+      student's current placement would blank the establishment on a sheet whose
+      student has since been unassigned.
+
+← on every READ: withSectionTotals() recomputes each section's total and attaches
+    its items WITH their scores, so the coordinator's read-only view renders the whole
+    filled-in sheet from one response. Plus canModify, decided server-side.
 ```
 
-So a rating shown next to a *stale* category breakdown is possible by design: the rating
-is historical, the breakdown is current.
+**Who may do what** — the guard is authorship, not current placement:
+
+| | see | create | edit / delete |
+|---|---|---|---|
+| Supervisor, sheets they wrote | always | — | yes |
+| Supervisor, students currently placed with them | yes | yes | no (403) |
+| Coordinator | all establishments | no | no (`canModify: false`) |
+
+`getEvaluations` returns the **union** of those first two rows. Filtering on the
+student's current establishment alone made a supervisor's own sheet vanish the moment
+the student was unassigned — which the establishment cascade does routinely, since it
+nulls `Student.establishmentId` rather than deleting students (CLAUDE.md §6).
 
 ## 6. Module dependency map
 
@@ -149,8 +209,9 @@ Auth ──┬─▶ Establishment ──┬─▶ Student Mgmt (Coordinator) �
 Documents / Credentials hang off Student Mgmt alone — the rows they need already exist,
 which is why they came next regardless of Messaging's state. Both are built, sharing
 `src/common/storage.ts`. Messaging is now fully built too, backend and client — polling
-(RTK Query), not a websocket gateway; see CLAUDE.md §7. The only item left in the build
-order is verifying `Student.startDate` live (CLAUDE.md §7).
+(RTK Query), not a websocket gateway; see CLAUDE.md §7. Evaluations were rebuilt on the
+school's official sheet, backend and client (§5). Every module in the graph is built; what
+remains is the hand-verification pass listed in CLAUDE.md §7.
 
 ## 7. Where to look for a given bug
 
@@ -163,3 +224,7 @@ order is verifying `Student.startDate` live (CLAUDE.md §7).
 | User stuck bounced to `/login` in a loop | Cookie `Max-Age` vs JWT `expiresIn` drift, or a stale token past its 1-day expiry (§3) |
 | A role sees another role's/establishment's data | Missing or wrong ownership re-derivation in the service — never trust a body/param id directly |
 | Percentage/aggregate shows `0%`/`0` instead of blank | Should probably be `null`/absent — see "no data vs zero", CLAUDE.md §4. **But** a real `0` is correct once that field has a backend; the absent-not-zero half applies only while the module is unbuilt |
+| Emptying a field and saving silently restores the old value | The DTO used `EmptyToUndefined()` on a nullable column — Prisma reads `undefined` as "leave unchanged". Nullable update fields need `EmptyToNull()`/`ToNullableNumber()`, and the client must send `null`, not omit the key (CLAUDE.md §4) |
+| A date renders one day off, or a weekday doesn't match its date | A date-only column read in local time. Client: use `formatDateOnly`/`formatWeekdayOnly` (`lib/format.ts`). Server: `manilaToday()`, never `startOfUtcDay(new Date())` (§4) |
+| A whole page is blank after one query fails | The endpoint used `Promise.all`. The dashboards use `Promise.allSettled` + per-section defaults + `failedSections`; a list minting signed URLs must not let one bad row throw (§4, CLAUDE.md §8) |
+| A supervisor's own evaluation vanished or won't save | Authorship, not placement, governs a sheet. Check `getEvaluations`' union and that `updateEvaluation` guards on `supervisorId` only (§5) |

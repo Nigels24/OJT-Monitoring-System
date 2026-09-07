@@ -8,10 +8,7 @@ import {
   Evaluation,
   EvaluationSheet,
 } from "@/lib/api/evaluationApi";
-import {
-  useGetSupervisorStudentsQuery,
-  useGetSupervisorDashboardQuery,
-} from "@/lib/api/supervisorApi";
+import { useGetSupervisorStudentsQuery } from "@/lib/api/supervisorApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
 
 /** `""` means "not yet scored" — distinct from any real 1-5 value. */
@@ -62,7 +59,6 @@ export function useEvaluations() {
   const { data: evaluations, isLoading } = useGetMyEvaluationsQuery();
   const { data: students, isLoading: studentsLoading } =
     useGetSupervisorStudentsQuery();
-  const { data: dashboard } = useGetSupervisorDashboardQuery();
 
   const [createEvaluation, { isLoading: isCreating }] =
     useCreateEvaluationMutation();
@@ -156,9 +152,11 @@ export function useEvaluations() {
     ? editTarget.student.user.name
     : (selectedStudent?.user.name ?? "");
 
+  // An existing sheet shows the snapshot it was signed with; a new one shows
+  // what the server will stamp on it, served alongside the blank sheet.
   const employedAt = isEditing
     ? (editTarget.trainingEmployedAt ?? "")
-    : (dashboard?.establishment?.name ?? "");
+    : (sheet?.employedAt ?? "");
 
   const evaluator = isEditing
     ? {
@@ -166,8 +164,8 @@ export function useEvaluations() {
         position: editTarget.evaluatorPosition ?? "",
       }
     : {
-        name: dashboard?.supervisor.name ?? "",
-        position: dashboard?.supervisor.position ?? "",
+        name: sheet?.evaluator.name ?? "",
+        position: sheet?.evaluator.position ?? "",
       };
 
   /* ---------- submit / edit / delete ---------- */
@@ -261,12 +259,12 @@ export function useEvaluations() {
   /* ---------- list ---------- */
 
   /**
-   * Only the author may edit or delete. The server 403s either way; this keeps
-   * the button from being offered at all.
+   * Only the author may edit or delete. The server decides this per row and
+   * sends it as `canModify`; the client no longer derives it by comparing
+   * against a second endpoint's supervisor id, which silently hid both buttons
+   * whenever that request was slow or failing.
    */
-  const mySupervisorId = dashboard?.supervisor.id ?? null;
-  const canModify = (evaluation: Evaluation) =>
-    mySupervisorId !== null && evaluation.supervisorId === mySupervisorId;
+  const canModify = (evaluation: Evaluation) => evaluation.canModify;
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();

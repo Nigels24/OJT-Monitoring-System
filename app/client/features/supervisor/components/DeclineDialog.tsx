@@ -2,6 +2,7 @@ import { XCircle, X } from "lucide-react";
 import TextArea from "@/components/ui/TextArea";
 import Button from "@/components/ui/Button";
 import { SupervisorAttendance } from "@/lib/api/supervisorApi";
+import { formatDateOnly } from "@/lib/format";
 
 interface DeclineDialogProps {
   target: SupervisorAttendance | null;
@@ -53,7 +54,7 @@ export default function DeclineDialog({
               {target.student.user.name}
             </div>
             <div className="text-gray-600">
-              {new Date(target.date).toLocaleDateString()} · {target.hours} hrs
+              {formatDateOnly(target.date)} · {target.hours} hrs
             </div>
             {target.remarks && (
               <div className="text-gray-500 mt-1">

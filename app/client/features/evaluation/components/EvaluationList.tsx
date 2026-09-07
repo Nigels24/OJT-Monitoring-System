@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import { Evaluation } from "@/lib/api/evaluationApi";
+import { formatDateOnly } from "@/lib/format";
 
 interface EvaluationListProps {
   rows: Evaluation[];
@@ -33,8 +34,7 @@ interface EvaluationListProps {
 
 function trainingPeriod(ev: Evaluation): string {
   if (!ev.trainingStartedAt && !ev.trainingEndedAt) return "—";
-  const fmt = (d: string | null) =>
-    d ? new Date(d).toLocaleDateString() : "…";
+  const fmt = (d: string | null) => formatDateOnly(d, "…");
   return `${fmt(ev.trainingStartedAt)} – ${fmt(ev.trainingEndedAt)}`;
 }
 

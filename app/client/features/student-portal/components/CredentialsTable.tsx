@@ -1,7 +1,8 @@
-import { BadgeCheck, Eye, Trash2 } from "lucide-react";
+import { BadgeCheck, Trash2 } from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import { StudentCredential } from "@/lib/api/studentPortalApi";
 import { CREDENTIAL_TYPE_LABEL } from "./credentialType";
+import FileLink from "@/components/ui/FileLink";
 
 interface CredentialsTableProps {
   rows: StudentCredential[];
@@ -36,15 +37,7 @@ export default function CredentialsTable({
       label: "Actions",
       render: (r) => (
         <div className="flex gap-2">
-          <a
-            href={r.fileUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-2 py-1.5 rounded-md border border-blue-200 text-blue-700 hover:bg-blue-50 inline-flex items-center gap-1 text-xs font-medium"
-          >
-            <Eye size={14} />
-            View
-          </a>
+          <FileLink href={r.fileUrl} label={r.type} />
           <button
             onClick={() => onDelete(r)}
             className="px-2 py-1.5 rounded-md border border-red-200 text-red-600 hover:bg-red-50 inline-flex items-center gap-1 text-xs font-medium"

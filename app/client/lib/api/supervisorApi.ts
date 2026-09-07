@@ -27,6 +27,8 @@ export interface SupervisorAttendance {
 }
 
 export interface SupervisorDashboard {
+  /** Sections whose queries failed — "students" and/or "attendance". */
+  failedSections: string[];
   supervisor: {
     id: string;
     name: string;

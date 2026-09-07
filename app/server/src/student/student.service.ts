@@ -3,10 +3,17 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { hoursForAttendance, totalHours } from '../common/attendance-hours';
+import {
+  formatDateOnly,
+  manilaToday,
+  startOfUtcDay,
+  toUtcDateOnly,
+} from '../common/dates';
 import {
   buildObjectPath,
   deleteFile,
@@ -78,7 +85,27 @@ export const MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024;
 
 @Injectable()
 export class StudentService {
+  private readonly logger = new Logger(StudentService.name);
+
   constructor(private prisma: PrismaService) {}
+
+  /**
+   * Removes a storage object after its row is already gone.
+   *
+   * Non-fatal by design: an orphaned file wastes a few KB and can be swept up
+   * later, while failing the request here would report an error for a delete
+   * that actually succeeded.
+   */
+  private async deleteStoredObject(path: string, label: string) {
+    try {
+      await deleteFile(path);
+    } catch (err) {
+      this.logger.error(
+        `${label} row was deleted but its storage object "${path}" was not: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
+  }
 
   private async getStudentByUserId(userId: string) {
     const student = await this.prisma.client.student.findUnique({
@@ -157,6 +184,17 @@ export class StudentService {
     if (student.status === 'COMPLETED') {
       throw new BadRequestException(
         'Your OJT is complete. Attendance can no longer be logged.',
+      );
+    }
+
+    // No establishment means no supervisor can see the row: the approval queue
+    // is scoped to an establishment, so an unassigned student's submissions
+    // would sit PENDING forever as unbankable hours. `establishmentId` is
+    // nullable and the establishment cascade nulls it (CLAUDE.md §6), so this
+    // is a reachable state, not a theoretical one.
+    if (!student.establishmentId) {
+      throw new BadRequestException(
+        'You are not assigned to an establishment yet. Contact your coordinator.',
       );
     }
 
@@ -346,8 +384,12 @@ export class StudentService {
       );
     }
 
-    await deleteFile(document.fileUrl);
+    // Row first, then the object — the same order the cascade deletes use
+    // (CLAUDE.md §6). Reversed, a storage success followed by a failed row
+    // delete leaves a row pointing at nothing, which is the state that used to
+    // 500 the whole documents list.
     await this.prisma.client.document.delete({ where: { id: documentId } });
+    await this.deleteStoredObject(document.fileUrl, `document ${documentId}`);
 
     return { id: documentId, deleted: true };
   }
@@ -400,19 +442,46 @@ export class StudentService {
 
     // No review state to guard on — a credential is uploaded and listed,
     // that's the whole lifecycle, so the student may delete any of their own.
-    await deleteFile(credential.fileUrl);
-    await this.prisma.client.credential.delete({ where: { id: credentialId } });
+    // Row first, then the object — see deleteDocument.
+    await this.prisma.client.credential.delete({
+      where: { id: credentialId },
+    });
+    await this.deleteStoredObject(
+      credential.fileUrl,
+      `credential ${credentialId}`,
+    );
 
     return { id: credentialId, deleted: true };
   }
 }
 
 /** Replaces the stored object path with a freshly minted signed URL. */
+/**
+ * Swaps a stored object path for a short-lived signed URL.
+ *
+ * Never throws. A missing object yields `fileUrl: null` so the row still
+ * renders as "unavailable" — these run under `Promise.all` across a whole list
+ * (`getMyDocuments`, `getMyCredentials`, the coordinator's `getDocuments`), and
+ * a throw there took out the entire page for every student rather than the one
+ * bad row. The likeliest cause is a storage object deleted out from under the
+ * row, so it is logged loudly and left for someone to clean up.
+ */
 export async function withSignedUrl<T extends { fileUrl: string }>(
-  document: T,
-): Promise<T> {
-  return { ...document, fileUrl: await getSignedUrl(document.fileUrl) };
+  record: T,
+): Promise<T & { fileUrl: string | null }> {
+  try {
+    return { ...record, fileUrl: await getSignedUrl(record.fileUrl) };
+  } catch (err) {
+    storageLogger.error(
+      `No signed URL for stored object "${record.fileUrl}" — the row survives with fileUrl: null: ` +
+        (err instanceof Error ? err.message : String(err)),
+    );
+    return { ...record, fileUrl: null };
+  }
 }
+
+/** Module-scope: `withSignedUrl` is a free function, not part of the service. */
+const storageLogger = new Logger('StorageSignedUrl');
 
 function assertValidDocumentFile(
   file: Express.Multer.File | undefined,
@@ -436,68 +505,6 @@ function withHours<T extends Parameters<typeof hoursForAttendance>[0]>(
     ...record,
     hours: Math.round(hoursForAttendance(record) * 100) / 100,
   };
-}
-
-/**
- * Normalises a submitted date to UTC midnight.
- *
- * The `@@unique([studentId, date])` constraint compares the full timestamp, so
- * without this two submissions for the same calendar day at different clock
- * times would both be accepted and the day would be counted twice.
- */
-function startOfUtcDay(value: string): Date {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return parsed;
-  return new Date(
-    Date.UTC(
-      parsed.getUTCFullYear(),
-      parsed.getUTCMonth(),
-      parsed.getUTCDate(),
-    ),
-  );
-}
-
-const MANILA_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
-
-/**
- * Strips a Date down to UTC midnight of its own UTC calendar date. Used to
- * date-only-compare `Student.startDate`/`endDate` against a submitted
- * attendance date, regardless of whether either carries a nonzero time
- * component.
- */
-function toUtcDateOnly(value: Date): Date {
-  return new Date(
-    Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()),
-  );
-}
-
-/**
- * Today's calendar date in Asia/Manila (UTC+8), as a UTC-midnight Date —
- * comparable with `startOfUtcDay`/`toUtcDateOnly` results. The server may run
- * in UTC; without this shift, an early-morning Manila submission (already
- * "today" there) could read as still "yesterday" on the server, or the
- * reverse near midnight — either way misjudging whether a date is "in the
- * future".
- */
-function manilaToday(): Date {
-  const shifted = new Date(Date.now() + MANILA_UTC_OFFSET_MS);
-  return new Date(
-    Date.UTC(
-      shifted.getUTCFullYear(),
-      shifted.getUTCMonth(),
-      shifted.getUTCDate(),
-    ),
-  );
-}
-
-/** Formats a UTC-midnight date-only Date for an error message, e.g. "Dec 1, 2026". */
-function formatDateOnly(value: Date): string {
-  return value.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
 }
 
 function parseTime(value?: string): Date | null {

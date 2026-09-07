@@ -4,10 +4,12 @@ import {
   ConflictException,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { totalHours } from '../common/attendance-hours';
+import { MS_PER_DAY, manilaToday, startOfUtcDay } from '../common/dates';
 import {
   EVALUATION_INCLUDE,
   withSectionTotals,
@@ -233,22 +235,16 @@ export class CoordinatorService {
   async getDashboard() {
     const weeksBack = 6;
     const trendStart = startOfWeek(weeksBack - 1);
-    const todayStart = startOfUtcDay(new Date());
-    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    // Manila's calendar day, not the server's UTC day — they differ between
+    // 00:00 and 07:59 Manila, and `Attendance.date` is written against Manila.
+    const todayStart = manilaToday();
+    const todayEnd = new Date(todayStart.getTime() + MS_PER_DAY);
 
-    const [
-      students,
-      establishmentCount,
-      activeEstablishments,
-      approvedAttendance,
-      pendingCount,
-      presentToday,
-      evaluationAgg,
-      evaluationCount,
-      topEstablishments,
-      recentStudents,
-      trendRows,
-    ] = await Promise.all([
+    // allSettled, not all: this is the first page after a coordinator logs in,
+    // and one rejected query used to throw a raw 500 that blanked the whole
+    // screen. Each section now degrades to an empty default, the reason is
+    // logged, and `failedSections` tells the client what to offer a retry for.
+    const settled = await Promise.allSettled([
       this.prisma.client.student.findMany({ select: { status: true } }),
       this.prisma.client.establishment.count(),
       this.prisma.client.establishment.count({ where: { status: 'ACTIVE' } }),
@@ -304,7 +300,50 @@ export class CoordinatorService {
         where: { date: { gte: trendStart } },
         select: { date: true, status: true },
       }),
-    ]);
+    ] as const);
+
+    const failedSections = new Set<string>();
+    const fail = (section: string, reason: unknown) => {
+      failedSections.add(section);
+      this.logger.error(
+        `Coordinator dashboard section "${section}" failed: ` +
+          (reason instanceof Error ? reason.message : String(reason)),
+      );
+    };
+
+    const [
+      students,
+      establishmentCount,
+      activeEstablishments,
+      approvedAttendance,
+      pendingCount,
+      presentToday,
+      evaluationAgg,
+      evaluationCount,
+      topEstablishments,
+      recentStudents,
+      trendRows,
+    ] = [
+      settledOr(settled[0], [], 'stats', fail),
+      settledOr(settled[1], 0, 'stats', fail),
+      settledOr(settled[2], 0, 'stats', fail),
+      settledOr(settled[3], [], 'stats', fail),
+      settledOr(settled[4], 0, 'stats', fail),
+      settledOr(settled[5], [], 'stats', fail),
+      settledOr(settled[6], { _avg: { totalRating: null } }, 'stats', fail),
+      settledOr(settled[7], 0, 'stats', fail),
+      settledOr(settled[8], [], 'topEstablishments', fail),
+      settledOr(settled[9], [], 'recentStudents', fail),
+      settledOr(settled[10], [], 'attendanceTrend', fail),
+    ] as const;
+
+    // Every single query failing is not a degraded page, it is an outage —
+    // report it rather than rendering a dashboard of confident zeroes.
+    if (settled.every((result) => result.status === 'rejected')) {
+      throw new ServiceUnavailableException(
+        'The dashboard is temporarily unavailable. Please try again.',
+      );
+    }
 
     // The official sheet's TOTAL RATING, averaged across evaluations — a raw
     // score out of 95, not a percentage. `averageLevel` is gone with the old
@@ -312,6 +351,8 @@ export class CoordinatorService {
     const averageRating = evaluationAgg._avg?.totalRating ?? null;
 
     return {
+      /** Sections whose data could not be loaded; the client offers a retry. */
+      failedSections: [...failedSections],
       stats: {
         totalStudents: students.length,
         activeStudents: students.filter((s) => s.status === 'ACTIVE').length,
@@ -368,12 +409,14 @@ export class CoordinatorService {
    * roughly comparable.
    */
   async getAttendanceOversight() {
-    const todayStart = startOfUtcDay(new Date());
+    // Manila's calendar day — see getDashboard.
+    const todayStart = manilaToday();
     const todayEnd = new Date(todayStart.getTime() + MS_PER_DAY);
 
-    // Both bounds matter. The upper one (`lt: todayEnd`, i.e. date <= today) is
-    // defensive — submitAttendance has no server-side future-date check, only
-    // the client's <input max={today}>. The lower one is each student's own
+    // Both bounds matter. The upper one (`lt: todayEnd`, i.e. date <= today)
+    // now agrees with `submitAttendance`, which rejects a future date against
+    // Manila's calendar day; it stays as a second line of defence for rows
+    // written before that check existed. The lower one is each student's own
     // startDate, applied per student below: a day approved *before* a student
     // started is outside the window totalDays measures, and counting it would
     // push the percentage past 100%.
@@ -452,7 +495,13 @@ export class CoordinatorService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return evaluations.map(withSectionTotals);
+    // Coordinators never edit or delete an evaluation — it belongs to the
+    // supervisor who wrote it — so the row says so explicitly rather than
+    // leaving the client to assume.
+    return evaluations.map((evaluation) => ({
+      ...withSectionTotals(evaluation),
+      canModify: false,
+    }));
   }
 
   async updateStudent(studentId: string, data: StudentDetails) {
@@ -658,14 +707,7 @@ export class CoordinatorService {
   }
 }
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_WEEK = 7 * MS_PER_DAY;
-
-function startOfUtcDay(date: Date): Date {
-  return new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
-  );
-}
 
 /** Monday 00:00 UTC, `weeksAgo` weeks back from the current week. */
 function startOfWeek(weeksAgo = 0): Date {
@@ -760,5 +802,23 @@ function buildFullName(
 
   if (parts.length > 0) return parts.join(' ');
   if (data.name?.trim()) return data.name.trim();
+  return fallback;
+}
+
+/**
+ * Reads one `Promise.allSettled` slot, falling back to an empty default and
+ * reporting the failure instead of taking the whole response down with it.
+ *
+ * Typed against the tuple `allSettled` returns, so each call keeps the exact
+ * type of its own query — no casts.
+ */
+function settledOr<T>(
+  result: PromiseSettledResult<T>,
+  fallback: T,
+  section: string,
+  onFail: (section: string, reason: unknown) => void,
+): T {
+  if (result.status === 'fulfilled') return result.value;
+  onFail(section, result.reason);
   return fallback;
 }
