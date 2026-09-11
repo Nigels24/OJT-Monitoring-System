@@ -43,10 +43,16 @@ export interface SendMessageRequest {
   content: string;
 }
 
+/** Backs the sidebar bell — same shape as a filtered `ConversationSummary[]`, plus the total for the badge. */
+export interface UnreadSummary {
+  totalUnread: number;
+  conversations: ConversationSummary[];
+}
+
 export const messagesApi = createApi({
   reducerPath: "messagesApi",
   baseQuery: baseQueryWithAuth,
-  tagTypes: ["Conversations", "Messages", "Contacts"],
+  tagTypes: ["Conversations", "Messages", "Contacts", "Unread"],
   endpoints: (builder) => ({
     getContacts: builder.query<Contact[], void>({
       query: () => "/messages/contacts",
@@ -55,6 +61,10 @@ export const messagesApi = createApi({
     getConversations: builder.query<ConversationSummary[], void>({
       query: () => "/messages/conversations",
       providesTags: ["Conversations"],
+    }),
+    getUnread: builder.query<UnreadSummary, void>({
+      query: () => "/messages/unread",
+      providesTags: ["Unread"],
     }),
     createConversation: builder.mutation<ConversationSummary, string>({
       query: (userId) => ({
@@ -96,6 +106,18 @@ export const messagesApi = createApi({
       providesTags: (_result, _error, { conversationId }) => [
         { type: "Messages", id: conversationId },
       ],
+      // The server marks the caller's `lastReadAt` as part of this same GET,
+      // so every fetch of an open thread is also what clears its unread
+      // count — nudge the bell so the badge drops without a page reload
+      // instead of waiting out its own poll interval.
+      async onQueryStarted(_args, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          dispatch(messagesApi.util.invalidateTags(["Unread"]));
+        } catch {
+          // Fetch failed — nothing changed server-side to invalidate for.
+        }
+      },
     }),
     sendMessage: builder.mutation<MessageSummary, SendMessageRequest>({
       query: ({ conversationId, content }) => ({
@@ -114,6 +136,7 @@ export const messagesApi = createApi({
 export const {
   useGetContactsQuery,
   useGetConversationsQuery,
+  useGetUnreadQuery,
   useCreateConversationMutation,
   useGetMessagesQuery,
   useLazyGetMessagesQuery,

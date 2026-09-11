@@ -3,6 +3,7 @@ import {
   useGetMyAttendanceQuery,
   useGetMyProfileQuery,
   useSubmitAttendanceMutation,
+  AttendanceRecord,
   AttendanceStatus,
 } from "@/lib/api/studentPortalApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
@@ -69,11 +70,32 @@ function formatDateLabel(dateOnly: string): string {
   });
 }
 
+/**
+ * ISO instant -> `HH:mm` in the browser's own local time, the inverse of
+ * `toIsoInstant`. Used to load a log's existing times back into the form
+ * when correcting it — the round trip has to use the same (local, not UTC)
+ * reading `toIsoInstant` used to build the instant in the first place.
+ */
+function isoToLocalTimeInput(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
+}
+
 export function useAttendanceLog() {
   const [form, setForm] = useState<AttendanceFormValues>(EMPTY_FORM);
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState<AttendanceStatus | "">("");
   const [page, setPage] = useState(1);
+  // Set while the student is correcting an existing PENDING/DECLINED log
+  // rather than logging a new day. Its date is what locks the date field and
+  // what `handleSubmit` resubmits against — the server's submitAttendance
+  // treats a same-date resubmission as an in-place correction, not a
+  // duplicate, for anything short of APPROVED.
+  const [correctionTarget, setCorrectionTarget] =
+    useState<AttendanceRecord | null>(null);
   const { showSuccess, showError } = useSnackbar();
 
   const { data: attendance, isLoading } = useGetMyAttendanceQuery();
@@ -151,6 +173,28 @@ export function useAttendanceLog() {
       setForm((f) => ({ ...f, [key]: e.target.value }));
     };
 
+  const isCorrecting = !!correctionTarget;
+
+  /** Loads a PENDING/DECLINED log into the form so its date and times can be fixed. */
+  const startCorrection = (record: AttendanceRecord) => {
+    setCorrectionTarget(record);
+    setError("");
+    setForm({
+      date: record.date.slice(0, 10),
+      timeInAM: isoToLocalTimeInput(record.timeInAM),
+      timeOutAM: isoToLocalTimeInput(record.timeOutAM),
+      timeInPM: isoToLocalTimeInput(record.timeInPM),
+      timeOutPM: isoToLocalTimeInput(record.timeOutPM),
+      remarks: record.remarks ?? "",
+    });
+  };
+
+  const cancelCorrection = () => {
+    setCorrectionTarget(null);
+    setError("");
+    setForm(EMPTY_FORM);
+  };
+
   // Live preview so the student sees the hours before submitting; the server
   // recomputes it from the stored timestamps and is the source of truth.
   const previewHours = useMemo(() => {
@@ -214,9 +258,19 @@ export function useAttendanceLog() {
       }).unwrap();
 
       setForm(EMPTY_FORM);
-      showSuccess("Attendance submitted and sent for approval.");
+      setCorrectionTarget(null);
+      showSuccess(
+        isCorrecting
+          ? "Log corrected and resubmitted — awaiting approval again."
+          : "Attendance submitted and sent for approval.",
+      );
     } catch (err: unknown) {
-      const message = readError(err, "Failed to submit attendance.");
+      const message = readError(
+        err,
+        isCorrecting
+          ? "Failed to update log."
+          : "Failed to submit attendance.",
+      );
       setError(message);
       showError(message);
     }
@@ -265,11 +319,15 @@ export function useAttendanceLog() {
     paged,
     totalPages,
     summary,
+    isCorrecting,
+    correctionTarget,
 
     setField,
     setStatusFilter,
     setPage,
     handleSubmit,
+    startCorrection,
+    cancelCorrection,
   };
 }
 

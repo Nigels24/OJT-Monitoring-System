@@ -265,16 +265,19 @@ export class StudentService {
     const existing = await this.prisma.client.attendance.findUnique({
       where: { studentId_date: { studentId: student.id, date } },
     });
-    if (existing && existing.status !== 'DECLINED') {
+    // APPROVED is the only status that blocks a resubmission — approved hours
+    // must never change after the fact. PENDING is allowed through as well as
+    // DECLINED: the supervisor hasn't acted on it yet, so a typo the student
+    // notices before review should still be fixable.
+    if (existing && existing.status === 'APPROVED') {
       throw new ConflictException(
-        existing.status === 'APPROVED'
-          ? 'This date has already been approved and cannot be resubmitted'
-          : 'You have already submitted attendance for this date',
+        'This date has already been approved and cannot be resubmitted',
       );
     }
 
-    // A DECLINED row is corrected in place rather than blocked — otherwise the
-    // student would permanently lose those hours with no way to fix the log.
+    // A PENDING or DECLINED row is corrected in place rather than blocked —
+    // otherwise the student would permanently lose those hours with no way to
+    // fix the log.
     const record = existing
       ? await this.prisma.client.attendance.update({
           where: { id: existing.id },

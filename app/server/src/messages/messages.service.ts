@@ -120,6 +120,26 @@ export class MessagesService {
    * regardless of how many conversations the caller has.
    */
   async getConversations(userId: string) {
+    return this.buildConversationSummaries(userId);
+  }
+
+  /**
+   * The single definition of "unread": every conversation whose summary
+   * (built the same way `getConversations` builds its list — same fixed
+   * three bulk queries, no per-conversation fan-out) carries `unreadCount >
+   * 0`. Backs the sidebar bell — total for the badge, the conversations
+   * themselves for its dropdown.
+   */
+  async getUnreadSummary(userId: string) {
+    const summaries = await this.buildConversationSummaries(userId);
+    const conversations = summaries.filter((s) => s.unreadCount > 0);
+    return {
+      totalUnread: conversations.reduce((sum, s) => sum + s.unreadCount, 0),
+      conversations,
+    };
+  }
+
+  private async buildConversationSummaries(userId: string) {
     const participants =
       await this.prisma.client.conversationParticipant.findMany({
         where: { userId },

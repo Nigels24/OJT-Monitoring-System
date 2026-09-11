@@ -1,5 +1,12 @@
 import { createApi } from "@reduxjs/toolkit/query/react";
 import { baseQueryWithAuth } from "./baseQuery";
+import { studentApi } from "./studentApi";
+import { supervisorManagementApi } from "./supervisorManagementApi";
+import { dashboardApi } from "./dashboardApi";
+import { attendanceOversightApi } from "./attendanceOversightApi";
+import { documentApi } from "./documentApi";
+import { evaluationApi } from "./evaluationApi";
+import { messagesApi } from "./messagesApi";
 
 export interface Establishment {
   id: string;
@@ -92,6 +99,35 @@ export const establishmentApi = createApi({
         method: "DELETE",
       }),
       invalidatesTags: ["Establishment"],
+      // EstablishmentService.remove deletes every supervisor at this
+      // establishment (each via deleteSupervisorCascade — their evaluations
+      // and messages go with them) and nulls establishmentId on its students
+      // rather than deleting them. Both halves leave other slices stale.
+      // See CLAUDE.md §8 item 22.
+      async onQueryStarted(_id, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          dispatch(studentApi.util.invalidateTags(["Student"]));
+          dispatch(
+            supervisorManagementApi.util.invalidateTags([
+              "CoordinatorSupervisor",
+            ]),
+          );
+          dispatch(dashboardApi.util.invalidateTags(["Dashboard"]));
+          dispatch(
+            attendanceOversightApi.util.invalidateTags([
+              "AttendanceOversight",
+            ]),
+          );
+          dispatch(documentApi.util.invalidateTags(["Document"]));
+          dispatch(evaluationApi.util.invalidateTags(["Evaluation"]));
+          dispatch(
+            messagesApi.util.invalidateTags(["Conversations", "Contacts"]),
+          );
+        } catch {
+          // Delete failed — nothing else to invalidate.
+        }
+      },
     }),
   }),
 });

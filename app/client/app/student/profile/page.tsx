@@ -23,6 +23,7 @@ import { STUDENT_NAV } from "@/features/student-portal/nav";
 import { useProfile } from "@/features/student-portal/hooks/use-profile";
 import ProfileEditForm from "@/features/student-portal/components/ProfileEditForm";
 import { formatDateOnly } from "@/lib/format";
+import { SCHOOL_NAME } from "@/lib/school";
 
 export default function StudentProfilePage() {
   const {
@@ -96,7 +97,7 @@ export default function StudentProfilePage() {
                 />
                 <DetailItem label="Course" value={data.course} icon={GraduationCap} />
                 <DetailItem label="Year Level" value={data.yearLevel} icon={GraduationCap} />
-                <DetailItem label="School" value={data.school} icon={School} />
+                <DetailItem label="School" value={SCHOOL_NAME} icon={School} />
               </div>
             </Card>
 

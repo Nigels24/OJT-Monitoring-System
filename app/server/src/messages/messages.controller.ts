@@ -71,6 +71,15 @@ export class MessagesController {
     return this.messagesService.getConversations(req.user.userId);
   }
 
+  /**
+   * Backs the sidebar bell. Deliberately its own route rather than making
+   * every page poll the full `getConversations` list just for a badge count.
+   */
+  @Get('unread')
+  getUnread(@Req() req: AuthedRequest) {
+    return this.messagesService.getUnreadSummary(req.user.userId);
+  }
+
   @Post('conversations')
   createConversation(
     @Req() req: AuthedRequest,

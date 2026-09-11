@@ -17,6 +17,7 @@ import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 import { Student, StudentStatus } from "@/lib/api/studentApi";
 import { Establishment } from "@/lib/api/establishmentApi";
+import { SCHOOL_NAME } from "@/lib/school";
 import type { StudentForm as StudentFormValues } from "../hooks/use-students";
 
 interface StudentFormProps {
@@ -219,14 +220,18 @@ export default function StudentForm({
           </h3>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-          <TextField
-            label="School"
-            labelIcon={GraduationCap}
-            fieldIcon={GraduationCap}
-            value={form.school}
-            onChange={setField("school")}
-            placeholder="West Prime Horizon Institute Inc."
-          />
+          <div>
+            <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1.5">
+              <GraduationCap size={15} className="text-blue-600" />
+              School
+            </label>
+            {/* This system serves one school — the name is permanent, not a
+                form field. Shown for reference, never editable. */}
+            <div className="flex items-center gap-2 h-11 px-3 border border-gray-200 rounded-lg bg-gray-50 text-gray-600">
+              <GraduationCap size={18} className="text-gray-400" />
+              {SCHOOL_NAME}
+            </div>
+          </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Course / Program

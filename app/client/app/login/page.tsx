@@ -13,6 +13,7 @@ import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import TextField from "@/components/ui/TextField";
 import Tabs, { TabOption } from "@/components/ui/Tabs";
+import { SCHOOL_NAME } from "@/lib/school";
 import {
   Lock,
   User,
@@ -88,7 +89,7 @@ export default function LoginPage() {
           OJT Monitoring System
         </h1>
         <p className="text-center text-gray-500 text-sm mt-1 mb-6">
-          West Prime Horizon Institute Inc.
+          {SCHOOL_NAME}
         </p>
 
         <Tabs

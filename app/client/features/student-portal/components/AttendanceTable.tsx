@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, CalendarCheck } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarCheck, PencilLine } from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import StatusBadge, { BadgeVariant } from "@/components/ui/StatusBadge";
 import { AttendanceRecord, AttendanceStatus } from "@/lib/api/studentPortalApi";
@@ -11,6 +11,8 @@ interface AttendanceTableProps {
   totalPages?: number;
   onPageChange?: (page: number) => void;
   emptyMessage?: string;
+  /** Loads a PENDING/DECLINED row into the log form for correction. Omitted -> no action column. */
+  onCorrect?: (record: AttendanceRecord) => void;
 }
 
 const STATUS_VARIANT: Record<AttendanceStatus, BadgeVariant> = {
@@ -41,6 +43,7 @@ export default function AttendanceTable({
   totalPages,
   onPageChange,
   emptyMessage = "No attendance logged yet.",
+  onCorrect,
 }: AttendanceTableProps) {
   const columns: DataTableColumn<AttendanceRecord>[] = [
     {
@@ -105,6 +108,26 @@ export default function AttendanceTable({
       ),
     },
   ];
+
+  if (onCorrect) {
+    columns.push({
+      key: "actions",
+      label: "",
+      // APPROVED hours must never change after the fact, so only PENDING and
+      // DECLINED rows get a correction action.
+      render: (r) =>
+        r.status !== "APPROVED" ? (
+          <button
+            type="button"
+            onClick={() => onCorrect(r)}
+            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 whitespace-nowrap"
+          >
+            <PencilLine size={13} />
+            Correct this log
+          </button>
+        ) : null,
+    });
+  }
 
   if (isLoading) {
     return <p className="text-gray-400 text-sm">Loading...</p>;

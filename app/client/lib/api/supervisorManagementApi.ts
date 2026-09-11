@@ -1,5 +1,8 @@
 import { createApi } from "@reduxjs/toolkit/query/react";
 import { baseQueryWithAuth } from "./baseQuery";
+import { dashboardApi } from "./dashboardApi";
+import { evaluationApi } from "./evaluationApi";
+import { messagesApi } from "./messagesApi";
 
 /**
  * The coordinator's view of supervisors (`/coordinator/supervisors`).
@@ -88,6 +91,23 @@ export const supervisorManagementApi = createApi({
           method: "DELETE",
         }),
         invalidatesTags: ["CoordinatorSupervisor"],
+        // deleteSupervisorCascade takes the supervisor's evaluations and
+        // messages with it (attendance they approved is kept, just
+        // un-attributed — attendanceOversightApi and documentApi show
+        // nothing derived from the approver, so they don't need a nudge
+        // here). See CLAUDE.md §8 item 22.
+        async onQueryStarted(_id, { dispatch, queryFulfilled }) {
+          try {
+            await queryFulfilled;
+            dispatch(dashboardApi.util.invalidateTags(["Dashboard"]));
+            dispatch(evaluationApi.util.invalidateTags(["Evaluation"]));
+            dispatch(
+              messagesApi.util.invalidateTags(["Conversations", "Contacts"]),
+            );
+          } catch {
+            // Delete failed — nothing else to invalidate.
+          }
+        },
       },
     ),
   }),

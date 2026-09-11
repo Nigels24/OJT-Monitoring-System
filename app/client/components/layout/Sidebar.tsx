@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { clearSession } from "@/lib/auth";
 import ChangePasswordDialog from "@/features/account/ChangePasswordDialog";
+import NotificationBell from "@/features/messaging/components/NotificationBell";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import {
   LucideIcon,
@@ -42,6 +43,10 @@ export default function Sidebar({
   const router = useRouter();
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  // Every role's nav declares a "Messages" entry (CLAUDE.md §7) — reading its
+  // href here means the bell never hardcodes a role-specific route.
+  const messagesHref =
+    items.find((item) => item.label === "Messages")?.href ?? "/login";
 
   const handleLogout = () => {
     // Always clear first. `proxy.ts` trusts the role cookie for routing, so a
@@ -100,6 +105,7 @@ export default function Sidebar({
         </div>
         {/* Lives here rather than on each dashboard so every role gets it from
             one place, whatever page they're on. */}
+        <NotificationBell messagesHref={messagesHref} />
         <button
           onClick={() => {
             setPasswordDialogOpen(true);

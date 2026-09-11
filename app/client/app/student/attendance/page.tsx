@@ -44,10 +44,13 @@ export default function StudentAttendancePage() {
     paged,
     totalPages,
     summary,
+    correctionTarget,
     setField,
     setStatusFilter,
     setPage,
     handleSubmit,
+    startCorrection,
+    cancelCorrection,
   } = useAttendanceLog();
 
   return (
@@ -109,8 +112,10 @@ export default function StudentAttendancePage() {
               disabled={isDisabled}
               disabledMessage={disabledMessage}
               noticeMessage={noticeMessage}
+              correctionTarget={correctionTarget}
               setField={setField}
               onSubmit={handleSubmit}
+              onCancelCorrection={cancelCorrection}
             />
           </Card>
 
@@ -145,6 +150,7 @@ export default function StudentAttendancePage() {
                   ? "No logs with that status."
                   : "You haven't logged any attendance yet."
               }
+              onCorrect={startCorrection}
             />
           </Card>
         </div>

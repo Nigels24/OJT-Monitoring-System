@@ -1,5 +1,10 @@
 import { createApi } from "@reduxjs/toolkit/query/react";
 import { baseQueryWithAuth } from "./baseQuery";
+import { dashboardApi } from "./dashboardApi";
+import { attendanceOversightApi } from "./attendanceOversightApi";
+import { documentApi } from "./documentApi";
+import { evaluationApi } from "./evaluationApi";
+import { messagesApi } from "./messagesApi";
 
 export type StudentStatus = "ACTIVE" | "PENDING" | "COMPLETED" | "INACTIVE";
 
@@ -55,6 +60,10 @@ export interface Student {
  * `null` on a nullable field clears it; omitting the field leaves the stored
  * value alone. `requiredHours` and `status` are NOT NULL server-side, so they
  * are omit-only.
+ *
+ * `school` is deliberately absent — the server ignores any client-supplied
+ * value and always sets it to the one permanent school name (`SCHOOL_NAME`,
+ * `lib/school.ts`), so there is nothing for this form to send.
  */
 export interface StudentDetailsRequest {
   firstName?: string | null;
@@ -62,7 +71,6 @@ export interface StudentDetailsRequest {
   middleInitial?: string | null;
   age?: number | null;
   dateOfBirth?: string | null;
-  school?: string | null;
   contactNumber?: string | null;
   address?: string | null;
   course?: string | null;
@@ -129,6 +137,29 @@ export const studentApi = createApi({
         method: "DELETE",
       }),
       invalidatesTags: ["Student"],
+      // The server-side cascade (deleteStudentCascade) takes attendance,
+      // documents, credentials, evaluations and messages with it. Those live
+      // in other createApi slices whose tags this mutation can't reach on its
+      // own, so every coordinator page that reads them would keep showing
+      // the deleted student's rows until revisited (CLAUDE.md §8 item 22).
+      async onQueryStarted(_id, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          dispatch(dashboardApi.util.invalidateTags(["Dashboard"]));
+          dispatch(
+            attendanceOversightApi.util.invalidateTags([
+              "AttendanceOversight",
+            ]),
+          );
+          dispatch(documentApi.util.invalidateTags(["Document"]));
+          dispatch(evaluationApi.util.invalidateTags(["Evaluation"]));
+          dispatch(
+            messagesApi.util.invalidateTags(["Conversations", "Contacts"]),
+          );
+        } catch {
+          // Delete failed — nothing else to invalidate.
+        }
+      },
     }),
     /**
      * Issues a new password for a student who has forgotten theirs.

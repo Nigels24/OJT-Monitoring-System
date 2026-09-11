@@ -38,7 +38,7 @@ export default function ConfirmDialog({
       onClick={onCancel}
     >
       <div
-        className="bg-white rounded-2xl p-8 max-w-sm w-full text-center"
+        className="bg-white rounded-2xl p-8 max-w-sm w-full max-h-[90vh] overflow-y-auto text-center"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-center mb-4">

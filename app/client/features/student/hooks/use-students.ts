@@ -44,7 +44,6 @@ const EMPTY_FORM = {
   password: "",
   age: "",
   dateOfBirth: "",
-  school: "",
   contactNumber: "",
   address: "",
   course: "",
@@ -100,7 +99,6 @@ export function useStudents() {
     dateOfBirth: form.dateOfBirth
       ? new Date(form.dateOfBirth).toISOString()
       : null,
-    school: form.school || null,
     contactNumber: form.contactNumber || null,
     address: form.address || null,
     course: form.course || null,
@@ -178,7 +176,6 @@ export function useStudents() {
       age: student.age?.toString() ?? "",
       // <input type="date"> wants yyyy-mm-dd, not a full ISO timestamp.
       dateOfBirth: student.dateOfBirth ? student.dateOfBirth.slice(0, 10) : "",
-      school: student.school ?? "",
       contactNumber: student.contactNumber ?? "",
       address: student.address ?? "",
       course: student.course ?? "",

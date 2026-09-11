@@ -537,6 +537,7 @@ table; never derive one from the other.
 | POST | `/messages/conversations` | any signed-in | `{ userId }` — find-or-create a 1:1; 403 if `userId` isn't in the caller's contacts |
 | GET | `/messages/conversations/:id` | any signed-in | cursor-paginated (`before` message id, `limit` default 50 max 100); marks `lastReadAt`; 403 unless a participant |
 | POST | `/messages/conversations/:id` | any signed-in | `{ content }`, 1–2000 chars; 403 unless a participant |
+| GET | `/messages/unread` | any signed-in | `{ totalUnread, conversations }` — backs the sidebar bell; same conversation-summary shape as `/messages/conversations`, filtered to `unreadCount > 0` |
 | GET | `/` | **public** | `AppController`, no guard — health check only |
 
 ---
@@ -712,7 +713,15 @@ needed (§7).
 - **Auth** — `POST /auth/login`, JWT bearer, role-based routing.
 - **Establishment (Coordinator)** — full CRUD, PSGC cascading address dropdowns.
 - **Student Management (Coordinator)** — full CRUD, computed hours, progress, stats,
-  including a writable `Student.startDate`.
+  including a writable `Student.startDate`. `school` is not one of the writable fields —
+  this system serves exactly one school, permanently named by the `SCHOOL_NAME` constant
+  (`server/src/common/school.ts`, `client/lib/school.ts`, deliberately duplicated with a
+  comment on each pointing at the other, since the two projects share no code). The
+  coordinator's student form shows it as static text, not an input; the server ignores any
+  client-supplied `school` on create or update and sets it to the constant on create; every
+  display site (login page, student profile, student detail dialog) renders the constant,
+  never the stored `Student.school` column, which still holds older/inconsistent strings
+  from before this was settled. The column itself is untouched — no migration.
 - **Student self-service (dashboard, attendance, profile)** — logging and history, plus
   `GET`/`PATCH /student/profile` (self-edit limited to `contactNumber` and `address`; every
   other field, including `gender` and `endDate`, is read-only from this endpoint). The rest
@@ -778,6 +787,20 @@ needed (§7).
   `useEffect` is exactly this repo's one pre-existing lint violation (§8 item 1) and must
   not be reproduced. Two-pane layout (conversation list + open thread), collapsing to one
   pane at a time below the `md` breakpoint.
+  **Notification bell** — `GET /messages/unread` reuses `getConversations`'s own
+  query-building logic (`MessagesService.buildConversationSummaries`, extracted so both
+  endpoints share one definition of "unread" and the same fixed three-query cost, no
+  per-conversation fan-out), filtered to `unreadCount > 0`. Client:
+  `features/messaging/components/NotificationBell.tsx`, mounted in `Sidebar.tsx`'s footer
+  for all three roles, polls on the same 10s/`skipPollingIfUnfocused` cadence as the
+  conversation list — a separate poll from it, not a shared subscription, since the bell
+  has to run on every page, not just Messages. Badge hidden at zero, no sound. Opening a
+  conversation's `GET /messages/conversations/:id` (which already marks `lastReadAt`)
+  invalidates the `Unread` tag so the badge drops without a page reload. The dropdown
+  lists unread conversations with sender and a snippet, but its entries link to the
+  Messages page generally, not to the specific thread — `use-messaging.ts` keeps
+  `activeConversationId` as local state with no URL param, and deep-linking wasn't worth
+  touching that hook's pagination-reset invariants for.
 
 **All three roles land on a real page after login. No role 404s.**
 
@@ -895,14 +918,19 @@ Ordered roughly by how likely each is to bite.
     request (`Promise.all(rows.map(withSignedUrl))`) — an extra Supabase round trip per
     row, same scaling shape as item 4. Fine at current volume; revisit alongside item 3 if
     pagination work starts.
-14. **A DECLINED attendance row is corrected by resubmitting the same date, not by a
-    separate edit endpoint.** `submitAttendance` treats an existing row differently by its
-    status: PENDING/APPROVED still 409 (with a message naming which), but DECLINED is
-    updated in place — times overwritten, `status` reset to PENDING,
-    `declineReason`/`approvedById` cleared to `null`. There is still no PATCH/DELETE on
-    student attendance; this is the only correction path. If a real edit endpoint is ever
-    added, keep this decline-then-resubmit behavior rather than removing it — it's the only
-    way a student recovers hours from a declined log today.
+14. **A PENDING or DECLINED attendance row is corrected by resubmitting the same date, not
+    by a separate edit endpoint.** `submitAttendance` treats an existing row differently by
+    its status: only APPROVED 409s ("already been approved and cannot be resubmitted") —
+    approved hours must never change after the fact. PENDING and DECLINED are both updated
+    in place — times overwritten, `status` reset to PENDING, `declineReason`/`approvedById`
+    cleared to `null`. There is still no PATCH/DELETE on student attendance; this is the
+    only correction path. Client: `features/student-portal/hooks/use-attendance-log.ts`'s
+    `startCorrection`/`cancelCorrection` load a row into the Log Attendance form (date
+    locked, times/remarks prefilled, an amber banner naming the fix as a replacement — same
+    treatment as the evaluation edit banner), offered from `AttendanceTable`'s "Correct this
+    log" action on every non-APPROVED row. The DECLINED reason is shown inline in Attendance
+    History, never behind a hover or dialog. If a real edit endpoint is ever added, keep
+    this resubmit-to-correct behavior rather than removing it.
 15. **`Button`'s `fullWidth` prop defaults to `true`**, so all pre-existing call sites keep
     stretching to fill their container; only the two page-header buttons (coordinator
     Students, coordinator Establishments) were set `fullWidth={false}` when this was added.
@@ -960,13 +988,20 @@ Ordered roughly by how likely each is to bite.
     while the student was assigned stay invisible to every supervisor until the student is
     reassigned** — verified that reassigning restores them, which is the recovery path.
     Any new query that starts from a student's `establishmentId` needs the same thought.
-22. **A cascading delete leaves other API slices stale.** RTK Query tags are scoped to one
-    `createApi`, so `deleteStudent`'s `invalidatesTags: ["Student"]` cannot reach
-    `dashboardApi`, `attendanceOversightApi`, `documentApi` or `evaluationApi` — all of
-    which just lost rows. Their caches refetch on their own next mount/poll, so the tile
-    is stale only until the coordinator revisits that page. Fixing it properly means
-    either one shared `createApi` or an explicit cross-slice dispatch on delete; don't
-    bolt on a `resetApiState` per call site.
+22. **Fixed: cross-slice cache staleness after a cascading delete.** RTK Query tags are
+    scoped to one `createApi`, so `deleteStudent`'s `invalidatesTags: ["Student"]` couldn't
+    reach `dashboardApi`, `attendanceOversightApi`, `documentApi` or `evaluationApi` — all
+    of which just lost rows. `deleteStudent`, `deleteSupervisor` and `deleteEstablishment`
+    (`studentApi.ts`, `supervisorManagementApi.ts`, `establishmentApi.ts`) now each carry an
+    `onQueryStarted` that dispatches `<otherSlice>.util.invalidateTags([...])` on every
+    coordinator-facing slice their specific cascade could stale, read from each slice's own
+    `tagTypes` rather than guessed — student delete also touches `messagesApi`
+    (`Conversations`/`Contacts`); supervisor delete does not touch `attendanceOversightApi`
+    or `documentApi` (the cascade keeps their attendance rows, only un-attributing them);
+    establishment delete touches the full set plus `studentApi` and
+    `supervisorManagementApi`. Only affects slices a coordinator's own session can reach —
+    `supervisorApi` and `studentPortalApi` belong to a different login entirely, so
+    invalidating them from the coordinator's store would be a no-op.
 
 ---
 

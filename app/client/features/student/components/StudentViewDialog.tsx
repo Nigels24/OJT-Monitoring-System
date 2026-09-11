@@ -15,6 +15,7 @@ import DetailItem from "@/components/ui/DetailItem";
 import ProgressBar from "@/components/ui/ProgressBar";
 import { Student } from "@/lib/api/studentApi";
 import { formatDateOnly } from "@/lib/format";
+import { SCHOOL_NAME } from "@/lib/school";
 
 interface StudentViewDialogProps {
   open: boolean;
@@ -79,7 +80,7 @@ export default function StudentViewDialog({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
               <DetailItem
                 label="School"
-                value={student.school}
+                value={SCHOOL_NAME}
                 icon={GraduationCap}
               />
               <DetailItem

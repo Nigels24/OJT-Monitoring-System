@@ -22,6 +22,7 @@ import {
   deleteSupervisorCascade,
 } from '../common/cascade-delete';
 import { deleteFile } from '../common/storage';
+import { SCHOOL_NAME } from '../common/school';
 
 /** Fields the coordinator can set on a student, shared by create and update. */
 /**
@@ -146,6 +147,7 @@ export class CoordinatorService {
         data: {
           userId: created.id,
           studentIdNumber: data.studentIdNumber,
+          school: SCHOOL_NAME,
           ...studentProfileData(data),
         },
       });
@@ -768,6 +770,14 @@ function toNullableDate(value?: string | null): Date | null | undefined {
   return new Date(value);
 }
 
+/**
+ * Shared create/update fields. `school` is deliberately excluded — the school
+ * is permanent (`SCHOOL_NAME`), never client-editable. `createStudent` sets it
+ * explicitly; `updateStudent` never touches the column at all, so any
+ * `school` value in the request body is silently ignored rather than
+ * rejected (`StudentDetailsDto` still declares the field so a client that
+ * sends it isn't 400'd by `forbidNonWhitelisted`).
+ */
 function studentProfileData(data: StudentDetails) {
   return {
     firstName: data.firstName,
@@ -775,7 +785,6 @@ function studentProfileData(data: StudentDetails) {
     middleInitial: data.middleInitial,
     age: data.age,
     dateOfBirth: toNullableDate(data.dateOfBirth),
-    school: data.school,
     contactNumber: data.contactNumber,
     address: data.address,
     course: data.course,
