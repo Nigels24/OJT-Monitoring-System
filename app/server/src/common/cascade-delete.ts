@@ -81,6 +81,11 @@ export async function deleteStudentCascade(
   await tx.attendance.deleteMany({ where: { studentId } });
   await tx.document.deleteMany({ where: { studentId } });
   await tx.credential.deleteMany({ where: { studentId } });
+  // Scores before evaluations: there is no onDelete: Cascade anywhere in this
+  // schema, so a leftover EvaluationScore row aborts the evaluation delete.
+  await tx.evaluationScore.deleteMany({
+    where: { evaluation: { studentId } },
+  });
   await tx.evaluation.deleteMany({ where: { studentId } });
 
   await deleteMessagingFootprint(tx, userId);
@@ -106,6 +111,9 @@ export async function deleteSupervisorCascade(
   supervisorId: string,
   userId: string,
 ): Promise<void> {
+  await tx.evaluationScore.deleteMany({
+    where: { evaluation: { supervisorId } },
+  });
   await tx.evaluation.deleteMany({ where: { supervisorId } });
   await tx.attendance.updateMany({
     where: { approvedById: supervisorId },

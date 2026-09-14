@@ -5,10 +5,11 @@ import { baseQueryWithAuth } from "./baseQuery";
  * The school's official ON-THE-JOB TRAINING PERFORMANCE EVALUATION SHEET.
  *
  * Nothing here restates the form: the sections, printed letters and item
- * wording all come from the server (`src/common/evaluation-scoring.ts`, served
- * by `GET /supervisor/evaluations/form`), and a stored evaluation carries its
- * own scored sections. A second copy in the client would drift from the sheet
- * the school actually issues.
+ * wording all come from the server — the sheet is a versioned template the
+ * coordinator maintains, served by `GET /supervisor/evaluations/form` — and a
+ * stored evaluation carries its own scored sections, rendered from the version
+ * it was signed on. A second copy in the client would drift from the sheet the
+ * school actually issues, and could not follow a new version at all.
  */
 
 /** One printed row of the blank sheet. */
@@ -26,8 +27,13 @@ export interface SheetSection {
   items: SheetItem[];
 }
 
-/** The blank sheet, as served. */
+/** The blank sheet, as served: whichever template version is published. */
 export interface EvaluationSheet {
+  templateId: string;
+  /** 1, 2, 3 … — which version of the school's sheet this is. */
+  version: number;
+  /** The sheet's printed title, from the template. */
+  title: string;
   sections: SheetSection[];
   /** The legend, highest first: 5 OUTSTANDING … 1 NEEDS IMPROVEMENT. */
   scale: { value: number; label: string }[];
@@ -59,9 +65,17 @@ export interface Evaluation {
   id: string;
   studentId: string;
   supervisorId: string;
-  /** Raw sum of all nineteen items, out of `maxTotalRating` (95). */
+  /** Raw sum of this sheet's items, out of `maxTotalRating`. */
   totalRating: number;
+  /**
+   * What this sheet was scored out of, frozen when it was signed. Not a
+   * constant: a later template version with more or fewer items changes it for
+   * new evaluations only.
+   */
   maxTotalRating: number;
+  /** The template version this sheet was signed on, and its title. */
+  templateVersion: number;
+  templateTitle: string;
   sections: ScoredSection[];
   trainingStartedAt: string | null;
   trainingEndedAt: string | null;
@@ -97,11 +111,11 @@ export interface Evaluation {
 /**
  * What create and edit both send.
  *
- * `scores` is keyed by the item keys the sheet defines and is flattened into
- * the body by the endpoints below — the server takes the nineteen items as
- * top-level fields. `totalRating` and the evaluator/establishment snapshots are
- * absent on purpose: the server derives them and rejects a body that supplies
- * them.
+ * `scores` is keyed by the item keys the sheet defines and is sent as a nested
+ * object: the server validates it against the template version the evaluation
+ * belongs to, which a DTO of fixed fields could not do. `totalRating`,
+ * `maxTotalRating` and the evaluator/establishment snapshots are absent on
+ * purpose: the server derives them and rejects a body that supplies them.
  */
 export interface EvaluationSheetPayload {
   trainingStartedAt?: string;
@@ -136,10 +150,10 @@ export const evaluationApi = createApi({
       Evaluation,
       EvaluationSheetPayload & { studentId: string }
     >({
-      query: ({ scores, ...rest }) => ({
+      query: (body) => ({
         url: "/supervisor/evaluations",
         method: "POST",
-        body: { ...rest, ...scores },
+        body,
       }),
       invalidatesTags: ["Evaluation"],
     }),
@@ -148,10 +162,10 @@ export const evaluationApi = createApi({
       Evaluation,
       EvaluationSheetPayload & { id: string }
     >({
-      query: ({ id, scores, ...rest }) => ({
+      query: ({ id, ...body }) => ({
         url: `/supervisor/evaluations/${id}`,
         method: "PATCH",
-        body: { ...rest, ...scores },
+        body,
       }),
       invalidatesTags: ["Evaluation"],
     }),

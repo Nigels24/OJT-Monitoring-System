@@ -12,28 +12,19 @@ import { useEvaluations } from "@/features/evaluation/hooks/use-evaluations";
 import EvaluationForm from "@/features/evaluation/components/EvaluationForm";
 import EvaluationList from "@/features/evaluation/components/EvaluationList";
 import EvaluationViewDialog from "@/features/evaluation/components/EvaluationViewDialog";
+import EvaluationEditDialog from "@/features/evaluation/components/EvaluationEditDialog";
 
 export default function SupervisorEvaluationPage() {
   const currentUser = useCurrentUser();
   const {
     sheet,
     sheetLoading,
-    form,
-    error,
-    editTarget,
-    isEditing,
-    traineeName,
-    employedAt,
-    evaluator,
-    sectionTotals,
-    totalRating,
-    scoredCount,
-    totalItems,
-    incompleteSections,
-    allScored,
+    sheetSummary,
     students,
+    createForm,
+    editForm,
+    isEditOpen,
     isLoading,
-    isSubmitting,
     canModify,
     viewTarget,
     deleteTarget,
@@ -42,16 +33,12 @@ export default function SupervisorEvaluationPage() {
     paged,
     totalPages,
     stats,
-    setStudentId,
-    setHeaderField,
-    setScore,
     setViewTarget,
     setDeleteTarget,
     setSearch,
     setPage,
-    handleSubmit,
     startEdit,
-    resetForm,
+    closeEdit,
     handleDeleteConfirm,
   } = useEvaluations();
 
@@ -91,9 +78,9 @@ export default function SupervisorEvaluationPage() {
             value={stats.averageRating ?? "—"}
             icon={TrendingUp}
             subtext={
-              stats.averageRating === null
+              stats.averageRating === null || stats.maxTotalRating === null
                 ? "No evaluations yet"
-                : `out of ${stats.maxTotalRating ?? 95}`
+                : `out of ${stats.maxTotalRating}`
             }
           />
         </div>
@@ -101,35 +88,14 @@ export default function SupervisorEvaluationPage() {
         <Card className="mb-4">
           <h2 className="text-base md:text-lg font-semibold text-gray-800 mb-1 flex items-center gap-2">
             <ClipboardCheck size={18} className="text-blue-600" />
-            {isEditing ? "Edit Evaluation" : "New Evaluation"}
+            New Evaluation
           </h2>
-          <p className="text-xs text-gray-500 mb-4">
-            Nineteen items, each scored 1–5, in four sections. The total is
-            calculated on the server when you submit.
-          </p>
+          <p className="text-xs text-gray-500 mb-4">{sheetSummary}</p>
           <EvaluationForm
             sheet={sheet}
             sheetLoading={sheetLoading}
-            form={form}
-            error={error}
-            editTarget={editTarget}
-            isEditing={isEditing}
-            traineeName={traineeName}
-            employedAt={employedAt}
-            evaluator={evaluator}
-            sectionTotals={sectionTotals}
-            totalRating={totalRating}
-            scoredCount={scoredCount}
-            totalItems={totalItems}
-            incompleteSections={incompleteSections}
-            allScored={allScored}
             students={students ?? []}
-            isSubmitting={isSubmitting}
-            setStudentId={setStudentId}
-            setHeaderField={setHeaderField}
-            setScore={setScore}
-            onSubmit={handleSubmit}
-            onCancelEdit={resetForm}
+            {...createForm}
           />
         </Card>
 
@@ -158,6 +124,15 @@ export default function SupervisorEvaluationPage() {
           />
         </Card>
       </main>
+
+      <EvaluationEditDialog
+        open={isEditOpen}
+        sheet={sheet}
+        sheetLoading={sheetLoading}
+        students={students ?? []}
+        form={editForm}
+        onClose={closeEdit}
+      />
 
       <EvaluationViewDialog
         open={!!viewTarget}

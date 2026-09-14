@@ -14,7 +14,7 @@ import {
   EVALUATION_INCLUDE,
   withSectionTotals,
 } from '../supervisor/supervisor.service';
-import { MAX_TOTAL_RATING } from '../common/evaluation-scoring';
+import { MAX_SCORE } from '../common/evaluation-scoring';
 import { DOCUMENT_INCLUDE, withSignedUrl } from '../student/student.service';
 import {
   CASCADE_TRANSACTION_OPTIONS,
@@ -302,6 +302,12 @@ export class CoordinatorService {
         where: { date: { gte: trendStart } },
         select: { date: true, status: true },
       }),
+      // The denominator the average is meaningful against: the currently
+      // published sheet's item count. Not a constant any more — the sheet is a
+      // versioned template the coordinator owns.
+      this.prisma.client.evaluationTemplateItem.count({
+        where: { section: { template: { status: 'PUBLISHED' } } },
+      }),
     ] as const);
 
     const failedSections = new Set<string>();
@@ -325,6 +331,7 @@ export class CoordinatorService {
       topEstablishments,
       recentStudents,
       trendRows,
+      publishedItemCount,
     ] = [
       settledOr(settled[0], [], 'stats', fail),
       settledOr(settled[1], 0, 'stats', fail),
@@ -337,6 +344,7 @@ export class CoordinatorService {
       settledOr(settled[8], [], 'topEstablishments', fail),
       settledOr(settled[9], [], 'recentStudents', fail),
       settledOr(settled[10], [], 'attendanceTrend', fail),
+      settledOr(settled[11], 0, 'stats', fail),
     ] as const;
 
     // Every single query failing is not a degraded page, it is an outage —
@@ -348,9 +356,17 @@ export class CoordinatorService {
     }
 
     // The official sheet's TOTAL RATING, averaged across evaluations — a raw
-    // score out of 95, not a percentage. `averageLevel` is gone with the old
-    // rubric's performance bands; the form has no such label.
+    // score, not a percentage. `averageLevel` is gone with the old rubric's
+    // performance bands; the form has no such label.
+    //
+    // The denominator is the *currently published* sheet's maximum. Evaluations
+    // written on earlier versions were scored out of their own maximum, which
+    // may differ, so this average is only strictly meaningful against the
+    // published number while every sheet shares a version. null when nothing is
+    // published, the same null-not-zero rule the average itself follows.
     const averageRating = evaluationAgg._avg?.totalRating ?? null;
+    const maxTotalRating =
+      publishedItemCount > 0 ? publishedItemCount * MAX_SCORE : null;
 
     return {
       /** Sections whose data could not be loaded; the client offers a retry. */
@@ -369,7 +385,7 @@ export class CoordinatorService {
         // of zero and "no data yet" are different things.
         averageRating:
           averageRating == null ? null : Math.round(averageRating * 10) / 10,
-        maxTotalRating: MAX_TOTAL_RATING,
+        maxTotalRating,
         totalEvaluations: evaluationCount,
       },
       // The prototype charted present/late/absent. Those states do not exist —

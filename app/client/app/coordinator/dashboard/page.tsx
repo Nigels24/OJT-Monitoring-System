@@ -188,7 +188,9 @@ export default function CoordinatorDashboard() {
                 subtext={
                   data.stats.averageRating === null
                     ? "No evaluations yet"
-                    : `out of ${data.stats.maxTotalRating}`
+                    : data.stats.maxTotalRating === null
+                      ? "no published sheet"
+                      : `out of ${data.stats.maxTotalRating}`
                 }
               />
             </div>

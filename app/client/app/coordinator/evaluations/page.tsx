@@ -65,7 +65,9 @@ export default function CoordinatorEvaluationsPage() {
     return {
       total: all.length,
       averageRating: avg,
-      maxTotalRating: all[0]?.maxTotalRating ?? 95,
+      // Read off a row, not a constant: the sheet is versioned, so the
+      // maximum is whatever these evaluations were signed out of.
+      maxTotalRating: all[0]?.maxTotalRating ?? null,
       establishments: new Set(
         all.map((e) => e.student.establishment?.id).filter(Boolean),
       ).size,
@@ -102,7 +104,7 @@ export default function CoordinatorEvaluationsPage() {
             value={stats.averageRating ?? "—"}
             icon={TrendingUp}
             subtext={
-              stats.averageRating === null
+              stats.averageRating === null || stats.maxTotalRating === null
                 ? "No evaluations yet"
                 : `out of ${stats.maxTotalRating}`
             }

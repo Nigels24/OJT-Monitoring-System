@@ -202,49 +202,34 @@ model Evaluation {
   supervisorId String
   supervisor   Supervisor @relation(fields: [supervisorId], references: [id])
 
-  // The school's official ON-THE-JOB TRAINING PERFORMANCE EVALUATION SHEET:
-  // nineteen items, each scored 1-5 (5 OUTSTANDING ... 1 NEEDS IMPROVEMENT),
-  // in four sections. Columns are named by meaning rather than by the form's
-  // letters so the code stays readable; the letters, labels and per-section
-  // maximums live in src/common/evaluation-scoring.ts, which is the only place
-  // that knows how the items add up.
+  // The sheet this evaluation was written on, and the scores it was given.
   //
+  // The form used to be nineteen fixed Int columns here; it is now a versioned
+  // template the coordinator owns (EvaluationTemplate). A signed sheet keeps
+  // its own `templateId` forever, so the wording, the item set and the maximum
+  // it was signed with can never be rewritten by a later version. Editing an
+  // old evaluation validates and renders against THAT version.
+  //
+  // `onDelete: Restrict` is the one referential action in this schema. It is a
+  // restriction, not a cascade: the repo's policy is that deletes are spelled
+  // out in src/common/cascade-delete.ts, and this says the opposite — a
+  // template with evaluations on it must never be deleted at all.
+  templateId String
+  template   EvaluationTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  scores     EvaluationScore[]
+
   // No uniqueness constraint on (studentId, supervisorId): a student is
   // deliberately evaluated more than once.
 
-  // I. WORK ATTITUDES AND HABITS (25 points)
-  courtesy                 Int
-  patienceAndDiligence     Int
-  punctualityAndAttendance Int
-  neatnessOfReports        Int
-  punctualityOfReports     Int
-
-  // II. WORK KNOWLEDGE (20 points)
-  technicalKnowledge      Int
-  relatesTheoryToPractice Int
-  openToCriticism         Int
-  discretion              Int
-
-  // III. PERSONALITY AND PERSONAL APPEARANCE (25 points)
-  neatAndWellGroomed     Int
-  properAttire           Int
-  poiseAndSelfConfidence Int
-  emotionalMaturity      Int
-  dealsWellWithCoworkers Int
-
-  // IV. PROFESSIONAL COMPETENCE (25 points)
-  performanceOfWork       Int
-  understandsInstructions Int
-  sharesSuggestions       Int
-  ethicalStandards        Int
-  speaksAudibly           Int
-
-  // The form's TOTAL RATING: the raw sum of the nineteen items, so always
-  // 19-95. Computed and stored server-side, never accepted from the client.
-  // Deliberately raw — the form has no percentage, letter grade or performance
-  // band, and the old Excellent/Very Good/Good/Fair/Poor labels were retired
-  // with the previous rubric.
+  // The form's TOTAL RATING: the raw sum of this sheet's items. Computed and
+  // stored server-side, never accepted from the client. Deliberately raw — the
+  // form has no percentage, letter grade or performance band.
   totalRating Int
+
+  // The denominator that TOTAL RATING was signed against (item count x
+  // MAX_SCORE). Stored and frozen, because it is no longer always 95: a later
+  // template version with more or fewer items changes it for new sheets only.
+  maxTotalRating Int
 
   // The form's header fields. `trainingEmployedAt`, `evaluatorName` and
   // `evaluatorPosition` are snapshots taken when the evaluation is written, so
@@ -260,6 +245,73 @@ model Evaluation {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// One version of the school's evaluation sheet.
+///
+/// At most one PUBLISHED and at most one DRAFT exist at any time; everything
+/// else is ARCHIVED. A PUBLISHED or ARCHIVED template, and its sections and
+/// items, are immutable — edits happen on the draft and take effect when it is
+/// published, which archives the outgoing version. `status` stays a plain
+/// String (DRAFT / PUBLISHED / ARCHIVED) rather than an enum, the same call as
+/// Document.status.
+model EvaluationTemplate {
+  id          String    @id @default(cuid())
+  version     Int       @unique
+  status      String    @default("DRAFT")
+  /// The sheet title as printed, e.g. ON-THE-JOB TRAINING PERFORMANCE EVALUATION SHEET.
+  title       String
+  createdAt   DateTime  @default(now())
+  publishedAt DateTime?
+
+  sections    EvaluationTemplateSection[]
+  evaluations Evaluation[]
+}
+
+/// A numbered section of the sheet. The printed numeral (I, II, III ...) is
+/// derived from `order` at read time, never stored, so reordering cannot
+/// desync it from what is printed.
+model EvaluationTemplateSection {
+  id         String             @id @default(cuid())
+  templateId String
+  template   EvaluationTemplate @relation(fields: [templateId], references: [id])
+  key        String
+  label      String
+  order      Int
+
+  items EvaluationTemplateItem[]
+
+  @@unique([templateId, key])
+}
+
+/// One scored row of the sheet. The printed letter (A, B, C ...) is derived
+/// from `order` at read time, and the section's maxPoints is its item count x
+/// MAX_SCORE — neither is stored.
+model EvaluationTemplateItem {
+  id        String                    @id @default(cuid())
+  sectionId String
+  section   EvaluationTemplateSection @relation(fields: [sectionId], references: [id])
+  key       String
+  label     String
+  order     Int
+
+  @@unique([sectionId, key])
+}
+
+/// One item's score on one evaluation.
+///
+/// `itemKey` is a plain string, not a foreign key to EvaluationTemplateItem:
+/// the score is frozen against the template version the sheet was signed on,
+/// and joining it to a live row would reintroduce exactly the coupling the
+/// versioning removes.
+model EvaluationScore {
+  id           String     @id @default(cuid())
+  evaluationId String
+  evaluation   Evaluation @relation(fields: [evaluationId], references: [id])
+  itemKey      String
+  score        Int
+
+  @@unique([evaluationId, itemKey])
 }
 
 model Conversation {

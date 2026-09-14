@@ -21,7 +21,7 @@ interface IncompleteSection {
   letters: string[];
 }
 
-interface EvaluationFormProps {
+export interface EvaluationFormProps {
   sheet: EvaluationSheet | undefined;
   sheetLoading: boolean;
   form: {
@@ -46,6 +46,12 @@ interface EvaluationFormProps {
   allScored: boolean;
   students: SupervisorStudent[];
   isSubmitting: boolean;
+  /**
+   * `"modal"` parks the action row against the foot of `FormDialog`'s
+   * scrollport, so Cancel and Save stay reachable without scrolling nineteen
+   * items back down. `"card"` is the page's inline New Evaluation card.
+   */
+  variant?: "card" | "modal";
   setStudentId: (id: string) => void;
   setHeaderField: (
     key: "trainingStartedAt" | "trainingEndedAt" | "comments" | "recommendations",
@@ -98,6 +104,7 @@ export default function EvaluationForm({
   allScored,
   students,
   isSubmitting,
+  variant = "card",
   setStudentId,
   setHeaderField,
   setScore,
@@ -355,7 +362,13 @@ export default function EvaluationForm({
         </p>
       )}
 
-      <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+      <div
+        className={
+          variant === "modal"
+            ? "sticky bottom-0 -mx-4 md:-mx-6 -mb-5 px-4 md:px-6 py-3 bg-white border-t border-gray-200 flex flex-col-reverse sm:flex-row sm:justify-end gap-3"
+            : "flex flex-col-reverse sm:flex-row sm:justify-end gap-3"
+        }
+      >
         <button
           type="button"
           onClick={onCancelEdit}

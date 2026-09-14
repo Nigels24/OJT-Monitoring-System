@@ -57,16 +57,18 @@ OJT-Monitoring-System/
     ├── server/             # NestJS 11 API — port 3000
     │   ├── src/
     │   │   ├── auth/           # AuthModule, JwtStrategy, RolesGuard, authed-request.ts, jwt.constants.ts
-    │   │   ├── common/         # attendance-hours.ts, evaluation-scoring.ts, transforms.ts
+    │   │   ├── common/         # attendance-hours.ts, cascade-delete.ts, dates.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
     │   │   ├── coordinator/    # student + supervisor management, dashboard, attendance oversight
     │   │   ├── establishment/  # CRUD — open reads, COORDINATOR writes
+    │   │   ├── evaluation-template/  # the versioned evaluation sheet — COORDINATOR writes, SupervisorService reads
+    │   │   ├── messages/       # 1:1 conversations, all three roles
     │   │   ├── student/        # the student's own dashboard + attendance
     │   │   ├── supervisor/     # approve/decline attendance, evaluations
     │   │   └── prisma/         # PrismaService (client exposed as `.client`)
     │   ├── prisma/
     │   │   ├── schema.prisma
     │   │   ├── seed.ts             # bootstraps ONLY the coordinator
-    │   │   └── migrations/         # 13 migrations, listed in §6
+    │   │   └── migrations/         # 14 migrations, listed in §6
     │   ├── scripts/reset-coordinator.ts
     │   ├── test/                   # e2e only
     │   └── generated/prisma/       # gitignored — run `npx prisma generate`
@@ -106,12 +108,17 @@ table), `messaging` (one domain, all three roles — see §5 "Which feature doma
 in `lib/store.ts` — **reducer *and* middleware**.
 
 **UI primitives** (`components/ui/`): DataTable, StatCard, StatusBadge, ProgressBar,
-TrendChart, RankedBarList, ConfirmDialog, ViewDialog, TextField, TextArea, SelectField,
-SearchInput, Tabs, Card, Button, PageHeader, Avatar, DetailItem, Snackbar. Reuse these
+TrendChart, RankedBarList, ConfirmDialog, ViewDialog, FormDialog, TextField, TextArea,
+SelectField, SearchInput, Tabs, Card, Button, PageHeader, Avatar, DetailItem, Snackbar,
+FileLink, SectionError. Reuse these
 before adding a new one. `TextField` auto-adds a show/hide eye toggle whenever
 `type="password"` — don't build a second one at the call site; a field that should stay
 plain text (the coordinator's issued-password fields, so it can be read back) uses
-`type="text"` instead, deliberately. `ConfirmDialog` gives **Cancel** the autofocus, not
+`type="text"` instead, deliberately. **A modal holding unsaved work uses `FormDialog`,
+not `ViewDialog`** — `ViewDialog` closes on a backdrop click, which is right for read-only
+content and destroys a part-filled form; `FormDialog` closes only on Escape or its X,
+locks the page's scroll, and gives the form a scrollport its action row can `sticky` to.
+`ConfirmDialog` gives **Cancel** the autofocus, not
 the confirm button — it guards irreversible deletes, so a stray Enter must not be what
 destroys a record. The copy for the three cascading-delete confirmations lives in
 `lib/format.ts` (`deleteStudentMessage`, `deleteSupervisorMessage`,
@@ -304,37 +311,45 @@ and makes required create fields optional.
 - **`src/common/attendance-hours.ts`** (`hoursForAttendance`, `totalHours`) — the only
   place that turns the four AM/PM clock columns into hours. Reuse it. Completed hours
   count **APPROVED attendance only**.
-- **`src/common/evaluation-scoring.ts`** — the school's official **ON-THE-JOB TRAINING
-  PERFORMANCE EVALUATION SHEET**, which replaced the prototype's 9-criterion weighted
-  rubric. Nineteen items, each scored 1–5 (5 OUTSTANDING · 4 VERY GOOD · 3 GOOD · 2 FAIR ·
-  1 NEEDS IMPROVEMENT), in four sections:
+- **`src/common/evaluation-scoring.ts`** — **how the sheet adds up, not what is on
+  it.** The form itself is data: a versioned `EvaluationTemplate` the coordinator
+  owns (§6, §7). This file keeps `MIN_SCORE`/`MAX_SCORE` (1-5), `SCORE_LABELS`
+  (5 OUTSTANDING · 4 VERY GOOD · 3 GOOD · 2 FAIR · 1 NEEDS IMPROVEMENT), the
+  `SheetTemplate` shape, and the derivations every version shares:
+  `numeralFor`/`letterFor` (I, II, III … and A, B, C … from `order`, never
+  stored), `sectionMaxPoints` (item count × `MAX_SCORE`), `templateMaxTotalRating`,
+  `templateItemKeys`, `totalRating`, `buildSections`, `scoreBreakdown` and
+  `sheetDefinition(template)`.
 
-  | § | Section | Max | Items |
-  |---|---|---|---|
-  | I | Work Attitudes and Habits | 25 | courtesy, patienceAndDiligence, punctualityAndAttendance, neatnessOfReports, punctualityOfReports |
-  | II | Work Knowledge | 20 | technicalKnowledge, relatesTheoryToPractice, openToCriticism, discretion |
-  | III | Personality and Personal Appearance | 25 | neatAndWellGroomed, properAttire, poiseAndSelfConfidence, emotionalMaturity, dealsWellWithCoworkers |
-  | IV | Professional Competence | 25 | performanceOfWork, understandsInstructions, sharesSuggestions, ethicalStandards, speaksAudibly |
+  Its `SECTIONS` constant is gone; `DEFAULT_SHEET` replaced it and is **seed
+  content for template version 1 only** — the nineteen items' wording, keyed by
+  the nineteen columns they used to live in, which is what let the migration copy
+  every existing score across. **Nothing reads the live sheet from this file.**
+  The old fixed-19 exports (`EVALUATION_ITEMS`, `ItemScores`, `pickItemScores`,
+  `MAX_TOTAL_RATING`, `MIN_TOTAL_RATING`) are deleted — a maximum of 95 is now
+  just what version 1 happens to add up to, never a constant.
 
-  `SECTIONS` carries each item's key, printed letter and exact wording, so the UI renders
-  from it rather than keeping a second copy of the form's text. `totalRating` is the
-  **raw sum out of 95** (`MAX_TOTAL_RATING`), computed here and **stored on the row**,
-  never accepted from the request (`forbidNonWhitelisted` rejects a body that tries).
-  There is deliberately **no percentage, letter grade or performance band** — the form has
-  none, and the old Excellent/Very Good/Good/Fair/Poor labels were retired with the old
-  rubric. Don't reintroduce them. Per-section totals are recomputed on read
-  (`withSectionTotals`, exported from `supervisor.service.ts` and reused by the
-  coordinator's read) so both lists share one shape. `pickItemScores` re-validates all
-  nineteen items as integers 1–5 and throws otherwise — a backstop behind the DTO.
+  `totalRating` is still the **raw sum**, computed server-side and stored on the
+  row, never accepted from the request; `maxTotalRating` is now stored alongside
+  it and frozen, because it varies by version. There is deliberately **no
+  percentage, letter grade or performance band** — the form has none, and the old
+  Excellent/Very Good/Good/Fair/Poor labels were retired with the old rubric.
+  Don't reintroduce them. Per-section totals, numerals and letters are recomputed
+  on read (`withSectionTotals`, exported from `supervisor.service.ts` and reused
+  by the coordinator's read) from the evaluation's **own** template version
+  joined with its `EvaluationScore` rows, so both lists share one shape and an
+  old sheet keeps the wording it was signed with.
 
-  **This file is the only copy of the form's text, including in the client.** The two
-  projects share no code, so rather than retyping nineteen wordings into the client (where
-  they would drift from the sheet the school issues), the structure is *served*:
-  `sheetDefinition()` backs `GET /supervisor/evaluations/form` for the blank form, and
-  `scoreBreakdown` puts each section's items — key, letter, wording **and score** — on
-  every evaluation that is read, so the coordinator's view dialog renders the filled-in
-  sheet straight from the response. Change the wording here and both roles follow; don't
+  **The client still holds no copy of the form's text.** `sheetDefinition()`
+  backs `GET /supervisor/evaluations/form` for the blank sheet (published version
+  only), and every evaluation that is read carries its sections — key, letter,
+  wording **and score** — so the view dialog renders the filled-in sheet straight
+  from the response. Change the wording through the coordinator's draft; don't
   add a client-side mirror.
+- **`src/evaluation-template/evaluation-template.service.ts`** — the only writer
+  of the sheet, and the only thing that validates scores against it
+  (`validateScores`). Injected into `SupervisorService`, which is why
+  `SupervisorModule` imports `EvaluationTemplateModule`.
 - **`src/common/dates.ts`** — every calendar-date comparison. Date-only columns
   (`Attendance.date`, `Student.startDate`/`endDate`) are stored as **UTC midnight of the
   intended day**, so comparisons must be between values this module produced.
@@ -515,6 +530,10 @@ table; never derive one from the other.
 | GET | `/coordinator/dashboard` | COORDINATOR | real aggregates |
 | GET | `/coordinator/attendance` | COORDINATOR | cross-establishment oversight |
 | GET | `/coordinator/evaluations` | COORDINATOR | read-only, all establishments |
+| GET | `/coordinator/evaluation-template` | COORDINATOR | `{ published, draft }`, each a sheet or `null` |
+| PUT | `/coordinator/evaluation-template/draft` | COORDINATOR | replaces the **whole** draft: `{ title, sections: [{ key?, label, items: [{ key?, label }] }] }`. Array order is printed order. A `key` keeps an existing section/item (and its score association); omitting one adds it. A key not already on the draft — or on the published sheet a first draft is started from — is a 400. Creates the draft if there is none |
+| POST | `/coordinator/evaluation-template/publish` | COORDINATOR | publishes the draft: next version number, `publishedAt` set, previous published version ARCHIVED. **409 when there is no draft** — the published sheet is immutable |
+| DELETE | `/coordinator/evaluation-template/draft` | COORDINATOR | discards the draft; 404 if there is none |
 | GET | `/coordinator/documents` | COORDINATOR | all documents, all establishments, each with a signed URL |
 | PATCH | `/coordinator/documents/:id/review` | COORDINATOR | `{ status: 'APPROVED'\|'REJECTED', reviewNote? }` — `reviewNote` required 3–500 chars when REJECTED |
 | GET | `/student/dashboard` · `/student/attendance` · `/student/profile` · `/student/documents` · `/student/credentials` | STUDENT | own data only |
@@ -528,9 +547,9 @@ table; never derive one from the other.
 | PATCH | `/supervisor/students/:id/status` | SUPERVISOR | |
 | PATCH | `/supervisor/attendance/:id/approve` | SUPERVISOR | clears any `declineReason` |
 | PATCH | `/supervisor/attendance/:id/decline` | SUPERVISOR | `{ reason }`, 3–500 chars, required |
-| GET | `/supervisor/evaluations/form` | SUPERVISOR | the **blank sheet's structure** — sections, item keys, printed letters, wording, the 1–5 legend and `maxTotalRating` — plus `evaluator` and `employedAt`, the header/footer blanks as they will be stamped for this supervisor. The client renders the whole form from this one endpoint instead of keeping its own copy of the form text or reading the dashboard |
-| GET/POST | `/supervisor/evaluations` | SUPERVISOR | POST takes all 19 items; repeatable — a student is evaluated more than once |
-| PATCH | `/supervisor/evaluations/:id` | SUPERVISOR | the whole sheet again, not a partial (every item is required on the form); recomputes `totalRating`. 403 unless the caller **wrote** it |
+| GET | `/supervisor/evaluations/form` | SUPERVISOR | the **currently PUBLISHED template**: `templateId`, `version`, `title`, sections with item keys, printed letters and wording, the 1–5 legend and `maxTotalRating` — plus `evaluator` and `employedAt`, the header/footer blanks as they will be stamped for this supervisor. **409 if the school has published no sheet.** The client renders the whole form from this one endpoint instead of keeping its own copy of the form text or reading the dashboard |
+| GET/POST | `/supervisor/evaluations` | SUPERVISOR | POST takes `scores` as **one nested object** keyed by the template's item keys (`{ scores: { courtesy: 5, … } }`), not top-level fields — see §8 item 23. Written against the published version; repeatable — a student is evaluated more than once |
+| PATCH | `/supervisor/evaluations/:id` | SUPERVISOR | the whole sheet again, not a partial (every item is required on the form); same nested `scores`, validated against **that evaluation's own template version**, not the published one; recomputes `totalRating`. 403 unless the caller **wrote** it |
 | DELETE | `/supervisor/evaluations/:id` | SUPERVISOR | hard delete, same authorship check |
 | GET | `/messages/contacts` | any signed-in | who the caller may message, scoped by role (§7) |
 | GET | `/messages/conversations` | any signed-in | caller's conversations, most recent first, with unread count |
@@ -547,8 +566,9 @@ table; never derive one from the other.
 PostgreSQL via Supabase. `DATABASE_URL` pooled, `DIRECT_URL` direct.
 
 **Models:** `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`,
-`Attendance`, `Document`, `Credential`, `Evaluation`, `Conversation`,
-`ConversationParticipant`, `Message`.
+`Attendance`, `Document`, `Credential`, `Evaluation`, `EvaluationScore`,
+`EvaluationTemplate`, `EvaluationTemplateSection`, `EvaluationTemplateItem`,
+`Conversation`, `ConversationParticipant`, `Message`.
 
 `Document`, `Credential` and Messaging are all built (§7). Messaging is **polling, not
 websockets** — `socket.io` / `@nestjs/websockets` / `@nestjs/platform-socket.io` were
@@ -626,12 +646,56 @@ model Message {
 per-message read receipt. Not needed for polling; would matter if a websocket gateway is
 ever added (§7).
 
-`Evaluation` is the official sheet: 19 `Int` item columns in section order, a stored
-`totalRating` (19–95), the form's header snapshots (`trainingEmployedAt`, `evaluatorName`,
-`evaluatorPosition` — captured at write time so a later supervisor rename or deletion
-cannot rewrite a signed record), `comments`, `recommendations` and `updatedAt`. **No
-uniqueness constraint on `(studentId, supervisorId)`** — repeat evaluations are the
-requirement. Item names and section maximums are in §4.
+### The evaluation sheet is versioned data, not code
+
+`Evaluation` no longer carries 19 `Int` item columns. It carries `templateId` (the
+version it was signed on), `scores` (`EvaluationScore` rows, one per item), a stored
+`totalRating`, a stored **`maxTotalRating`** (frozen — no longer always 95), the form's
+header snapshots (`trainingEmployedAt`, `evaluatorName`, `evaluatorPosition` — captured
+at write time so a later supervisor rename or deletion cannot rewrite a signed record),
+`comments`, `recommendations` and `updatedAt`. **No uniqueness constraint on
+`(studentId, supervisorId)`** — repeat evaluations are the requirement.
+
+```prisma
+model EvaluationTemplate {
+  id          String    @id @default(cuid())
+  version     Int       @unique              // 1, 2, 3 …
+  status      String    @default("DRAFT")    // DRAFT · PUBLISHED · ARCHIVED, a plain String like Document.status
+  title       String                         // the printed sheet title
+  createdAt   DateTime  @default(now())
+  publishedAt DateTime?
+}
+
+model EvaluationTemplateSection { id, templateId, key, label, order   @@unique([templateId, key]) }
+model EvaluationTemplateItem    { id, sectionId,  key, label, order   @@unique([sectionId, key])  }
+model EvaluationScore           { id, evaluationId, itemKey String, score Int  @@unique([evaluationId, itemKey]) }
+```
+
+**Derived at read time, never stored:** section numerals (I, II, III …) and item letters
+(A, B, C …) come from `order`, a section's `maxPoints` is its item count × `MAX_SCORE`,
+and a template's `maxTotalRating` is its total item count × `MAX_SCORE`. Reordering can
+therefore never desync a numeral from what is printed.
+
+**The invariants, enforced in `EvaluationTemplateService`:**
+
+- At most **one PUBLISHED** and at most **one DRAFT** at any time.
+- A PUBLISHED or ARCHIVED template and its sections/items are **immutable**; every write
+  targets the draft, and an attempt on a non-draft is a 409.
+- Publishing assigns the next version number, sets `status`/`publishedAt`, and ARCHIVEs
+  the outgoing published version — all in one `$transaction`, sequentially (§8 item 19).
+- An evaluation keeps its `templateId` **forever**: editing an old sheet validates and
+  renders against *that* version, never the current one. A new sheet always uses the
+  published one.
+- `Evaluation.template` is `onDelete: Restrict` — the **only** referential action in this
+  schema. That is not a cascade (§6's no-cascade policy stands); it is the opposite, and
+  says a template with evaluations on it can never be deleted.
+- `EvaluationScore.itemKey` is a plain string, **not** an FK to `EvaluationTemplateItem`:
+  the score is frozen against a version, and joining it to a live row would restore the
+  coupling versioning removes. Item keys are therefore unique across a whole template,
+  not just within a section — two items sharing a key would collide on
+  `(evaluationId, itemKey)`.
+- Deleting an evaluation means deleting its `EvaluationScore` rows **first** — there is no
+  cascade. `removeEvaluation`, `deleteStudentCascade` and `deleteSupervisorCascade` all do.
 
 `Attendance` splits AM/PM into four nullable `DateTime`s (`timeInAM`, `timeOutAM`,
 `timeInPM`, `timeOutPM`) and carries `@@unique([studentId, date])`. `submitAttendance`
@@ -685,6 +749,7 @@ recoverable, a half-deleted database is not.
 | `20260826023817_student_profile_fields` | `Student`: `gender`, `endDate` — both nullable, for the student Profile page |
 | `20260826033058_document_review_fields` | `Document`: `reviewedById` (FK to `Coordinator`, `SET NULL` on delete), `reviewNote`, `reviewedAt` — all nullable |
 | `20260905163310_official_evaluation_sheet` | **Rewrote `Evaluation` for the school's official form.** Dropped the 9 criteria, `overallRating`, `performanceLevel` and `periodStart`/`periodEnd`; added the 19 item columns, `totalRating`, `trainingStartedAt`/`trainingEndedAt`/`trainingEmployedAt`, `evaluatorName`/`evaluatorPosition` and `updatedAt`. Destructive — **the table was empty (verified: 0 rows)**, which is also why the new `NOT NULL` item columns could be added without defaults. Generated with `migrate diff` + `migrate deploy`, since `migrate dev` prompts on column drops. Touches no other table |
+| `20260914142544_evaluation_sheet_template` | **Moved the sheet into the database.** Added `EvaluationTemplate`, `EvaluationTemplateSection`, `EvaluationTemplateItem`, `EvaluationScore`; seeded template **version 1** PUBLISHED with the nineteen items' exact wording, keyed by the nineteen column names; added `Evaluation.templateId`/`maxTotalRating` backfilled to version 1 / 95; copied the nineteen columns into `EvaluationScore`; **then** dropped them. Hand-written in that order so it is one transaction and no signed sheet loses its scores — structural statements generated with `migrate diff --from-schema-datamodel <previous> --to-schema-datamodel <current> --script` (which never touches the DB), data steps added by hand |
 
 Credentials needed **no migration** — `Credential` already had every column its module
 needed (§7).
@@ -730,20 +795,39 @@ needed (§7).
 - **Supervisor Management (Coordinator)** — create, list, password reset, and delete
   (guarded — see §6). No edit yet (§8 item 10). Table columns: name, username, email,
   establishment, position.
-- **Evaluations** — the school's official 19-item / 4-section sheet, scored out of 95
-  (§4), end to end. Supervisor creates, **edits and deletes** their own; repeatable per
+- **The evaluation sheet is the school's to change.** `EvaluationTemplate` and friends
+  (§6) hold it as a versioned, immutable-once-published template; the coordinator owns
+  the draft, supervisors consume whichever version is published, and every signed
+  evaluation keeps the wording, item set and maximum it was signed with. **API only so
+  far** — `GET /coordinator/evaluation-template`, `PUT`/`DELETE …/draft`,
+  `POST …/publish` (§5), exercised by curl. **There is no coordinator UI yet**; that is
+  the next task. Version 1 is the nineteen-item sheet, seeded by the migration.
+- **Evaluations** — the official sheet end to end, now rendered from its template
+  version rather than from nineteen hardcoded columns. Supervisor creates, **edits and deletes** their own; repeatable per
   student; coordinator reads across establishments, read-only. Edit/delete authorship is
   `supervisorId`, not the establishment — `getEvaluations` deliberately lists everything
   written at the establishment, but only the author may rewrite a sheet, and the client
-  hides the buttons for the rest (`canModify`, comparing the row against
-  `/supervisor/dashboard`'s `supervisor.id`).
+  hides the buttons for the rest, reading the server's per-row `canModify` flag rather
+  than re-deriving authorship on the client.
   Client: the supervisor's form is laid out like the paper sheet — header block, printed
-  scale legend, four numbered sections of radio groups (1–5, **not** dropdowns — nineteen
+  scale legend, numbered sections of radio groups (1–5, **not** dropdowns — nineteen
   dropdowns is unusable), live section totals and TOTAL RATING, read-only "Evaluated
-  by"/"Position" footer. Submit is disabled until all nineteen are scored, and names the
-  sections still missing rather than saying "fill in everything". Editing shows an amber
-  banner naming the student, date and current total, because a student legitimately has
-  several sheets and an edit must never read as a new one.
+  by"/"Position" footer. Nothing in the client assumes 19 items, 4 sections or a maximum
+  of 95: the card's subheading (`sheetSummary` in `use-evaluations.ts`) counts the served
+  template, and every maximum is read off the sheet or the row. Submit is disabled until all nineteen are scored, and names the
+  sections still missing rather than saying "fill in everything".
+  **Creating and editing are two separate surfaces.** The page's inline card is
+  permanently "New Evaluation"; the table's pencil opens the submitted sheet in a modal
+  (`EvaluationEditDialog` over `components/ui/FormDialog`), which renders the same
+  `EvaluationForm` with `variant="modal"` — one implementation of the sheet, never a
+  second copy. `use-evaluations.ts` backs them with **two independent drafts**: the
+  per-sheet state and totals live in an internal `useEvaluationDraft(sheet, students)`
+  called twice, so a half-filled new evaluation survives opening, saving and cancelling an
+  edit, and closing the modal discards only the edit draft. The hook returns them as
+  `createForm`/`editForm` prop bundles. The amber banner naming the student, date and
+  current total sits at the top of the modal body — a student legitimately has several
+  sheets and an edit must never read as a new one; its Cancel closes the modal. A failed
+  save keeps the modal open with the error in the form's own error slot.
 - **Password recovery** — self-service change for everyone, coordinator-issued reset for
   students and supervisors, CLI for the coordinator.
 - **Cascading deletes** — student, supervisor and establishment delete for real, each in a
@@ -813,11 +897,16 @@ start date and confirm the oversight page shows a real percentage.
 
 ### Partially built
 
-Nothing. The evaluation client was the last item; `features/evaluation/rubric.ts` (the old
-weights, bands and `previewLevel`) is deleted, and no client file mentions `overallRating`,
-`performanceLevel`, `categories` or `averageLevel` any more. `stats.averageRating` on the
-coordinator dashboard is now an average **out of 95**, with `stats.maxTotalRating`
-alongside it.
+**The evaluation sheet template — API only, no coordinator UI.** The models, the
+migration, the four `/coordinator/evaluation-template` endpoints and the supervisor side
+(published sheet, nested `scores`, per-version validation and rendering) are all built;
+the screen the coordinator edits and publishes the sheet on is not. Until it exists the
+sheet can only be changed by curl, and the client's only changes for it were the ones
+needed to stop assuming 19 items / 4 sections / 95 points.
+
+`stats.averageRating` on the coordinator dashboard is an average out of
+`stats.maxTotalRating`, which is now the **published template's** maximum and may be
+`null` (§8 item 23).
 
 ### Not started
 
@@ -828,7 +917,14 @@ would only make the contact picker match the prototype's panel exactly.
 
 ### Remaining build order
 
-1. **Verify `Student.startDate` live** (above). The only item left.
+1. **Run migration `20260914142544_evaluation_sheet_template`**, then
+   `npx prisma generate`. Until the client is regenerated, `npx tsc --noEmit` and
+   `npm run lint` on the server report errors for every new model — they are stale-client
+   artifacts, not code faults.
+2. **The coordinator's UI for editing the sheet** (part 2): read
+   `GET /coordinator/evaluation-template`, `PUT` the draft, publish it. No client code
+   for this exists yet.
+3. **Verify `Student.startDate` live** (above).
 
 ### File storage — the decided design
 
@@ -1002,6 +1098,25 @@ Ordered roughly by how likely each is to bite.
     `supervisorManagementApi`. Only affects slices a coordinator's own session can reach —
     `supervisorApi` and `studentPortalApi` belong to a different login entirely, so
     invalidating them from the coordinator's store would be a no-op.
+
+23. **The sheet's maximum is not 95 and the sheet is not nineteen items.** Both are
+    properties of one `EvaluationTemplate` version. Read a maximum off the served sheet
+    (`maxTotalRating`) or off the evaluation row (also `maxTotalRating`, frozen at write
+    time) — never a constant, and never `?? 95`. Two consequences worth knowing:
+    the coordinator dashboard's `stats.maxTotalRating` is the **currently published**
+    sheet's maximum and is `null` when nothing is published, so `stats.averageRating` is
+    only strictly comparable against it while every evaluation shares a version; and
+    `GET /supervisor/evaluations/form` 409s rather than serving an empty sheet when the
+    school has published none.
+24. **A DTO cannot validate the scores, and that is why they are nested.**
+    `main.ts`'s `forbidNonWhitelisted` rejects any body property a DTO does not declare,
+    and a DTO cannot declare keys that live in the database. So `POST`/`PATCH
+    /supervisor/evaluations` take `scores` as one `@IsObject() @IsNotEmptyObject()`
+    field, and `EvaluationTemplateService.validateScores` does the real work against the
+    template version: every item present, each an integer 1–5, any unknown key a 400.
+    This was a **breaking contract change** — the nineteen top-level item fields are
+    gone. Same trap as the multipart gotcha in §7; expect it again for any body whose
+    keys are data.
 
 ---
 

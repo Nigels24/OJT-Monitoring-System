@@ -9,28 +9,25 @@ import {
   Query,
   UseGuards,
   Req,
-  applyDecorators,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { Transform, Type } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
   IsIn,
-  IsInt,
   IsNotEmpty,
+  IsNotEmptyObject,
+  IsObject,
   IsOptional,
   IsString,
-  Max,
   MaxLength,
-  Min,
   MinLength,
 } from 'class-validator';
 import { SupervisorService } from './supervisor.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { AuthedRequest } from '../auth/authed-request';
 import { EmptyToNull, EmptyToUndefined } from '../common/transforms';
-import { MAX_SCORE, MIN_SCORE } from '../common/evaluation-scoring';
 
 class AttendanceQueryDto {
   @IsOptional()
@@ -61,54 +58,25 @@ class DeclineAttendanceDto {
 }
 
 /**
- * The official sheet's 1-5 bound, applied to every item so the scale is
- * declared once rather than repeated nineteen times.
- */
-const Item = () =>
-  applyDecorators(
-    Type(() => Number),
-    IsInt(),
-    Min(MIN_SCORE),
-    Max(MAX_SCORE),
-  );
-
-/**
- * The nineteen scored items plus the sheet's editable header fields.
+ * One filled-in sheet: the scores plus the editable header fields.
  *
- * `totalRating` and the `evaluatorName`/`evaluatorPosition`/`trainingEmployedAt`
- * snapshots are absent on purpose: the server derives all four
- * (src/common/evaluation-scoring.ts and SupervisorService), and
- * `forbidNonWhitelisted` rejects a body that tries to supply them.
+ * `scores` is a single nested object keyed by the template's own item keys —
+ * not the nineteen top-level fields it used to be. The sheet is data now, so a
+ * DTO cannot list the keys, and `forbidNonWhitelisted` would reject the dynamic
+ * ones. It is checked here only for being a non-empty object; the real
+ * validation is `EvaluationTemplateService.validateScores`, which requires
+ * every item of *that evaluation's* template version, each an integer 1-5, and
+ * rejects any key the template does not have.
  *
- * Item order matches the paper form. Section maximums are 25 / 20 / 25 / 25.
+ * `totalRating`, `maxTotalRating` and the
+ * `evaluatorName`/`evaluatorPosition`/`trainingEmployedAt` snapshots are absent
+ * on purpose: the server derives all of them, and `forbidNonWhitelisted`
+ * rejects a body that tries to supply them.
  */
 class EvaluationSheetDto {
-  // I. WORK ATTITUDES AND HABITS (25 points)
-  @Item() courtesy!: number;
-  @Item() patienceAndDiligence!: number;
-  @Item() punctualityAndAttendance!: number;
-  @Item() neatnessOfReports!: number;
-  @Item() punctualityOfReports!: number;
-
-  // II. WORK KNOWLEDGE (20 points)
-  @Item() technicalKnowledge!: number;
-  @Item() relatesTheoryToPractice!: number;
-  @Item() openToCriticism!: number;
-  @Item() discretion!: number;
-
-  // III. PERSONALITY AND PERSONAL APPEARANCE (25 points)
-  @Item() neatAndWellGroomed!: number;
-  @Item() properAttire!: number;
-  @Item() poiseAndSelfConfidence!: number;
-  @Item() emotionalMaturity!: number;
-  @Item() dealsWellWithCoworkers!: number;
-
-  // IV. PROFESSIONAL COMPETENCE (25 points)
-  @Item() performanceOfWork!: number;
-  @Item() understandsInstructions!: number;
-  @Item() sharesSuggestions!: number;
-  @Item() ethicalStandards!: number;
-  @Item() speaksAudibly!: number;
+  @IsObject()
+  @IsNotEmptyObject()
+  scores!: Record<string, number>;
 
   @IsOptional()
   @EmptyToUndefined()

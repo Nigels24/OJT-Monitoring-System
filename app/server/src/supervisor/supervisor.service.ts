@@ -8,12 +8,14 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { hoursForAttendance, totalHours } from '../common/attendance-hours';
 import {
-  ItemScores,
-  pickItemScores,
-  scoreBreakdown,
+  SheetTemplate,
+  buildSections,
   sheetDefinition,
+  templateMaxTotalRating,
   totalRating,
 } from '../common/evaluation-scoring';
+import { CASCADE_TRANSACTION_OPTIONS } from '../common/cascade-delete';
+import { EvaluationTemplateService } from '../evaluation-template/evaluation-template.service';
 
 type AttendanceStatus = 'PENDING' | 'APPROVED' | 'DECLINED';
 
@@ -21,7 +23,10 @@ type AttendanceStatus = 'PENDING' | 'APPROVED' | 'DECLINED';
 export class SupervisorService {
   private readonly logger = new Logger(SupervisorService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private templates: EvaluationTemplateService,
+  ) {}
 
   private async getSupervisorByUserId(userId: string) {
     const supervisor = await this.prisma.client.supervisor.findUnique({
@@ -304,16 +309,23 @@ export class SupervisorService {
       supervisor.establishmentId,
     );
 
-    const scores = pickItemScores(data);
+    // A new sheet is always written on the currently published version, and
+    // keeps that version for good.
+    const template = await this.templates.getPublishedTemplate();
+    const scores = this.templates.validateScores(template, data.scores);
 
     const created = await this.prisma.client.evaluation.create({
       data: {
         studentId: data.studentId,
         supervisorId: supervisor.id,
-        ...scores,
-        // Derived here, never read from the request — otherwise a caller could
-        // submit nineteen low scores alongside a 95.
-        totalRating: totalRating(scores),
+        templateId: template.id,
+        scores: { create: scores },
+        // Both derived here, never read from the request — otherwise a caller
+        // could submit low scores alongside a full total.
+        totalRating: totalRating(toScoreMap(scores)),
+        // Frozen with the sheet: a later version with more or fewer items must
+        // not change what this one was scored out of.
+        maxTotalRating: templateMaxTotalRating(template),
         ...this.headerFields(data, supervisor, student),
         comments: data.comments,
         recommendations: data.recommendations,
@@ -340,37 +352,59 @@ export class SupervisorService {
     data: Omit<EvaluationInput, 'studentId'>,
   ) {
     const supervisor = await this.getSupervisorByUserId(userId);
-    await this.verifyEvaluationBelongsToSupervisor(evaluationId, supervisor.id);
+    const existing = await this.verifyEvaluationBelongsToSupervisor(
+      evaluationId,
+      supervisor.id,
+    );
 
-    const scores = pickItemScores(data);
+    // The version this sheet was signed on, never the currently published one:
+    // an old evaluation keeps its own item set, wording and maximum, so an edit
+    // validates against that and nothing else.
+    const template = await this.templates.getTemplateById(existing.templateId);
+    const scores = this.templates.validateScores(template, data.scores);
 
-    const updated = await this.prisma.client.evaluation.update({
-      where: { id: evaluationId },
-      data: {
-        ...scores,
-        totalRating: totalRating(scores),
-        // Only the two editable header dates. `trainingEmployedAt`,
-        // `evaluatorName` and `evaluatorPosition` are write-time snapshots and
-        // are deliberately NOT recomputed here: re-deriving them from the
-        // student's *current* placement would blank the establishment on a
-        // sheet whose student has since been unassigned, which is the same
-        // placement-governs-the-sheet coupling this change removes.
-        ...trainingDates(data),
-        comments: data.comments,
-        recommendations: data.recommendations,
-      },
-      include: EVALUATION_INCLUDE,
-    });
+    const updated = await this.prisma.client.$transaction(async (tx) => {
+      // Sequential inside the transaction, never Promise.all — an interactive
+      // transaction is one connection.
+      await tx.evaluationScore.deleteMany({ where: { evaluationId } });
+      await tx.evaluationScore.createMany({
+        data: scores.map((score) => ({ evaluationId, ...score })),
+      });
+      return tx.evaluation.update({
+        where: { id: evaluationId },
+        data: {
+          totalRating: totalRating(toScoreMap(scores)),
+          // `maxTotalRating` is deliberately not rewritten: it was frozen with
+          // a template version that is immutable, so it cannot have moved.
+          //
+          // Only the two editable header dates below. `trainingEmployedAt`,
+          // `evaluatorName` and `evaluatorPosition` are write-time snapshots
+          // and are deliberately NOT recomputed here: re-deriving them from the
+          // student's *current* placement would blank the establishment on a
+          // sheet whose student has since been unassigned, which is the same
+          // placement-governs-the-sheet coupling this change removes.
+          ...trainingDates(data),
+          comments: data.comments,
+          recommendations: data.recommendations,
+        },
+        include: EVALUATION_INCLUDE,
+      });
+    }, CASCADE_TRANSACTION_OPTIONS);
 
     return { ...withSectionTotals(updated), canModify: true };
   }
 
-  /** Hard-deletes an evaluation this supervisor wrote. */
+  /** Hard-deletes an evaluation this supervisor wrote, and its scores. */
   async removeEvaluation(userId: string, evaluationId: string) {
     const supervisor = await this.getSupervisorByUserId(userId);
     await this.verifyEvaluationBelongsToSupervisor(evaluationId, supervisor.id);
 
-    await this.prisma.client.evaluation.delete({ where: { id: evaluationId } });
+    // The schema has no onDelete: Cascade, so the score rows go first or the
+    // foreign key aborts the delete.
+    await this.prisma.client.$transaction(async (tx) => {
+      await tx.evaluationScore.deleteMany({ where: { evaluationId } });
+      await tx.evaluation.delete({ where: { id: evaluationId } });
+    }, CASCADE_TRANSACTION_OPTIONS);
 
     return { id: evaluationId, deleted: true };
   }
@@ -444,7 +478,12 @@ export class SupervisorService {
   ) {
     const evaluation = await this.prisma.client.evaluation.findUnique({
       where: { id: evaluationId },
-      select: { id: true, studentId: true, supervisorId: true },
+      select: {
+        id: true,
+        studentId: true,
+        supervisorId: true,
+        templateId: true,
+      },
     });
     if (!evaluation) {
       throw new NotFoundException('Evaluation not found');
@@ -461,17 +500,19 @@ export class SupervisorService {
    * The blank official sheet — sections, items, printed letters and wording.
    *
    * Served rather than duplicated in the client, so the form's text has exactly
-   * one source (src/common/evaluation-scoring.ts).
+   * one source: the PUBLISHED template the coordinator maintains. 409 when the
+   * school has not published one yet.
    */
   async getEvaluationSheet(userId: string) {
     const supervisor = await this.getSupervisorWithHeaderFields(userId);
+    const template = await this.templates.getPublishedTemplate();
     const establishment = await this.prisma.client.establishment.findUnique({
       where: { id: supervisor.establishmentId },
       select: { name: true },
     });
 
     return {
-      ...sheetDefinition(),
+      ...sheetDefinition(template),
       // The header/footer blanks as they will be filled in for this
       // supervisor. Served here rather than read off the dashboard so the form
       // depends on one endpoint, not two.
@@ -538,8 +579,18 @@ function trainingDates(data: {
 }
 
 /** What both create and update accept, before the server derives the rest. */
-export type EvaluationInput = ItemScores & {
+export type EvaluationInput = {
   studentId: string;
+  /**
+   * Item key -> score, keyed by the template's own items.
+   *
+   * Deliberately a nested object rather than the nineteen top-level fields it
+   * used to be: the sheet is data now, and a DTO cannot whitelist keys it does
+   * not know while `forbidNonWhitelisted` is on. The real check is
+   * `EvaluationTemplateService.validateScores`, against the template version
+   * this evaluation belongs to.
+   */
+  scores: Record<string, unknown>;
   trainingStartedAt?: string;
   trainingEndedAt?: string;
   /** `null` = explicitly cleared; `undefined` = not supplied, leave unchanged. */
@@ -547,8 +598,34 @@ export type EvaluationInput = ItemScores & {
   recommendations?: string | null;
 };
 
-/** Shared shape so supervisor and coordinator lists render identically. */
+/**
+ * Shared shape so supervisor and coordinator lists render identically.
+ *
+ * The template is joined in, not looked up against the published version: a
+ * signed sheet renders with the wording, item set and order it was signed with,
+ * whatever the school has published since.
+ */
 export const EVALUATION_INCLUDE = {
+  template: {
+    select: {
+      id: true,
+      version: true,
+      title: true,
+      sections: {
+        orderBy: { order: 'asc' },
+        select: {
+          key: true,
+          label: true,
+          order: true,
+          items: {
+            orderBy: { order: 'asc' },
+            select: { key: true, label: true, order: true },
+          },
+        },
+      },
+    },
+  },
+  scores: { select: { itemKey: true, score: true } },
   student: {
     select: {
       id: true,
@@ -568,16 +645,43 @@ export const EVALUATION_INCLUDE = {
   },
 } as const;
 
+/** An evaluation read with `EVALUATION_INCLUDE`. */
+type EvaluationWithSheet = {
+  template: SheetTemplate;
+  scores: { itemKey: string; score: number }[];
+};
+
 /**
- * Attaches the per-section totals. Recomputed on read rather than stored — they
- * are a presentation detail derived from the nineteen items, unlike
- * `totalRating`, which is part of the record.
+ * Rebuilds the printed sheet: each section with its numeral, letters, maximum
+ * and total, each item with its wording and score.
+ *
+ * Recomputed on read rather than stored — numerals, letters and section totals
+ * are presentation derived from the template's order and the score rows, unlike
+ * `totalRating` and `maxTotalRating`, which are part of the record and are left
+ * exactly as they were signed.
+ *
+ * The raw `template` and `scores` relations are dropped from the result: the
+ * client renders from `sections`, and shipping both would be the same data
+ * twice.
  */
-export function withSectionTotals<T extends ItemScores>(evaluation: T) {
-  const { sections, maxTotalRating } = scoreBreakdown(
-    pickItemScores(evaluation),
-  );
-  return { ...evaluation, sections, maxTotalRating };
+export function withSectionTotals<T extends EvaluationWithSheet>(
+  evaluation: T,
+) {
+  const { template, scores, ...rest } = evaluation;
+  const sections = buildSections(template, toScoreMap(scores));
+  return {
+    ...rest,
+    templateVersion: template.version,
+    templateTitle: template.title,
+    sections,
+  };
+}
+
+/** Score rows as the map the scoring helpers take. */
+function toScoreMap(
+  scores: ReadonlyArray<{ itemKey: string; score: number }>,
+): Map<string, number> {
+  return new Map(scores.map((score) => [score.itemKey, score.score]));
 }
 
 /** Monday 00:00 UTC of the current week. */

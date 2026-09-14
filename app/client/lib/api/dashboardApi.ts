@@ -59,12 +59,18 @@ export interface CoordinatorDashboard {
     totalHoursLogged: number;
     /**
      * Average TOTAL RATING of the official evaluation sheet, out of
-     * `maxTotalRating` (95). null when nothing has been evaluated — distinct
-     * from an average of 0. The old `averageLevel` performance band is gone
-     * with the retired rubric.
+     * `maxTotalRating`. null when nothing has been evaluated — distinct from an
+     * average of 0. The old `averageLevel` performance band is gone with the
+     * retired rubric.
      */
     averageRating: number | null;
-    maxTotalRating: number;
+    /**
+     * The currently published sheet's maximum, or null when the school has not
+     * published one. Evaluations written on an earlier version were scored out
+     * of that version's maximum, so the average is only strictly comparable
+     * against this number while every sheet shares a version.
+     */
+    maxTotalRating: number | null;
     totalEvaluations: number;
   };
   attendanceTrend: AttendanceTrendPoint[];

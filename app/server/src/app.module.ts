@@ -12,6 +12,7 @@ import { EstablishmentModule } from './establishment/establishment.module';
 import { StudentModule } from './student/student.module';
 import { SupervisorModule } from './supervisor/supervisor.module';
 import { MessagesModule } from './messages/messages.module';
+import { EvaluationTemplateModule } from './evaluation-template/evaluation-template.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { MessagesModule } from './messages/messages.module';
     StudentModule,
     SupervisorModule,
     MessagesModule,
+    EvaluationTemplateModule,
   ],
   controllers: [AppController],
   providers: [AppService],
