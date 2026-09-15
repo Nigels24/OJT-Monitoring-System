@@ -24,6 +24,7 @@ import {
   HelpCircle,
   LogIn,
 } from "lucide-react";
+import Overlay from "@/components/ui/Overlay";
 
 type Role = "Student" | "Supervisor" | "Coordinator";
 
@@ -85,75 +86,80 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
       <Card className="w-full max-w-md">
-        <h1 className="text-2xl font-bold text-center text-blue-600">
-          OJT Monitoring System
-        </h1>
-        <p className="text-center text-gray-500 text-sm mt-1 mb-6">
-          {SCHOOL_NAME}
-        </p>
+      <h1 className="text-2xl font-bold text-center text-blue-600">
+        OJT Monitoring System
+      </h1>
+      <p className="text-center text-gray-500 text-sm mt-1 mb-6">
+        {SCHOOL_NAME}
+      </p>
 
-        <Tabs
-          options={ROLE_OPTIONS}
-          value={selectedRole}
-          onChange={setSelectedRole}
+      <Tabs
+        options={ROLE_OPTIONS}
+        value={selectedRole}
+        onChange={setSelectedRole}
+      />
+
+      <form onSubmit={handleSubmit} className="mt-6">
+        <TextField
+          label="Username"
+          labelIcon={User}
+          fieldIcon={User}
+          type="text"
+          required
+          autoComplete="username"
+          value={identifier}
+          onChange={(e) => setIdentifier(e.target.value)}
+          placeholder="Enter your username or email"
+          className="mb-4"
         />
 
-        <form onSubmit={handleSubmit} className="mt-6">
-          <TextField
-            label="Username"
-            labelIcon={User}
-            fieldIcon={User}
-            type="text"
-            required
-            autoComplete="username"
-            value={identifier}
-            onChange={(e) => setIdentifier(e.target.value)}
-            placeholder="Enter your username or email"
-            className="mb-4"
-          />
+        <TextField
+          label="Password"
+          labelIcon={Lock}
+          fieldIcon={KeyRound}
+          type="password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Enter your password"
+          className="mb-2"
+        />
 
-          <TextField
-            label="Password"
-            labelIcon={Lock}
-            fieldIcon={KeyRound}
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter your password"
-            className="mb-2"
-          />
+        <div className="text-right mb-5">
+          <button
+            type="button"
+            onClick={() => {
+              setShowForgotHelp(true);
+            }}
+            className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+          >
+            <HelpCircle size={14} />
+            Forgot Password?
+          </button>
+        </div>
 
-          <div className="text-right mb-5">
-            <button
-              type="button"
-              onClick={() => {
-                setShowForgotHelp(true);
-              }}
-              className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
-            >
-              <HelpCircle size={14} />
-              Forgot Password?
-            </button>
-          </div>
+        {error && (
+          <p className="text-sm text-red-600 mb-4 text-center">{error}</p>
+        )}
 
-          {error && (
-            <p className="text-sm text-red-600 mb-4 text-center">{error}</p>
-          )}
-
-          <Button type="submit" icon={LogIn} loading={isLoading}>
-            Login to OJT Monitoring System
-          </Button>
-        </form>
+        <Button type="submit" icon={LogIn} loading={isLoading}>
+          Login to OJT Monitoring System
+        </Button>
+      </form>
       </Card>
 
       {/* There is no emailed reset link — no mail infrastructure exists, and
           the coordinator already issues every credential by hand. So this
           explains the actual recovery route rather than pretending to send
           an email. */}
-      {showForgotHelp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <Card className="w-full max-w-md">
+      <Overlay
+        open={showForgotHelp}
+        label="Forgot your password?"
+        onClose={() => {
+          setShowForgotHelp(false);
+        }}
+      >
+        <Card className="w-full max-w-md">
             <div className="flex items-center gap-2 mb-4">
               <KeyRound size={20} className="text-blue-600" />
               <h2 className="text-lg font-semibold text-gray-900">
@@ -195,9 +201,8 @@ export default function LoginPage() {
                 Got it
               </Button>
             </div>
-          </Card>
-        </div>
-      )}
+        </Card>
+      </Overlay>
     </div>
   );
 }

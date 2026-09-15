@@ -126,6 +126,20 @@ export interface EvaluationSheetPayload {
   scores: Record<string, number>;
 }
 
+/** The generated sheet, plus whatever filename the server named it. */
+export interface EvaluationPdfDownload {
+  blob: Blob;
+  /** From Content-Disposition; `null` when the browser could not read it. */
+  filename: string | null;
+}
+
+/** `attachment; filename="Evaluation-....pdf"` -> the filename. */
+function filenameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export const evaluationApi = createApi({
   reducerPath: "evaluationApi",
   baseQuery: baseQueryWithAuth,
@@ -145,6 +159,31 @@ export const evaluationApi = createApi({
     getAllEvaluations: builder.query<Evaluation[], void>({
       query: () => "/coordinator/evaluations",
       providesTags: ["Evaluation"],
+    }),
+    /**
+     * Coordinator: the filled-in sheet as a PDF.
+     *
+     * Goes through the slice rather than a plain `<a href>` because the route
+     * is bearer-authenticated — an anchor would send neither the token nor the
+     * API base URL. Nothing is cached (`keepUnusedDataFor: 0`, no tags): the
+     * response is a file the user is saving, not state the UI reads.
+     */
+    downloadEvaluationPdf: builder.query<EvaluationPdfDownload, string>({
+      query: (id) => ({
+        url: `/coordinator/evaluations/${id}/pdf`,
+        responseHandler: async (response) => {
+          // An error still answers in Nest's JSON shape; parsing it as one
+          // keeps the snackbar readable instead of showing a blob of bytes.
+          if (!response.ok) return response.json();
+          return {
+            blob: await response.blob(),
+            filename: filenameFromDisposition(
+              response.headers.get("Content-Disposition"),
+            ),
+          };
+        },
+      }),
+      keepUnusedDataFor: 0,
     }),
     createEvaluation: builder.mutation<
       Evaluation,
@@ -184,6 +223,7 @@ export const evaluationApi = createApi({
 
 export const {
   useGetEvaluationSheetQuery,
+  useLazyDownloadEvaluationPdfQuery,
   useGetMyEvaluationsQuery,
   useGetAllEvaluationsQuery,
   useCreateEvaluationMutation,

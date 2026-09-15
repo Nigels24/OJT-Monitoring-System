@@ -4,6 +4,7 @@ import TextField from "@/components/ui/TextField";
 import Button from "@/components/ui/Button";
 import { Student, useResetStudentPasswordMutation } from "@/lib/api/studentApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
+import Overlay from "@/components/ui/Overlay";
 
 interface ResetPasswordDialogProps {
   student: Student | null;
@@ -81,7 +82,12 @@ export default function ResetPasswordDialog({
   if (!student) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+    <Overlay
+      open
+      label="Reset Password"
+      onClose={close}
+      closeOnBackdrop={false}
+    >
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
         <div className="flex items-center justify-between p-4 md:p-6 border-b border-gray-200">
           <div className="flex items-center gap-2">
@@ -178,6 +184,6 @@ export default function ResetPasswordDialog({
           )}
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }

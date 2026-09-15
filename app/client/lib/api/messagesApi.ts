@@ -43,7 +43,7 @@ export interface SendMessageRequest {
   content: string;
 }
 
-/** Backs the sidebar bell — same shape as a filtered `ConversationSummary[]`, plus the total for the badge. */
+/** Backs the sidebar's Messages badge — a filtered `ConversationSummary[]`, plus the total. */
 export interface UnreadSummary {
   totalUnread: number;
   conversations: ConversationSummary[];
@@ -108,7 +108,7 @@ export const messagesApi = createApi({
       ],
       // The server marks the caller's `lastReadAt` as part of this same GET,
       // so every fetch of an open thread is also what clears its unread
-      // count — nudge the bell so the badge drops without a page reload
+      // count — nudge the unread query so the badge drops without a page reload
       // instead of waiting out its own poll interval.
       async onQueryStarted(_args, { dispatch, queryFulfilled }) {
         try {

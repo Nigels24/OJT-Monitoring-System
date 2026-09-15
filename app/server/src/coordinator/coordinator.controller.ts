@@ -8,8 +8,10 @@ import {
   Body,
   UseGuards,
   Req,
+  Res,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import type { Response } from 'express';
 import {
   IsDateString,
   IsEmail,
@@ -256,6 +258,28 @@ export class CoordinatorController {
   @Get('evaluations')
   listEvaluations() {
     return this.coordinatorService.listEvaluations();
+  }
+
+  /**
+   * The filled-in sheet as a PDF, for the coordinator to forward to the
+   * student. `@Res()` because this answers with bytes and two headers rather
+   * than JSON — the whole document is built first and sent in one write, so a
+   * failure is a clean error rather than a truncated 200 (see
+   * `common/evaluation-pdf.ts`).
+   */
+  @Get('evaluations/:id/pdf')
+  async downloadEvaluationPdf(
+    @Param('id') id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { filename, body } =
+      await this.coordinatorService.getEvaluationPdf(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    // The filename is ASCII and separator-free by construction, so the plain
+    // quoted form is enough — no RFC 5987 encoding needed.
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', body.length);
+    res.end(body);
   }
 
   @Get('documents')

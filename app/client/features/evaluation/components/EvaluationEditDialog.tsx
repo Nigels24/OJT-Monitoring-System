@@ -19,10 +19,7 @@ interface EvaluationEditDialogProps {
   sheet: EvaluationSheet | undefined;
   sheetLoading: boolean;
   students: SupervisorStudent[];
-  form: Omit<
-    EvaluationFormProps,
-    "sheet" | "sheetLoading" | "students" | "variant"
-  >;
+  form: Omit<EvaluationFormProps, "sheet" | "sheetLoading" | "students">;
   onClose: () => void;
 }
 
@@ -50,7 +47,6 @@ export default function EvaluationEditDialog({
         sheet={sheet}
         sheetLoading={sheetLoading}
         students={students}
-        variant="modal"
         {...form}
       />
     </FormDialog>

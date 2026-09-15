@@ -1,6 +1,7 @@
 "use client";
 
 import { LucideIcon, X } from "lucide-react";
+import Overlay from "./Overlay";
 
 interface ViewDialogProps {
   open: boolean;
@@ -10,6 +11,10 @@ interface ViewDialogProps {
   children: React.ReactNode;
 }
 
+/**
+ * Read-only content in a modal. A backdrop click closes it — there is nothing
+ * to lose — which is the one thing that separates it from `FormDialog`.
+ */
 export default function ViewDialog({
   open,
   title,
@@ -17,17 +22,9 @@ export default function ViewDialog({
   onClose,
   children,
 }: ViewDialogProps) {
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-2 md:px-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-2xl p-4 md:p-6 max-w-2xl w-full max-h-[90vh] overflow-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Overlay open={open} label={title} onClose={onClose}>
+      <div className="bg-white rounded-2xl p-4 md:p-6 max-w-2xl w-full max-h-[90vh] overflow-auto">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             {Icon && <Icon size={24} className="text-blue-600" />}
@@ -44,6 +41,6 @@ export default function ViewDialog({
 
         <div className="space-y-4">{children}</div>
       </div>
-    </div>
+    </Overlay>
   );
 }

@@ -6,6 +6,7 @@ import TextField from "@/components/ui/TextField";
 import Button from "@/components/ui/Button";
 import { useChangePasswordMutation } from "@/lib/api/authApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
+import Overlay from "@/components/ui/Overlay";
 
 interface ChangePasswordDialogProps {
   open: boolean;
@@ -76,7 +77,12 @@ export default function ChangePasswordDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+    <Overlay
+      open
+      label="Change Password"
+      onClose={close}
+      closeOnBackdrop={false}
+    >
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
         <div className="flex items-center justify-between p-4 md:p-6 border-b border-gray-200">
           <div className="flex items-center gap-2">
@@ -152,6 +158,6 @@ export default function ChangePasswordDialog({
           </div>
         </form>
       </div>
-    </div>
+    </Overlay>
   );
 }

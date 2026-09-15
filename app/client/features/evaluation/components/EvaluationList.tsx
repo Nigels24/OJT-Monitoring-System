@@ -2,7 +2,9 @@ import {
   Search,
   ChevronLeft,
   ChevronRight,
+  Download,
   Eye,
+  Loader2,
   Star,
   Pencil,
   Trash2,
@@ -28,6 +30,14 @@ interface EvaluationListProps {
    */
   onEdit?: (evaluation: Evaluation) => void;
   onDelete?: (evaluation: Evaluation) => void;
+  /**
+   * Coordinator only for now — they are the one who forwards the sheet to the
+   * student. Supplying it is what renders the download button; the supervisor's
+   * page passes nothing and the column is unchanged for them.
+   */
+  onDownload?: (evaluation: Evaluation) => void;
+  /** The row whose PDF is being generated, if any. */
+  downloadingId?: string | null;
   canModify?: (evaluation: Evaluation) => boolean;
   emptyMessage?: string;
 }
@@ -50,6 +60,8 @@ export default function EvaluationList({
   onView,
   onEdit,
   onDelete,
+  onDownload,
+  downloadingId = null,
   canModify,
   emptyMessage = "No evaluations yet.",
 }: EvaluationListProps) {
@@ -135,6 +147,7 @@ export default function EvaluationList({
         // The server 403s a non-author anyway; not offering the button keeps
         // the UI honest about what this supervisor may do.
         const mine = canModify ? canModify(r) : false;
+        const downloading = downloadingId === r.id;
         return (
           <div className="flex items-center gap-1">
             <button
@@ -144,6 +157,21 @@ export default function EvaluationList({
             >
               <Eye size={14} />
             </button>
+            {onDownload && (
+              <button
+                onClick={() => onDownload(r)}
+                disabled={downloading}
+                className="p-1 md:p-1.5 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                aria-label={`Download ${r.student.user.name}'s evaluation as PDF`}
+                title="Download PDF"
+              >
+                {downloading ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Download size={14} />
+                )}
+              </button>
+            )}
             {mine && onEdit && (
               <button
                 onClick={() => onEdit(r)}

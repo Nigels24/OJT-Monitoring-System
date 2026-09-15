@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { ChevronDown } from "lucide-react";
+import { Z_LAYERS } from "./Overlay";
 
 interface SelectOption {
   label: string;
@@ -69,7 +70,10 @@ export default function SelectField({
       </button>
 
       {isOpen && !disabled && (
-        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-auto">
+        <div
+          style={{ zIndex: Z_LAYERS.dropdown }}
+          className="absolute w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-auto"
+        >
           {options.map((option) => (
             <button
               key={option.value}

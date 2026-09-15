@@ -3,6 +3,7 @@ import TextArea from "@/components/ui/TextArea";
 import Button from "@/components/ui/Button";
 import { SupervisorAttendance } from "@/lib/api/supervisorApi";
 import { formatDateOnly } from "@/lib/format";
+import Overlay from "@/components/ui/Overlay";
 
 interface DeclineDialogProps {
   target: SupervisorAttendance | null;
@@ -30,7 +31,12 @@ export default function DeclineDialog({
   if (!target) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+    <Overlay
+      open
+      label="Decline Attendance"
+      onClose={onCancel}
+      closeOnBackdrop={false}
+    >
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
         <div className="flex items-center justify-between p-4 md:p-6 border-b border-gray-200">
           <div className="flex items-center gap-2">
@@ -105,6 +111,6 @@ export default function DeclineDialog({
           </div>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }

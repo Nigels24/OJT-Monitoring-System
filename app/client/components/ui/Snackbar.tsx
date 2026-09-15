@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle, XCircle, Info, AlertTriangle, X } from "lucide-react";
 import { useSnackbar, SnackbarType } from "@/lib/contexts/SnackbarContext";
+import { Z_LAYERS } from "./Overlay";
 
 const positionClasses = {
   "top-left": "top-4 left-4",
@@ -122,7 +123,10 @@ export default function Snackbar() {
 
   return (
     <div
-      className={`fixed z-50 ${positionClasses[snackbar.position]} transition-all duration-300 ease-in-out opacity-100 scale-100`}
+      // Above dialogs, from the one scale: an error raised by an open form has
+      // to be readable over that form.
+      style={{ zIndex: Z_LAYERS.snackbar }}
+      className={`fixed ${positionClasses[snackbar.position]} transition-all duration-300 ease-in-out opacity-100 scale-100`}
     >
       <SnackbarContent
         key={snackbar.id}

@@ -15,6 +15,10 @@ import {
   withSectionTotals,
 } from '../supervisor/supervisor.service';
 import { MAX_SCORE } from '../common/evaluation-scoring';
+import {
+  evaluationPdfFilename,
+  renderEvaluationPdf,
+} from '../common/evaluation-pdf';
 import { DOCUMENT_INCLUDE, withSignedUrl } from '../student/student.service';
 import {
   CASCADE_TRANSACTION_OPTIONS,
@@ -520,6 +524,30 @@ export class CoordinatorService {
       ...withSectionTotals(evaluation),
       canModify: false,
     }));
+  }
+
+  /**
+   * One evaluation as a printable PDF, for the coordinator to forward.
+   *
+   * The service fetches and the renderer draws — `common/evaluation-pdf.ts`
+   * never touches the database. `EVALUATION_INCLUDE` joins the template the
+   * sheet was *signed* on, so the file prints that version's items, wording and
+   * maximum whatever has been published since.
+   */
+  async getEvaluationPdf(evaluationId: string) {
+    const evaluation = await this.prisma.client.evaluation.findUnique({
+      where: { id: evaluationId },
+      include: EVALUATION_INCLUDE,
+    });
+    if (!evaluation) {
+      throw new NotFoundException('Evaluation not found');
+    }
+
+    const sheet = withSectionTotals(evaluation);
+    return {
+      filename: evaluationPdfFilename(sheet),
+      body: await renderEvaluationPdf(sheet),
+    };
   }
 
   async updateStudent(studentId: string, data: StudentDetails) {

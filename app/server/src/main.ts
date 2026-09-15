@@ -23,6 +23,10 @@ async function bootstrap() {
   app.enableCors({
     origin: 'http://localhost:3001',
     credentials: true,
+    // Content-Disposition is not a CORS-safelisted response header, so without
+    // this the evaluation PDF download can read the bytes but not the filename
+    // the server chose, and falls back to rebuilding it client-side.
+    exposedHeaders: ['Content-Disposition'],
   });
 
   await app.listen(process.env.PORT ?? 3000);

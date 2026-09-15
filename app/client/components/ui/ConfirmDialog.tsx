@@ -1,6 +1,7 @@
 "use client";
 
 import { LucideIcon, HelpCircle } from "lucide-react";
+import Overlay from "./Overlay";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -25,22 +26,16 @@ export default function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  if (!open) return null;
-
   const confirmColor =
     variant === "danger"
       ? "bg-red-500 hover:bg-red-600"
       : "bg-green-500 hover:bg-green-600";
 
+  // Escape and the backdrop both cancel — the safe half of an irreversible
+  // choice, the same one Cancel holds focus for.
   return (
-    <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4"
-      onClick={onCancel}
-    >
-      <div
-        className="bg-white rounded-2xl p-8 max-w-sm w-full max-h-[90vh] overflow-y-auto text-center"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Overlay open={open} label={title} onClose={onCancel}>
+      <div className="bg-white rounded-2xl p-8 max-w-sm w-full max-h-[90vh] overflow-y-auto text-center">
         <div className="flex justify-center mb-4">
           <div className="w-16 h-16 rounded-full border-2 border-sky-300 flex items-center justify-center">
             <Icon size={28} className="text-sky-400" />
@@ -61,7 +56,8 @@ export default function ConfirmDialog({
             Cancel takes focus on open, not confirm: these dialogs guard
             irreversible deletes, so a stray Enter must not be the thing that
             destroys a record. The dialog unmounts when closed, so `autoFocus`
-            fires on every open.
+            fires on every open, and `Overlay` leaves it alone precisely
+            because something inside already holds focus.
           */}
           <button
             onClick={onCancel}
@@ -72,6 +68,6 @@ export default function ConfirmDialog({
           </button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }

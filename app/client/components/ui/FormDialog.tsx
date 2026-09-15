@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
 import { LucideIcon, X } from "lucide-react";
+import Overlay from "./Overlay";
 
 interface FormDialogProps {
   open: boolean;
@@ -15,21 +15,21 @@ interface FormDialogProps {
 /**
  * A modal that holds a form, as `ViewDialog` holds read-only content.
  *
- * Three deliberate differences from `ViewDialog`, all because there is
- * unsaved work inside:
+ * Both sit on `Overlay`, which is what makes them modal at all — portalled out
+ * of the page, backdrop over the whole viewport, scroll locked, focus trapped.
+ * Three deliberate differences from `ViewDialog`, all because there is unsaved
+ * work inside:
  *
- * - **A backdrop click does not close it.** Losing a part-filled sheet to a
- *   stray click is not recoverable. Escape and the X are the ways out, the
- *   same pair `ConfirmDialog` offers through its Cancel button.
- * - **The body scrolls, not the dialog.** The panel is capped at the viewport
- *   and its body is the scrollport, so a form can park a `sticky bottom-0`
- *   action row against the foot of the dialog while the sheet scrolls behind
- *   it.
- * - **The page behind is frozen** while it is open, so scrolling inside the
- *   dialog never turns into scrolling the page underneath it.
- *
- * Full-screen below `md` (a tall form has no room for a floating panel at
- * 390px), a centred panel above it.
+ * - **A backdrop click does not close it** (`closeOnBackdrop={false}`). Losing
+ *   a part-filled sheet to a stray click is not recoverable. Escape and the X
+ *   are the ways out, the same pair `ConfirmDialog` offers through Cancel.
+ * - **The body scrolls, not the dialog.** The panel is capped at the viewport,
+ *   the header stays put, and the body is the scrollport — so a long form
+ *   scrolls inside the dialog while the panel keeps clipping it at its rounded
+ *   edges. The form's own actions ride at the end of that scroll, like the foot
+ *   of the paper sheet; nothing here pins them over the content.
+ * - **Full-screen below `md`** (`align="stretch"`), because a tall form has no
+ *   room for a floating panel at 390px.
  */
 export default function FormDialog({
   open,
@@ -39,31 +39,13 @@ export default function FormDialog({
   onClose,
   children,
 }: FormDialogProps) {
-  useEffect(() => {
-    if (!open) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open, onClose]);
-
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 bg-black/50 z-50 flex items-stretch md:items-center justify-center md:p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
+    <Overlay
+      open={open}
+      label={title}
+      onClose={onClose}
+      closeOnBackdrop={false}
+      align="stretch"
     >
       <div className="bg-white w-full h-full md:h-auto md:max-h-[90vh] md:max-w-3xl md:rounded-2xl flex flex-col overflow-hidden">
         <div className="flex items-start justify-between gap-3 px-4 md:px-6 py-4 border-b border-gray-200 shrink-0">
@@ -90,6 +72,6 @@ export default function FormDialog({
 
         <div className="flex-1 overflow-y-auto px-4 md:px-6 py-5">{children}</div>
       </div>
-    </div>
+    </Overlay>
   );
 }

@@ -6,16 +6,29 @@ import { COORDINATOR_NAV } from "@/features/coordinator/nav";
 import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
-import { Star, ClipboardCheck, TrendingUp, Building2 } from "lucide-react";
+import Tabs from "@/components/ui/Tabs";
+import {
+  Star,
+  ClipboardCheck,
+  TrendingUp,
+  Building2,
+  FileText,
+} from "lucide-react";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import {
   useGetAllEvaluationsQuery,
   Evaluation,
 } from "@/lib/api/evaluationApi";
 import EvaluationList from "@/features/evaluation/components/EvaluationList";
+import { useEvaluationDownload } from "@/features/evaluation/hooks/use-evaluation-download";
 import EvaluationViewDialog from "@/features/evaluation/components/EvaluationViewDialog";
+import { useEvaluationTemplate } from "@/features/evaluation-template/hooks/use-evaluation-template";
+import EvaluationSheetTab from "@/features/evaluation-template/components/EvaluationSheetTab";
 
 const PAGE_SIZE = 10;
+
+/** Read-only oversight, and the sheet itself — two tabs, one route. */
+type EvaluationTab = "submitted" | "sheet";
 
 /**
  * Read-only oversight across every establishment.
@@ -30,6 +43,9 @@ export default function CoordinatorEvaluationsPage() {
   const [viewTarget, setViewTarget] = useState<Evaluation | null>(null);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [tab, setTab] = useState<EvaluationTab>("submitted");
+  const template = useEvaluationTemplate();
+  const { downloadingId, downloadEvaluation } = useEvaluationDownload();
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -92,44 +108,74 @@ export default function CoordinatorEvaluationsPage() {
           />
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-          <StatCard
-            label="Total Evaluations"
-            value={stats.total}
-            icon={ClipboardCheck}
-            variant="accent"
-          />
-          <StatCard
-            label="Average Total Rating"
-            value={stats.averageRating ?? "—"}
-            icon={TrendingUp}
-            subtext={
-              stats.averageRating === null || stats.maxTotalRating === null
-                ? "No evaluations yet"
-                : `out of ${stats.maxTotalRating}`
-            }
-          />
-          <StatCard
-            label="Establishments Reporting"
-            value={stats.establishments}
-            icon={Building2}
+        <div className="mb-4">
+          <Tabs
+            options={[
+              {
+                key: "submitted" as const,
+                label: "Submitted Evaluations",
+                icon: ClipboardCheck,
+              },
+              {
+                key: "sheet" as const,
+                label: "Evaluation Sheet",
+                icon: FileText,
+              },
+            ]}
+            value={tab}
+            onChange={setTab}
           />
         </div>
 
-        <Card>
-          <EvaluationList
-            rows={paged}
-            isLoading={isLoading}
-            search={search}
-            page={page}
-            totalPages={totalPages}
-            showEstablishment
-            onSearchChange={setSearch}
-            onPageChange={setPage}
-            onView={setViewTarget}
-            emptyMessage="No supervisor has submitted an evaluation yet."
-          />
-        </Card>
+        {tab === "submitted" ? (
+          <>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+            <StatCard
+              label="Total Evaluations"
+              value={stats.total}
+              icon={ClipboardCheck}
+              variant="accent"
+            />
+            <StatCard
+              label="Average Total Rating"
+              value={stats.averageRating ?? "—"}
+              icon={TrendingUp}
+              subtext={
+                stats.averageRating === null || stats.maxTotalRating === null
+                  ? "No evaluations yet"
+                  : `out of ${stats.maxTotalRating}`
+              }
+            />
+            <StatCard
+              label="Establishments Reporting"
+              value={stats.establishments}
+              icon={Building2}
+            />
+          </div>
+
+          <Card>
+            <EvaluationList
+              rows={paged}
+              isLoading={isLoading}
+              search={search}
+              page={page}
+              totalPages={totalPages}
+              showEstablishment
+              onSearchChange={setSearch}
+              onPageChange={setPage}
+              onView={setViewTarget}
+              onDownload={(evaluation) => {
+                void downloadEvaluation(evaluation);
+              }}
+              downloadingId={downloadingId}
+              emptyMessage="No supervisor has submitted an evaluation yet."
+            />
+          </Card>
+          </>
+        ) : (
+          <EvaluationSheetTab {...template} />
+        )}
+
       </main>
 
       <EvaluationViewDialog

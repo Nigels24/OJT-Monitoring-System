@@ -2,6 +2,7 @@ import { UserCog, X } from "lucide-react";
 import SupervisorForm from "./SupervisorForm";
 import { Establishment } from "@/lib/api/establishmentApi";
 import type { SupervisorForm as SupervisorFormValues } from "../hooks/use-supervisor-management";
+import Overlay from "@/components/ui/Overlay";
 
 interface SupervisorFormDialogProps {
   open: boolean;
@@ -29,7 +30,12 @@ export default function SupervisorFormDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+    <Overlay
+      open
+      label="Add Supervisor"
+      onClose={onClose}
+      closeOnBackdrop={false}
+    >
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
         <div className="flex items-center justify-between p-4 md:p-6 border-b border-gray-200">
           <div className="flex items-center gap-2">
@@ -59,6 +65,6 @@ export default function SupervisorFormDialog({
           />
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }

@@ -1,5 +1,6 @@
 import { Building2, X } from "lucide-react";
 import EstablishmentForm from "./EstablishmentForm";
+import Overlay from "@/components/ui/Overlay";
 
 interface EstablishmentEditDialogProps {
   open: boolean;
@@ -57,7 +58,12 @@ export default function EstablishmentEditDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+    <Overlay
+      open
+      label={editTarget ? "Edit Establishment" : "Add Establishment"}
+      onClose={onClose}
+      closeOnBackdrop={false}
+    >
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 md:p-6 border-b border-gray-200">
@@ -104,6 +110,6 @@ export default function EstablishmentEditDialog({
           />
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }

@@ -57,7 +57,7 @@ OJT-Monitoring-System/
     ├── server/             # NestJS 11 API — port 3000
     │   ├── src/
     │   │   ├── auth/           # AuthModule, JwtStrategy, RolesGuard, authed-request.ts, jwt.constants.ts
-    │   │   ├── common/         # attendance-hours.ts, cascade-delete.ts, dates.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
+    │   │   ├── common/         # attendance-hours.ts, cascade-delete.ts, dates.ts, evaluation-pdf.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
     │   │   ├── coordinator/    # student + supervisor management, dashboard, attendance oversight
     │   │   ├── establishment/  # CRUD — open reads, COORDINATOR writes
     │   │   ├── evaluation-template/  # the versioned evaluation sheet — COORDINATOR writes, SupervisorService reads
@@ -97,29 +97,50 @@ OJT-Monitoring-System/
 `student-portal` (the *student's own* view — do not conflate the two), `supervisor` (the
 *supervisor's own* approval-queue view), `supervisor-management` (the *coordinator's* view
 of supervisors — same create/list/reset-password split as student vs student-portal),
-`evaluation`, `attendance-oversight`, `document` (the *coordinator's* cross-student review
-queue — `student-portal` owns the student's own upload/list/delete view of the same
-table), `messaging` (one domain, all three roles — see §5 "Which feature domain?"),
-`coordinator` (nav only), `account`.
+`evaluation` (submitted sheets, supervisor and coordinator), `evaluation-template` (the
+*coordinator's* editor for the sheet itself — a different audience and a different shape
+from the evaluations written on it, so a separate domain), `attendance-oversight`,
+`document` (the *coordinator's* cross-student review queue — `student-portal` owns the
+student's own upload/list/delete view of the same table), `messaging` (one domain, all
+three roles — see §5 "Which feature domain?"), `coordinator` (nav only), `account`.
 
 **API slices** (`lib/api/*.ts`): `authApi`, `establishmentApi`, `studentApi`,
 `studentPortalApi`, `supervisorApi`, `supervisorManagementApi`, `evaluationApi`,
-`dashboardApi`, `attendanceOversightApi`, `documentApi`, `messagesApi`. Each is registered
-in `lib/store.ts` — **reducer *and* middleware**.
+`evaluationTemplateApi`, `dashboardApi`, `attendanceOversightApi`, `documentApi`,
+`messagesApi`. Each is registered in `lib/store.ts` — **reducer *and* middleware**.
 
-**UI primitives** (`components/ui/`): DataTable, StatCard, StatusBadge, ProgressBar,
-TrendChart, RankedBarList, ConfirmDialog, ViewDialog, FormDialog, TextField, TextArea,
-SelectField, SearchInput, Tabs, Card, Button, PageHeader, Avatar, DetailItem, Snackbar,
-FileLink, SectionError. Reuse these
-before adding a new one. `TextField` auto-adds a show/hide eye toggle whenever
+**UI primitives** (`components/ui/`): Overlay, DataTable, StatCard, StatusBadge,
+ProgressBar, TrendChart, RankedBarList, ConfirmDialog, ViewDialog, FormDialog, TextField,
+TextArea, SelectField, SearchInput, Tabs, Card, Button, PageHeader, Avatar, DetailItem,
+Snackbar, FileLink, SectionError. Reuse these
+before adding a new one.
+
+**`Overlay` is the base every modal sits on, and the single source of the app's stacking
+order.** It portals to `document.body`, lays one backdrop over the whole viewport (the
+sidebar included, so nothing behind it is clickable), centres the panel identically on
+every page, locks body scroll behind a **module-level reference count** (a `ConfirmDialog`
+over a `FormDialog` is two locks; only the outermost close unlocks), moves focus into the
+dialog and back to the trigger on close, and keeps Tab inside — for the topmost overlay
+only, tracked in a module-level stack, so Escape closes the dialog on top rather than all
+of them. `ConfirmDialog`, `ViewDialog`, `FormDialog`, the eight feature dialogs
+(`ChangePasswordDialog`, `StudentEditDialog`, `ResetPasswordDialog`,
+`SupervisorFormDialog`, `ResetSupervisorPasswordDialog`, `EstablishmentEditDialog`,
+`RejectDialog`, `DeclineDialog`) and the login page's recovery panel all render through
+it. Its `Z_LAYERS` export (sidebar 20 · stickyHeader 30 · dropdown 40 · dialog 50 ·
+snackbar 60 — the snackbar above dialogs so a save error is readable over an open form) is
+the **only** place a z-index is chosen: `Sidebar`, `SelectField` and `Snackbar` read from
+it, and **no component may write a bare `z-*` class or a literal `zIndex`** (§8 item 26). `TextField` auto-adds a show/hide eye toggle whenever
 `type="password"` — don't build a second one at the call site; a field that should stay
 plain text (the coordinator's issued-password fields, so it can be read back) uses
 `type="text"` instead, deliberately. **A modal holding unsaved work uses `FormDialog`,
 not `ViewDialog`** — `ViewDialog` closes on a backdrop click, which is right for read-only
 content and destroys a part-filled form; `FormDialog` closes only on Escape or its X,
-locks the page's scroll, and gives the form a scrollport its action row can `sticky` to.
+locks the page's scroll, keeps its header pinned, and scrolls the form inside the panel.
+The form's actions ride at the **end** of that scroll — `FormDialog` pins nothing over the
+content, and the one form that tried it (the evaluation sheet) was better without it.
 `ConfirmDialog` gives **Cancel** the autofocus, not
-the confirm button — it guards irreversible deletes, so a stray Enter must not be what
+the confirm button — `Overlay` leaves a dialog's own `autoFocus` alone precisely because
+something inside already holds focus — — it guards irreversible deletes, so a stray Enter must not be what
 destroys a record. The copy for the three cascading-delete confirmations lives in
 `lib/format.ts` (`deleteStudentMessage`, `deleteSupervisorMessage`,
 `deleteEstablishmentMessage`, over a shared `countLabel` pluraliser) rather than inline in
@@ -530,6 +551,7 @@ table; never derive one from the other.
 | GET | `/coordinator/dashboard` | COORDINATOR | real aggregates |
 | GET | `/coordinator/attendance` | COORDINATOR | cross-establishment oversight |
 | GET | `/coordinator/evaluations` | COORDINATOR | read-only, all establishments |
+| GET | `/coordinator/evaluations/:id/pdf` | COORDINATOR | the filled-in sheet as a PDF, `Content-Disposition: attachment`. 404 if the evaluation is gone. Rendered from **that evaluation's own template version**, never the published one |
 | GET | `/coordinator/evaluation-template` | COORDINATOR | `{ published, draft }`, each a sheet or `null` |
 | PUT | `/coordinator/evaluation-template/draft` | COORDINATOR | replaces the **whole** draft: `{ title, sections: [{ key?, label, items: [{ key?, label }] }] }`. Array order is printed order. A `key` keeps an existing section/item (and its score association); omitting one adds it. A key not already on the draft — or on the published sheet a first draft is started from — is a 400. Creates the draft if there is none |
 | POST | `/coordinator/evaluation-template/publish` | COORDINATOR | publishes the draft: next version number, `publishedAt` set, previous published version ARCHIVED. **409 when there is no draft** — the published sheet is immutable |
@@ -556,7 +578,7 @@ table; never derive one from the other.
 | POST | `/messages/conversations` | any signed-in | `{ userId }` — find-or-create a 1:1; 403 if `userId` isn't in the caller's contacts |
 | GET | `/messages/conversations/:id` | any signed-in | cursor-paginated (`before` message id, `limit` default 50 max 100); marks `lastReadAt`; 403 unless a participant |
 | POST | `/messages/conversations/:id` | any signed-in | `{ content }`, 1–2000 chars; 403 unless a participant |
-| GET | `/messages/unread` | any signed-in | `{ totalUnread, conversations }` — backs the sidebar bell; same conversation-summary shape as `/messages/conversations`, filtered to `unreadCount > 0` |
+| GET | `/messages/unread` | any signed-in | `{ totalUnread, conversations }` — backs the sidebar's Messages badge; same conversation-summary shape as `/messages/conversations`, filtered to `unreadCount > 0` |
 | GET | `/` | **public** | `AppController`, no guard — health check only |
 
 ---
@@ -795,13 +817,26 @@ needed (§7).
 - **Supervisor Management (Coordinator)** — create, list, password reset, and delete
   (guarded — see §6). No edit yet (§8 item 10). Table columns: name, username, email,
   establishment, position.
-- **The evaluation sheet is the school's to change.** `EvaluationTemplate` and friends
-  (§6) hold it as a versioned, immutable-once-published template; the coordinator owns
-  the draft, supervisors consume whichever version is published, and every signed
-  evaluation keeps the wording, item set and maximum it was signed with. **API only so
-  far** — `GET /coordinator/evaluation-template`, `PUT`/`DELETE …/draft`,
-  `POST …/publish` (§5), exercised by curl. **There is no coordinator UI yet**; that is
-  the next task. Version 1 is the nineteen-item sheet, seeded by the migration.
+- **The evaluation sheet is the school's to change**, end to end. `EvaluationTemplate`
+  and friends (§6) hold it as a versioned, immutable-once-published template; the
+  coordinator owns the draft, supervisors consume whichever version is published, and
+  every signed evaluation keeps the wording, item set and maximum it was signed with.
+  Version 1 is the nineteen-item sheet, seeded by the migration.
+  Client: a second tab on `/coordinator/evaluations` (`components/ui/Tabs`, no new route
+  and no nav entry) — "Submitted Evaluations" is the existing table, "Evaluation Sheet"
+  is the editor. It shows the published version read-only with the versioning rule stated
+  in plain words, and a draft editor: title, ordered sections and items, move up/down,
+  add/delete, with numerals, letters, each section's `n × 5 = m POINTS` and the TOTAL
+  RATING **derived live** from position and item count (`features/evaluation-template/
+  sheet.ts`, which mirrors the server's derivation — never the form's text). The server's
+  bounds are mirrored there too, so a 400 is not how the user discovers them, and
+  deleting the last item in a section or the last section is disabled with the reason
+  printed beside it. Save is `PUT` (whole draft); Publish is behind a `ConfirmDialog` and
+  **disabled while the draft is dirty or invalid, with the reason shown**; Discard is
+  behind a danger `ConfirmDialog`. After publishing, the `EvaluationTemplate` tag
+  refreshes the coordinator's own view; a supervisor's blank-sheet query lives in a
+  different login's store, so they pick the new version up on their next page load —
+  there is nothing to invalidate cross-slice and nothing to fix.
 - **Evaluations** — the official sheet end to end, now rendered from its template
   version rather than from nineteen hardcoded columns. Supervisor creates, **edits and deletes** their own; repeatable per
   student; coordinator reads across establishments, read-only. Edit/delete authorship is
@@ -819,7 +854,7 @@ needed (§7).
   **Creating and editing are two separate surfaces.** The page's inline card is
   permanently "New Evaluation"; the table's pencil opens the submitted sheet in a modal
   (`EvaluationEditDialog` over `components/ui/FormDialog`), which renders the same
-  `EvaluationForm` with `variant="modal"` — one implementation of the sheet, never a
+  `EvaluationForm` — one implementation of the sheet, never a
   second copy. `use-evaluations.ts` backs them with **two independent drafts**: the
   per-sheet state and totals live in an internal `useEvaluationDraft(sheet, students)`
   called twice, so a half-filled new evaluation survives opening, saving and cancelling an
@@ -828,6 +863,21 @@ needed (§7).
   current total sits at the top of the modal body — a student legitimately has several
   sheets and an edit must never read as a new one; its Cancel closes the modal. A failed
   save keeps the modal open with the error in the form's own error slot.
+- **Evaluation PDF (Coordinator)** — `GET /coordinator/evaluations/:id/pdf` renders the
+  filled-in sheet with `pdfkit` and answers with the whole document in one write
+  (`@Res()`, `Content-Type: application/pdf`, `Content-Disposition: attachment`). The
+  layout lives in `src/common/evaluation-pdf.ts` as a pure function over the row
+  `coordinator.service.ts` already returns — the service fetches, the common module
+  draws, and the renderer never queries. **It prints the evaluation's own template
+  version**: sections, wording, letters, numerals and `maxTotalRating` all come from the
+  row, so a version-1 sheet downloads as nineteen items out of 95 forever. It paginates
+  (a section that won't fit starts a new page) and footers every page with the sheet
+  version and Page X of Y; date-only fields print in UTC and `createdAt` in Asia/Manila.
+  Client: `downloadEvaluationPdf` on `evaluationApi` (a query with a `responseHandler`, no
+  tags, `keepUnusedDataFor: 0`) driven by `features/evaluation/hooks/
+  use-evaluation-download.ts` — object URL, temporary anchor, revoke; the row being
+  generated spins its own button. `EvaluationList` renders the download icon only when an
+  `onDownload` prop is supplied, which is the coordinator's page and not the supervisor's.
 - **Password recovery** — self-service change for everyone, coordinator-issued reset for
   students and supervisors, CLI for the coordinator.
 - **Cascading deletes** — student, supervisor and establishment delete for real, each in a
@@ -871,20 +921,19 @@ needed (§7).
   `useEffect` is exactly this repo's one pre-existing lint violation (§8 item 1) and must
   not be reproduced. Two-pane layout (conversation list + open thread), collapsing to one
   pane at a time below the `md` breakpoint.
-  **Notification bell** — `GET /messages/unread` reuses `getConversations`'s own
-  query-building logic (`MessagesService.buildConversationSummaries`, extracted so both
-  endpoints share one definition of "unread" and the same fixed three-query cost, no
-  per-conversation fan-out), filtered to `unreadCount > 0`. Client:
-  `features/messaging/components/NotificationBell.tsx`, mounted in `Sidebar.tsx`'s footer
-  for all three roles, polls on the same 10s/`skipPollingIfUnfocused` cadence as the
-  conversation list — a separate poll from it, not a shared subscription, since the bell
-  has to run on every page, not just Messages. Badge hidden at zero, no sound. Opening a
-  conversation's `GET /messages/conversations/:id` (which already marks `lastReadAt`)
-  invalidates the `Unread` tag so the badge drops without a page reload. The dropdown
-  lists unread conversations with sender and a snippet, but its entries link to the
-  Messages page generally, not to the specific thread — `use-messaging.ts` keeps
-  `activeConversationId` as local state with no URL param, and deep-linking wasn't worth
-  touching that hook's pagination-reset invariants for.
+  **Unread badge on the Messages nav entry** — `GET /messages/unread` reuses
+  `getConversations`'s own query-building logic (`MessagesService.buildConversationSummaries`,
+  extracted so both endpoints share one definition of "unread" and the same fixed
+  three-query cost, no per-conversation fan-out), filtered to `unreadCount > 0`. Client:
+  `features/messaging/hooks/use-unread-count.ts`, called by `Sidebar.tsx` — a separate
+  10s/`skipPollingIfUnfocused` poll from the conversation list's, not a shared
+  subscription, since the sidebar runs on every page. **There is no notification bell and
+  no dropdown**; `NotificationBell.tsx` was deleted and its panel replaced by a badge on
+  the nav row itself. The badge counts **conversations** with something unread, reads `9+`
+  past nine, and is absent at zero. `Sidebar` decides which entry carries it from the
+  item's own `href` ending in `/messages`, so all three `nav.ts` files stay ignorant of
+  messaging. Opening a conversation's `GET /messages/conversations/:id` (which already
+  marks `lastReadAt`) invalidates the `Unread` tag, so the badge clears without a reload.
 
 **All three roles land on a real page after login. No role 404s.**
 
@@ -897,12 +946,7 @@ start date and confirm the oversight page shows a real percentage.
 
 ### Partially built
 
-**The evaluation sheet template — API only, no coordinator UI.** The models, the
-migration, the four `/coordinator/evaluation-template` endpoints and the supervisor side
-(published sheet, nested `scores`, per-version validation and rendering) are all built;
-the screen the coordinator edits and publishes the sheet on is not. Until it exists the
-sheet can only be changed by curl, and the client's only changes for it were the ones
-needed to stop assuming 19 items / 4 sections / 95 points.
+Nothing. The coordinator's sheet editor was the last piece of the template work.
 
 `stats.averageRating` on the coordinator dashboard is an average out of
 `stats.maxTotalRating`, which is now the **published template's** maximum and may be
@@ -917,14 +961,12 @@ would only make the contact picker match the prototype's panel exactly.
 
 ### Remaining build order
 
-1. **Run migration `20260914142544_evaluation_sheet_template`**, then
-   `npx prisma generate`. Until the client is regenerated, `npx tsc --noEmit` and
-   `npm run lint` on the server report errors for every new model — they are stale-client
-   artifacts, not code faults.
-2. **The coordinator's UI for editing the sheet** (part 2): read
-   `GET /coordinator/evaluation-template`, `PUT` the draft, publish it. No client code
-   for this exists yet.
-3. **Verify `Student.startDate` live** (above).
+1. **Install the PDF dependency**: `cd app/server && npm install pdfkit && npm install -D
+   @types/pdfkit`. Until it is installed, `npx tsc --noEmit` and `npm run lint` on the
+   server report errors for every line of `src/common/evaluation-pdf.ts` — unresolved-
+   module artifacts, not code faults. Migration `20260914142544_evaluation_sheet_template`
+   has been applied and the Prisma client regenerated.
+2. **Verify `Student.startDate` live** (above).
 
 ### File storage — the decided design
 
@@ -1117,6 +1159,51 @@ Ordered roughly by how likely each is to bite.
     This was a **breaking contract change** — the nineteen top-level item fields are
     gone. Same trap as the multipart gotcha in §7; expect it again for any body whose
     keys are data.
+
+25. **A draft row that has no key yet must be re-seeded from the save response.**
+    `PUT /coordinator/evaluation-template/draft` replaces the whole draft: a row sent
+    *with* its key is kept, a row sent *without* one is new and the server mints a key.
+    So local editor state goes stale the instant a save succeeds — save again from it and
+    every row the user added is added a **second** time, because it still has no key.
+    `use-evaluation-template.ts` re-seeds the editor from each save's own response
+    (`fromSheet(saved)`), which is also a legal seeding point under §8 item 18's rules:
+    an event handler, not an effect. The other seeding point is the mirrored-draft-id
+    check in the render body, which loads an existing draft on arrival and clears the
+    editor once a publish or discard leaves none.
+
+26. **Every overlay is portalled, and reads its layer from `Z_LAYERS` — because a
+    stacking context beats any z-index.** A `z-index` only orders siblings within one
+    stacking context, and the app is full of them: gradient page headers, sticky bars, the
+    sidebar (`position: sticky` creates one on its own), any card with a `z-*`. A dialog
+    rendered inline in the page therefore paints *under* the page's own search field and
+    selects no matter how large its z-index is — that was the bug, on Student Management,
+    Documents, student Attendance and Credentials, and raising the number is never the
+    fix. Both halves are required: `createPortal(node, document.body)` to get out of the
+    page's contexts, and the single `Z_LAYERS` scale in `components/ui/Overlay.tsx` to
+    order what is left. **No bare `z-*` class and no literal `zIndex` anywhere else.**
+    A scroll container is the same problem in miniature: the sidebar is `overflow-y-auto`,
+    so anything `absolute` inside it is cropped by it — which is what happened to the
+    notification bell's panel before it was removed. When such a thing is anchored to a
+    trigger, `position: fixed` coordinates come from the trigger's
+    `getBoundingClientRect()`, clamped to the viewport, and **measured in event callbacks,
+    never in an effect body**: the open handler measures once, and an effect attaches
+    `resize`/`scroll` (capture phase) listeners whose *callbacks* call `setState`. That is
+    allowed by `react-hooks/set-state-in-effect`; the equivalent measure-and-set inside
+    the effect body is not (§8 item 18). `Overlay` needs none of that — it is
+    `fixed inset-0`, so it measures nothing — and its scroll-lock reference count and
+    overlay stack are module-level variables for the same reason: they are facts about the
+    document, shared by every instance, and nothing renders from them.
+
+27. **A file download through RTK Query needs two things the JSON endpoints don't.**
+    First, `Content-Disposition` is not a CORS-safelisted response header, so the browser
+    cannot read the filename the server chose unless `main.ts`'s `enableCors` lists it in
+    `exposedHeaders` — without that the client silently falls back to rebuilding the name
+    (`use-evaluation-download.ts` mirrors `evaluationPdfFilename`; keep the two in step).
+    Second, a `Blob` in the cache trips Redux's dev-only `serializableCheck`, so
+    `store.ts` exempts `evaluationApi`'s query results — every other endpoint on that
+    slice returns plain JSON, so the exemption hides nothing. The endpoint's
+    `responseHandler` also parses a **non-ok** response as JSON rather than as a blob, or
+    the snackbar would show bytes instead of Nest's message.
 
 ---
 
