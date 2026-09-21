@@ -164,7 +164,7 @@ export function useAttendanceLog() {
 
   const noticeMessage =
     !isDisabled && isPastScheduledEnd
-      ? `Your scheduled OJT ended on ${formatDateLabel(endDate!)}. Keep logging until your required hours are met.`
+      ? `Your expected end date (${formatDateLabel(endDate!)}) has passed. Keep logging until your required hours are met.`
       : undefined;
 
   const setField =

@@ -29,6 +29,7 @@ interface StudentFormProps {
   establishments: Establishment[];
   courseOptions: string[];
   yearLevelOptions: string[];
+  genderOptions: string[];
   statusOptions: StudentStatus[];
   setField: (
     key: keyof StudentFormValues,
@@ -53,6 +54,7 @@ export default function StudentForm({
   establishments,
   courseOptions,
   yearLevelOptions,
+  genderOptions,
   statusOptions,
   setField,
   onSubmit,
@@ -190,6 +192,21 @@ export default function StudentForm({
             value={form.dateOfBirth}
             onChange={setField("dateOfBirth")}
           />
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Gender
+            </label>
+            <SelectField
+              value={form.gender}
+              onChange={setValue("gender")}
+              placeholder="Select Gender"
+              options={[
+                { label: "Not specified", value: "" },
+                ...genderOptions.map((g) => ({ label: g, value: g })),
+              ]}
+              className="w-full"
+            />
+          </div>
           <TextField
             label="Contact Number"
             labelIcon={Phone}
@@ -291,6 +308,14 @@ export default function StudentForm({
             type="date"
             value={form.startDate}
             onChange={setField("startDate")}
+          />
+          <TextField
+            label="Expected End Date"
+            labelIcon={CalendarDays}
+            fieldIcon={CalendarDays}
+            type="date"
+            value={form.endDate}
+            onChange={setField("endDate")}
           />
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">

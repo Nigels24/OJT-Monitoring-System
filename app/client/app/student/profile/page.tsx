@@ -123,7 +123,7 @@ export default function StudentProfilePage() {
                   icon={CalendarClock}
                 />
                 <DetailItem
-                  label="End Date"
+                  label="Expected End Date"
                   value={formatDateOnly(data.endDate, "") || null}
                   icon={CalendarClock}
                 />

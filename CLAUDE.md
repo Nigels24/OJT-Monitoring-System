@@ -800,7 +800,7 @@ needed (§7).
 - **Auth** — `POST /auth/login`, JWT bearer, role-based routing.
 - **Establishment (Coordinator)** — full CRUD, PSGC cascading address dropdowns.
 - **Student Management (Coordinator)** — full CRUD, computed hours, progress, stats,
-  including a writable `Student.startDate`. `school` is not one of the writable fields —
+  including writable `Student.startDate`, expected `endDate` and `gender` (§8 item 12). `school` is not one of the writable fields —
   this system serves exactly one school, permanently named by the `SCHOOL_NAME` constant
   (`server/src/common/school.ts`, `client/lib/school.ts`, deliberately duplicated with a
   comment on each pointing at the other, since the two projects share no code). The
@@ -961,12 +961,11 @@ would only make the contact picker match the prototype's panel exactly.
 
 ### Remaining build order
 
-1. **Install the PDF dependency**: `cd app/server && npm install pdfkit && npm install -D
-   @types/pdfkit`. Until it is installed, `npx tsc --noEmit` and `npm run lint` on the
-   server report errors for every line of `src/common/evaluation-pdf.ts` — unresolved-
-   module artifacts, not code faults. Migration `20260914142544_evaluation_sheet_template`
-   has been applied and the Prisma client regenerated.
-2. **Verify `Student.startDate` live** (above).
+1. **Verify `Student.startDate` live** (above).
+
+`pdfkit` and `@types/pdfkit` are installed (`package.json`); on a fresh clone
+`npm install` provides them. Migration `20260914142544_evaluation_sheet_template` is the
+latest.
 
 ### File storage — the decided design
 
@@ -1047,11 +1046,17 @@ Ordered roughly by how likely each is to bite.
     details/establishment. Don't build it speculatively — add it when asked.
 11. The coordinator dashboard's attendance trend has no server-side date range; it is
     always the last 6 weeks from today.
-12. `Student.gender` and `Student.endDate` are readable on the Profile page but have
-    **no write path anywhere** — the coordinator's `CreateStudentDto`/`StudentDetailsDto`
-    doesn't declare them and the student's own `PATCH /student/profile` deliberately
-    excludes them (self-edit is limited to `contactNumber`/`address`). They will read `—`
-    for every student until the coordinator's student form is extended to set them.
+12. `Student.endDate` is the **expected** end of the OJT — a coordinator-entered planning
+    date, labelled "Expected End Date" everywhere it is shown — never the actual completion
+    date, and it bounds nothing: completion is by hours, only `status: COMPLETED` closes
+    attendance (`StudentService.submitAttendance`; the student attendance page merely shows a
+    non-blocking notice once the date has passed). Both it and `Student.gender`
+    (`Male`/`Female`/`Other`, the establishment form's list) are set only from the
+    coordinator's student form (`StudentDetailsDto`); the student's own `PATCH
+    /student/profile` still excludes them. Both are nullable end to end, so students created
+    before this show `—`. One knock-on: the supervisor's evaluation form prefills "Training
+    Date Ended" from `endDate`, so that prefill is now an *expected* date the supervisor is
+    expected to correct if the training actually ended earlier or later.
 13. `getMyDocuments`/`getDocuments`/`getMyCredentials` mint a signed URL per row on every
     request (`Promise.all(rows.map(withSignedUrl))`) — an extra Supabase round trip per
     row, same scaling shape as item 4. Fine at current volume; revisit alongside item 3 if

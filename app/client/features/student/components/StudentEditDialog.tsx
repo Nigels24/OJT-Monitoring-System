@@ -15,6 +15,7 @@ interface StudentEditDialogProps {
   establishments: Establishment[];
   courseOptions: string[];
   yearLevelOptions: string[];
+  genderOptions: string[];
   statusOptions: StudentStatus[];
   setField: (
     key: keyof StudentFormValues,
@@ -33,6 +34,7 @@ export default function StudentEditDialog({
   establishments,
   courseOptions,
   yearLevelOptions,
+  genderOptions,
   statusOptions,
   setField,
   onSubmit,
@@ -74,6 +76,7 @@ export default function StudentEditDialog({
             establishments={establishments}
             courseOptions={courseOptions}
             yearLevelOptions={yearLevelOptions}
+            genderOptions={genderOptions}
             statusOptions={statusOptions}
             setField={setField}
             onSubmit={onSubmit}

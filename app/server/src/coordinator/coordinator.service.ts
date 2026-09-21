@@ -51,6 +51,9 @@ interface StudentDetails {
   establishmentId?: string | null;
   requiredHours?: number;
   startDate?: string | null;
+  /** Expected end of the OJT; never a bound on attendance. */
+  endDate?: string | null;
+  gender?: string | null;
   status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
 }
 
@@ -836,6 +839,8 @@ function studentProfileData(data: StudentDetails) {
     establishmentId: data.establishmentId,
     requiredHours: data.requiredHours,
     startDate: toNullableDate(data.startDate),
+    endDate: toNullableDate(data.endDate),
+    gender: data.gender,
     status: data.status,
   };
 }

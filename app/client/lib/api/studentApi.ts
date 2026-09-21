@@ -32,6 +32,9 @@ export interface Student {
   establishmentId?: string | null;
   requiredHours: number;
   startDate?: string | null;
+  /** Expected end of the OJT, not the actual completion date. */
+  endDate?: string | null;
+  gender?: string | null;
   status: StudentStatus;
   /** Sum of APPROVED attendance hours, computed server-side. */
   completedHours: number;
@@ -78,6 +81,8 @@ export interface StudentDetailsRequest {
   establishmentId?: string | null;
   requiredHours?: number;
   startDate?: string | null;
+  endDate?: string | null;
+  gender?: string | null;
   status?: StudentStatus;
 }
 

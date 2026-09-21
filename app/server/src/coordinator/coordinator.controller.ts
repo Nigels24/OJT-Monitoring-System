@@ -164,6 +164,22 @@ class StudentDetailsDto {
   @IsDateString()
   startDate?: string | null;
 
+  // The EXPECTED end of the OJT — a planning date the coordinator enters, not
+  // the day it actually finished. It bounds nothing: completion is decided by
+  // hours (see StudentService.submitAttendance), so a student who hasn't met
+  // requiredHours by this date keeps logging past it.
+  @IsOptional()
+  @EmptyToNull()
+  @IsDateString()
+  endDate?: string | null;
+
+  // Same option list as the coordinator's establishment form. Null on both
+  // sides for the students that predate the field.
+  @IsOptional()
+  @EmptyToNull()
+  @IsIn(['Male', 'Female', 'Other'])
+  gender?: string | null;
+
   @IsOptional()
   @IsIn(['ACTIVE', 'PENDING', 'COMPLETED', 'INACTIVE'])
   status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';

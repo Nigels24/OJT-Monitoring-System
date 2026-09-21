@@ -1,7 +1,7 @@
 import { Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { useState, useEffect } from "react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
-import { Eye, Pencil, Trash2, MessageCircle, Building2, MapPin, User, Phone, Mail, CalendarCheck, Users } from "lucide-react";
+import { Eye, Pencil, Trash2, Building2, MapPin, User, Phone, Mail, CalendarCheck, Users } from "lucide-react";
 import { Establishment } from "@/lib/api/establishmentApi";
 
 interface EstablishmentListProps {
@@ -137,12 +137,6 @@ export default function EstablishmentList({
             aria-label="Delete"
           >
             <Trash2 size={14} />
-          </button>
-          <button
-            className="p-1 md:p-1.5 rounded-md border border-green-200 text-green-600 hover:bg-green-50"
-            aria-label="Message"
-          >
-            <MessageCircle size={14} />
           </button>
         </div>
       ),

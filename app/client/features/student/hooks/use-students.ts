@@ -27,6 +27,9 @@ export const YEAR_LEVEL_OPTIONS = [
   "4th Year",
 ];
 
+// Same values as the establishment coordinator's gender select.
+export const GENDER_OPTIONS = ["Male", "Female", "Other"];
+
 export const STATUS_OPTIONS: StudentStatus[] = [
   "ACTIVE",
   "PENDING",
@@ -44,6 +47,7 @@ const EMPTY_FORM = {
   password: "",
   age: "",
   dateOfBirth: "",
+  gender: "",
   contactNumber: "",
   address: "",
   course: "",
@@ -51,6 +55,7 @@ const EMPTY_FORM = {
   establishmentId: "",
   requiredHours: "",
   startDate: "",
+  endDate: "",
   status: "ACTIVE" as StudentStatus,
 };
 
@@ -99,6 +104,7 @@ export function useStudents() {
     dateOfBirth: form.dateOfBirth
       ? new Date(form.dateOfBirth).toISOString()
       : null,
+    gender: form.gender || null,
     contactNumber: form.contactNumber || null,
     address: form.address || null,
     course: form.course || null,
@@ -106,6 +112,7 @@ export function useStudents() {
     establishmentId: form.establishmentId || null,
     requiredHours: form.requiredHours ? Number(form.requiredHours) : undefined,
     startDate: form.startDate ? new Date(form.startDate).toISOString() : null,
+    endDate: form.endDate ? new Date(form.endDate).toISOString() : null,
     status: form.status,
   });
 
@@ -176,6 +183,7 @@ export function useStudents() {
       age: student.age?.toString() ?? "",
       // <input type="date"> wants yyyy-mm-dd, not a full ISO timestamp.
       dateOfBirth: student.dateOfBirth ? student.dateOfBirth.slice(0, 10) : "",
+      gender: student.gender ?? "",
       contactNumber: student.contactNumber ?? "",
       address: student.address ?? "",
       course: student.course ?? "",
@@ -183,6 +191,7 @@ export function useStudents() {
       establishmentId: student.establishmentId ?? "",
       requiredHours: student.requiredHours?.toString() ?? "",
       startDate: student.startDate ? student.startDate.slice(0, 10) : "",
+      endDate: student.endDate ? student.endDate.slice(0, 10) : "",
       status: student.status,
     });
     setIsDialogOpen(true);
@@ -257,6 +266,7 @@ export function useStudents() {
 
     COURSE_OPTIONS,
     YEAR_LEVEL_OPTIONS,
+    GENDER_OPTIONS,
     STATUS_OPTIONS,
 
     setField,
