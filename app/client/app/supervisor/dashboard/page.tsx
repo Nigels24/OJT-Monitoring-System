@@ -36,7 +36,7 @@ export default function SupervisorDashboardPage() {
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar
         orgName={data?.establishment?.name ?? "Establishment"}
-        orgSubtitle="OJT Monitoring"
+        orgSubtitle="Barangay San Francisco Pag. City ZDS"
         items={SUPERVISOR_NAV}
         userName={displayName}
         userSubtitle={data?.supervisor.position ?? undefined}

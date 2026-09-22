@@ -123,13 +123,12 @@ export interface StudentDocument {
 
 /** Mirrors the server's CREDENTIAL_TYPES — no Prisma enum, so keep both lists in sync by hand. */
 export const CREDENTIAL_TYPES = [
-  "RESUME",
+  "APPLICATION_LETTER",
   "ENDORSEMENT_LETTER",
-  "MEDICAL_CERTIFICATE",
-  "PARENTAL_CONSENT",
-  "INSURANCE",
-  "CERTIFICATE_OF_REGISTRATION",
-  "OTHER",
+  "RESUME",
+  "MOA",
+  "PARENTS_CONSENT",
+  "WAIVER",
 ] as const;
 
 export type CredentialType = (typeof CREDENTIAL_TYPES)[number];

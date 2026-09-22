@@ -46,7 +46,7 @@ export default function SupervisorAttendancePage() {
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar
         orgName="WPH Institute"
-        orgSubtitle="OJT Monitoring"
+        orgSubtitle="Barangay San Francisco Pag. City ZDS"
         items={SUPERVISOR_NAV}
         userName={currentUser?.name || "Supervisor"}
       />

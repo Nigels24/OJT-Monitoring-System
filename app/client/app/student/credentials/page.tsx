@@ -35,7 +35,7 @@ export default function StudentCredentialsPage() {
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar
         orgName="WPH Institute"
-        orgSubtitle="OJT Monitoring"
+        orgSubtitle="Barangay San Francisco Pag. City ZDS"
         items={STUDENT_NAV}
         userName={currentUser?.name || "Student"}
       />

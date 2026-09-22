@@ -36,7 +36,7 @@ export default function CoordinatorAttendancePage() {
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar
         orgName="WPH Institute"
-        orgSubtitle="Barangay San Francisco"
+        orgSubtitle="Barangay San Francisco Pag. City ZDS"
         items={COORDINATOR_NAV}
         userName={currentUser?.name || "Coordinator"}
       />
