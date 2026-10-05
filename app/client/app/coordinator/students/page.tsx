@@ -149,7 +149,6 @@ export default function StudentManagementPage() {
                 attendances: deleteTarget._count?.attendances ?? 0,
                 evaluations: deleteTarget._count?.evaluations ?? 0,
                 documents: deleteTarget._count?.documents ?? 0,
-                credentials: deleteTarget._count?.credentials ?? 0,
               })
             : ""
         }

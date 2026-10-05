@@ -145,12 +145,12 @@ export default function StudentList({
       ),
     },
     {
-      key: "credentials",
-      label: "Credentials",
+      key: "documents",
+      label: "Documents",
       render: (r) => (
         <span className="inline-flex items-center gap-1 text-gray-600">
           <FileText size={14} />
-          {r._count?.credentials ?? 0}
+          {r._count?.documents ?? 0}
         </span>
       ),
     },

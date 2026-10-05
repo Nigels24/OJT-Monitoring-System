@@ -14,6 +14,7 @@ import ViewDialog from "@/components/ui/ViewDialog";
 import DetailItem from "@/components/ui/DetailItem";
 import ProgressBar from "@/components/ui/ProgressBar";
 import { Student } from "@/lib/api/studentApi";
+import { DOCUMENT_TYPES } from "@/lib/api/studentPortalApi";
 import { formatDateOnly } from "@/lib/format";
 import { SCHOOL_NAME } from "@/lib/school";
 
@@ -129,8 +130,8 @@ export default function StudentViewDialog({
                 icon={Clock}
               />
               <DetailItem
-                label="Credentials Submitted"
-                value={student._count?.credentials ?? 0}
+                label="Documents Submitted"
+                value={`${student._count?.documents ?? 0} / ${DOCUMENT_TYPES.length}`}
                 icon={FileText}
               />
             </div>

@@ -62,14 +62,12 @@ export function deleteStudentMessage(
     attendances: number;
     evaluations: number;
     documents: number;
-    credentials: number;
   },
 ): string {
   const items = [
     countLabel(counts.attendances, "attendance record"),
     countLabel(counts.evaluations, "evaluation"),
     countLabel(counts.documents, "document"),
-    countLabel(counts.credentials, "credential"),
   ].join(", ");
   return (
     `Permanently delete ${name}? This also deletes ${items} and their login. ` +

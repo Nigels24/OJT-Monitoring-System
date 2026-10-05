@@ -59,7 +59,7 @@ export interface StudentDashboard {
     declinedCount: number;
   };
   recentAttendance: AttendanceRecord[];
-  _count: { documents: number; credentials: number };
+  _count: { documents: number };
 }
 
 export interface SubmitAttendanceRequest {
@@ -102,27 +102,14 @@ export interface UpdateProfileRequest {
   address?: string | null;
 }
 
+/**
+ * Only the coordinator's old review queue (`features/document/`) still imports
+ * this; Documents have no status any more. Delete it with that queue.
+ */
 export type DocumentStatus = "PENDING" | "APPROVED" | "REJECTED";
 
-export interface StudentDocument {
-  id: string;
-  name: string;
-  /** A freshly minted 1-hour signed URL, never the raw storage path. */
-  /**
-   * Short-lived signed URL, minted per request. `null` when the stored object
-   * is missing — the row is shown as unavailable rather than the whole list
-   * failing to load.
-   */
-  fileUrl: string | null;
-  status: DocumentStatus;
-  /** The coordinator's explanation, set only when status is REJECTED. */
-  reviewNote: string | null;
-  reviewedAt: string | null;
-  uploadedAt: string;
-}
-
-/** Mirrors the server's CREDENTIAL_TYPES — no Prisma enum, so keep both lists in sync by hand. */
-export const CREDENTIAL_TYPES = [
+/** Mirrors the server's `DocumentType` enum, in the same order — keep both in sync by hand. */
+export const DOCUMENT_TYPES = [
   "APPLICATION_LETTER",
   "ENDORSEMENT_LETTER",
   "RESUME",
@@ -131,19 +118,22 @@ export const CREDENTIAL_TYPES = [
   "WAIVER",
 ] as const;
 
-export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
+export type DocumentType = (typeof DOCUMENT_TYPES)[number];
 
-export interface StudentCredential {
+/** One file per type: a second upload of the same type replaces this row's file. */
+export interface StudentDocument {
   id: string;
-  type: CredentialType;
-  /** A freshly minted 1-hour signed URL, never the raw storage path. */
+  type: DocumentType;
+  /** Display name, resolved server-side from the original upload. */
+  fileName: string;
   /**
    * Short-lived signed URL, minted per request. `null` when the stored object
    * is missing — the row is shown as unavailable rather than the whole list
    * failing to load.
    */
   fileUrl: string | null;
-  createdAt: string;
+  /** Bumped when the file is replaced. */
+  uploadedAt: string;
 }
 
 export const studentPortalApi = createApi({
@@ -154,7 +144,6 @@ export const studentPortalApi = createApi({
     "MyAttendance",
     "MyProfile",
     "MyDocuments",
-    "MyCredentials",
   ],
   endpoints: (builder) => ({
     getMyDashboard: builder.query<StudentDashboard, void>({
@@ -195,7 +184,10 @@ export const studentPortalApi = createApi({
       query: () => "/student/documents",
       providesTags: ["MyDocuments"],
     }),
-    /** `body` is a FormData with `name` and `file` fields — see the Documents upload form. */
+    /**
+     * `body` is a FormData with `type` and `file` fields. Upserts on type: an
+     * already-uploaded type has its file replaced, not a second row added.
+     */
     uploadDocument: builder.mutation<StudentDocument, FormData>({
       query: (body) => ({
         url: "/student/documents",
@@ -214,30 +206,6 @@ export const studentPortalApi = createApi({
         invalidatesTags: ["MyDocuments", "MyDashboard"],
       },
     ),
-    getMyCredentials: builder.query<StudentCredential[], void>({
-      query: () => "/student/credentials",
-      providesTags: ["MyCredentials"],
-    }),
-    /** `body` is a FormData with `type` and `file` fields — see the Credentials upload form. */
-    uploadCredential: builder.mutation<StudentCredential, FormData>({
-      query: (body) => ({
-        url: "/student/credentials",
-        method: "POST",
-        body,
-      }),
-      // The dashboard's _count.credentials changes on every upload too.
-      invalidatesTags: ["MyCredentials", "MyDashboard"],
-    }),
-    deleteCredential: builder.mutation<
-      { id: string; deleted: boolean },
-      string
-    >({
-      query: (id) => ({
-        url: `/student/credentials/${id}`,
-        method: "DELETE",
-      }),
-      invalidatesTags: ["MyCredentials", "MyDashboard"],
-    }),
   }),
 });
 
@@ -250,7 +218,4 @@ export const {
   useGetMyDocumentsQuery,
   useUploadDocumentMutation,
   useDeleteDocumentMutation,
-  useGetMyCredentialsQuery,
-  useUploadCredentialMutation,
-  useDeleteCredentialMutation,
 } = studentPortalApi;

@@ -210,7 +210,8 @@ Documents hang off Student Mgmt alone — the rows they need already exist, whic
 they came next regardless of Messaging's state. Credentials used to be a sibling module;
 they were folded into Documents as a typed checklist (one file per `DocumentType` per
 student) and no longer exist. The server side is built on `src/common/storage.ts`; the
-client still targets the old API (CLAUDE.md §7, "Partially built").
+student client is done, the coordinator's still targets the old API (CLAUDE.md §7,
+"Partially built").
 
 Replacing a document, which is the one write whose order matters:
 

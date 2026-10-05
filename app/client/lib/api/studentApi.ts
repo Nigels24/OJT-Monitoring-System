@@ -52,7 +52,6 @@ export interface Student {
    * `deleteStudentCascade`).
    */
   _count?: {
-    credentials: number;
     documents: number;
     attendances: number;
     evaluations: number;
@@ -143,7 +142,7 @@ export const studentApi = createApi({
       }),
       invalidatesTags: ["Student"],
       // The server-side cascade (deleteStudentCascade) takes attendance,
-      // documents, credentials, evaluations and messages with it. Those live
+      // documents, evaluations and messages with it. Those live
       // in other createApi slices whose tags this mutation can't reach on its
       // own, so every coordinator page that reads them would keep showing
       // the deleted student's rows until revisited (CLAUDE.md §8 item 22).

@@ -1,16 +1,19 @@
-import { FileText, Upload } from "lucide-react";
-import TextField from "@/components/ui/TextField";
+import { Upload, FileText } from "lucide-react";
+import SelectField from "@/components/ui/SelectField";
 import Button from "@/components/ui/Button";
+import { DOCUMENT_TYPES, DocumentType } from "@/lib/api/studentPortalApi";
 import type { DocumentFormValues } from "../hooks/use-documents";
+import { DOCUMENT_TYPE_LABEL } from "./documentType";
 
 interface DocumentUploadFormProps {
   form: DocumentFormValues;
   file: File | null;
+  /** Bumped by the hook to clear the uncontrolled file input. */
+  fileInputKey: number;
+  uploadedTypes: Set<DocumentType>;
   error: string;
   isSubmitting: boolean;
-  setField: (
-    key: keyof DocumentFormValues,
-  ) => (e: { target: { value: string } }) => void;
+  setType: (type: string) => void;
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onSubmit: (e: React.FormEvent) => void;
 }
@@ -18,22 +21,35 @@ interface DocumentUploadFormProps {
 export default function DocumentUploadForm({
   form,
   file,
+  fileInputKey,
+  uploadedTypes,
   error,
   isSubmitting,
-  setField,
+  setType,
   onFileChange,
   onSubmit,
 }: DocumentUploadFormProps) {
+  const typeOptions = DOCUMENT_TYPES.map((value) => ({
+    value,
+    label: uploadedTypes.has(value)
+      ? `${DOCUMENT_TYPE_LABEL[value]} — uploaded, will replace`
+      : DOCUMENT_TYPE_LABEL[value],
+  }));
+
   return (
     <form onSubmit={onSubmit} className="space-y-5">
-      <TextField
-        label="Document Name"
-        labelIcon={FileText}
-        fieldIcon={FileText}
-        placeholder="e.g. Endorsement Letter"
-        value={form.name}
-        onChange={setField("name")}
-      />
+      <div>
+        <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1.5">
+          <FileText size={15} className="text-blue-600" />
+          Document Type
+        </label>
+        <SelectField
+          value={form.type}
+          onChange={setType}
+          placeholder="Select a document type"
+          options={typeOptions}
+        />
+      </div>
 
       <div>
         <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1.5">
@@ -41,6 +57,7 @@ export default function DocumentUploadForm({
           File
         </label>
         <input
+          key={fileInputKey}
           type="file"
           accept="application/pdf,image/png,image/jpeg"
           onChange={onFileChange}
@@ -54,8 +71,8 @@ export default function DocumentUploadForm({
       </div>
 
       <p className="text-xs text-gray-500">
-        PDF, PNG or JPEG, up to 10MB. Your coordinator reviews every upload
-        before it counts as submitted.
+        PDF, PNG or JPEG, up to 10MB. Uploading a type you&apos;ve already
+        submitted replaces that file.
       </p>
 
       {error && (

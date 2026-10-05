@@ -77,7 +77,7 @@ OJT-Monitoring-System/
         │   ├── page.tsx            # redirects to /login
         │   ├── login/
         │   ├── coordinator/{dashboard,establishments,supervisors,students,evaluations,attendance,documents,messages}
-        │   ├── student/{dashboard,attendance,documents,profile,credentials,messages}
+        │   ├── student/{dashboard,attendance,documents,profile,messages}
         │   └── supervisor/{dashboard,attendance,evaluation,messages}
         ├── features/<domain>/
         │   ├── nav.ts                   # only in coordinator/, supervisor/, student-portal/
@@ -879,8 +879,19 @@ recoverable, a half-deleted database is not.
   No approve/reject anywhere. Labels and filename helpers live in
   `src/common/document-types.ts`; the client keeps its own label map, same deliberate
   duplication as `SCHOOL_NAME`. **Credentials no longer exist** — model, routes and
-  service code are gone; the old rows are now Documents. The **client** still targets the
-  old API — see "Partially built".
+  service code are gone; the old rows are now Documents. The coordinator's **client**
+  still targets the old review API — see "Partially built".
+- **Documents (student client)** — `/student/documents`, no Credentials page or nav entry.
+  Upload form is a `Document Type` dropdown (`SelectField`, "Select a document type") whose
+  already-uploaded options read "<Type> — uploaded, will replace"; the table (Document ·
+  File · Uploaded · View/Replace/Delete) has a per-row Replace that opens a file picker for
+  that row's type. Both replace paths go through one `ConfirmDialog` and the same `POST`.
+  A "x of 6 submitted" checklist (`DocumentChecklist`) lists what is missing. The client
+  mirrors the server's PDF/PNG/JPEG + 10MB limits. Labels: `DOCUMENT_TYPE_LABEL` in
+  `features/student-portal/components/documentType.ts`; `DOCUMENT_TYPES` in
+  `studentPortalApi.ts`, in enum order. The coordinator's student list/view and delete
+  confirmation show `_count.documents` (view: "n / 6"); `_count.credentials` is gone
+  client-side.
 - **Messaging** — `GET /messages/contacts`, `GET`/`POST /messages/conversations`,
   `GET`/`POST /messages/conversations/:id`. Bare `/messages`, no `@Roles` (§5's third route
   shape); 1:1 conversations only (`isGroup` stays `false`, `Conversation.name` stays
@@ -928,12 +939,11 @@ start date and confirm the oversight page shows a real percentage.
 
 ### Partially built
 
-**Documents client (Steps 2–3 of the professor's revisions).** The server is done; the
-client still calls the removed routes and fields. Student side: drop the Credentials page,
-nav entry and hook, and turn the Documents upload into a `type` dropdown (one slot per type,
-re-upload replaces). Coordinator side: replace the review queue (`features/document/`,
-`RejectDialog`) with the per-student checklist, view/download per file and select/download-
-all as ZIP; drop every `_count.credentials` reference.
+**Coordinator Documents client (Step 3 of the professor's revisions).** The server and the
+student side are done; `/coordinator/documents` still renders the old review queue against
+removed routes. Replace it (`features/document/`, `RejectDialog`, `documentApi.ts`) with the
+per-student checklist, view/download per file and select/download-all as ZIP. When it goes,
+delete `DocumentStatus` from `studentPortalApi.ts` — that queue is its only importer.
 
 `stats.averageRating` on the coordinator dashboard is an average out of
 `stats.maxTotalRating`, which is now the **published template's** maximum and may be
@@ -948,7 +958,7 @@ would only make the contact picker match the prototype's panel exactly.
 
 ### Remaining build order
 
-1. **Documents client** (above).
+1. **Coordinator Documents client** (above).
 2. **Verify `Student.startDate` live** (above).
 
 `pdfkit`, `archiver` and their `@types` are installed (`package.json`); on a fresh clone
