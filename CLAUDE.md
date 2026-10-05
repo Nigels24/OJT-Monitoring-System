@@ -57,7 +57,7 @@ OJT-Monitoring-System/
     ├── server/             # NestJS 11 API — port 3000
     │   ├── src/
     │   │   ├── auth/           # AuthModule, JwtStrategy, RolesGuard, authed-request.ts, jwt.constants.ts
-    │   │   ├── common/         # attendance-hours.ts, cascade-delete.ts, dates.ts, evaluation-pdf.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
+    │   │   ├── common/         # attendance-hours.ts, cascade-delete.ts, dates.ts, document-types.ts, evaluation-pdf.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
     │   │   ├── coordinator/    # student + supervisor management, dashboard, attendance oversight
     │   │   ├── establishment/  # CRUD — open reads, COORDINATOR writes
     │   │   ├── evaluation-template/  # the versioned evaluation sheet — COORDINATOR writes, SupervisorService reads
@@ -68,7 +68,7 @@ OJT-Monitoring-System/
     │   ├── prisma/
     │   │   ├── schema.prisma
     │   │   ├── seed.ts             # bootstraps ONLY the coordinator
-    │   │   └── migrations/         # 14 migrations, listed in §6
+    │   │   └── migrations/         # 15 migrations, listed in §6
     │   ├── scripts/reset-coordinator.ts
     │   ├── test/                   # e2e only
     │   └── generated/prisma/       # gitignored — run `npx prisma generate`
@@ -474,12 +474,11 @@ order:
    already exist.** The model existing is not the test — a model can be present and
    migrated while still missing the columns its module needs. Read §6's schema block
    first, then write one migration with only that module's missing columns. (`Document`
-   went through this exact step for its `reviewedById`/`reviewNote`/`reviewedAt` columns;
-   `Credential` and the three messaging models needed no migration at all — every column
-   their modules used was already there. See §6 for both outcomes.)
+   went through this exact step for its review columns, since removed again; the three
+   messaging models needed no migration at all — every column their module used was
+   already there. See §6.)
    **When naming a reviewer column, don't copy `Attendance.approvedById`** — it is set on
-   decline too, so it means "who actioned this". `Document.reviewedById` follows this
-   rule; keep doing so.
+   decline too, so it means "who actioned this". Name a column for what it means.
 2. `app/server/src/<module>/<module>.service.ts` — ownership re-derived from
    `req.user.userId`, never from a body id.
 3. `app/server/src/<module>/<module>.controller.ts` — inline `class-validator` DTOs at the
@@ -527,8 +526,8 @@ Keep one domain when both roles read the *same* shape: `evaluation` is a single 
 with a single `evaluationApi` precisely because supervisor and coordinator both receive
 the identical `withBreakdown` object, and only the scope of the query differs.
 
-Documents is the first case, not the second: a student sees their own uploads and their
-review status, a coordinator sees a cross-student review queue. Expect two domains.
+Documents is the first case, not the second: a student sees their own six-slot list with
+signed view URLs, a coordinator sees one checklist row per student. Two domains.
 
 ### API surface
 
@@ -556,15 +555,14 @@ table; never derive one from the other.
 | PUT | `/coordinator/evaluation-template/draft` | COORDINATOR | replaces the **whole** draft: `{ title, sections: [{ key?, label, items: [{ key?, label }] }] }`. Array order is printed order. A `key` keeps an existing section/item (and its score association); omitting one adds it. A key not already on the draft — or on the published sheet a first draft is started from — is a 400. Creates the draft if there is none |
 | POST | `/coordinator/evaluation-template/publish` | COORDINATOR | publishes the draft: next version number, `publishedAt` set, previous published version ARCHIVED. **409 when there is no draft** — the published sheet is immutable |
 | DELETE | `/coordinator/evaluation-template/draft` | COORDINATOR | discards the draft; 404 if there is none |
-| GET | `/coordinator/documents` | COORDINATOR | all documents, all establishments, each with a signed URL |
-| PATCH | `/coordinator/documents/:id/review` | COORDINATOR | `{ status: 'APPROVED'\|'REJECTED', reviewNote? }` — `reviewNote` required 3–500 chars when REJECTED |
-| GET | `/student/dashboard` · `/student/attendance` · `/student/profile` · `/student/documents` · `/student/credentials` | STUDENT | own data only |
+| GET | `/coordinator/documents` | COORDINATOR | the checklist: one row per student, **including students with nothing submitted** — `{ id, name, studentIdNumber, establishment: { id, name } \| null, submittedCount, documents: { <DocumentType>: { id, uploadedAt, fileName } \| null } }`. No signed URLs |
+| GET | `/coordinator/documents/:id/download` | COORDINATOR | one file as an attachment (`Content-Type` from storage, RFC 5987 `Content-Disposition`). 404 unknown id, 503 if storage can't return it |
+| GET | `/coordinator/students/:studentId/documents/zip` | COORDINATOR | `?ids=a,b,c` for a selection, none for all. Every id must belong to that student (else 400); 404 unknown student or nothing submitted. Entries `<Type Label> - <Student Name>.<ext>`, archive `<Student Name> - OJT Documents.zip` |
+| GET | `/student/dashboard` · `/student/attendance` · `/student/profile` · `/student/documents` | STUDENT | own data only. Documents: `[{ id, type, fileName, uploadedAt, fileUrl }]`, `fileUrl` signed or `null` |
 | POST | `/student/attendance` | STUDENT | one row per calendar day |
 | PATCH | `/student/profile` | STUDENT | `{ contactNumber?, address? }` — the only two fields a student may self-edit |
-| POST | `/student/documents` | STUDENT | multipart; `name` field + `file` part (PDF/PNG/JPEG, 10MB max); always lands PENDING |
-| DELETE | `/student/documents/:id` | STUDENT | own document, and only while still PENDING |
-| POST | `/student/credentials` | STUDENT | multipart; `type` field (one of `CREDENTIAL_TYPES`, exported from `student.service.ts`) + `file` part (PDF/PNG/JPEG, 10MB max) |
-| DELETE | `/student/credentials/:id` | STUDENT | own credential — no status guard, credentials have no review state |
+| POST | `/student/documents` | STUDENT | multipart; `type` field (a `DocumentType`) + `file` part (PDF/PNG/JPEG, 10MB max). **Upsert** on `(studentId, type)`: a second upload of a type replaces the file. Returns the same shape as the list |
+| DELETE | `/student/documents/:id` | STUDENT | own document; no status guard (there is no status) |
 | GET | `/supervisor/dashboard` · `/supervisor/students` · `/supervisor/attendance` | SUPERVISOR | scoped to own establishment |
 | PATCH | `/supervisor/students/:id/status` | SUPERVISOR | |
 | PATCH | `/supervisor/attendance/:id/approve` | SUPERVISOR | clears any `declineReason` |
@@ -588,48 +586,35 @@ table; never derive one from the other.
 PostgreSQL via Supabase. `DATABASE_URL` pooled, `DIRECT_URL` direct.
 
 **Models:** `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`,
-`Attendance`, `Document`, `Credential`, `Evaluation`, `EvaluationScore`,
+`Attendance`, `Document`, `Evaluation`, `EvaluationScore`,
 `EvaluationTemplate`, `EvaluationTemplateSection`, `EvaluationTemplateItem`,
 `Conversation`, `ConversationParticipant`, `Message`.
 
-`Document`, `Credential` and Messaging are all built (§7). Messaging is **polling, not
+`Document` and Messaging are both built (§7). `Credential` was folded into `Document` and
+dropped by migration `20261005011611_documents_typed_checklist`. Messaging is **polling, not
 websockets** — `socket.io` / `@nestjs/websockets` / `@nestjs/platform-socket.io` were
 removed from `app/server/package.json`; see §7 for the reasoning.
 
 **Enums:** `Role` (STUDENT · SUPERVISOR · COORDINATOR) · `StudentStatus` (ACTIVE ·
 PENDING · COMPLETED · INACTIVE) · `AttendanceStatus` (PENDING · APPROVED · DECLINED) ·
-`EstablishmentStatus` (ACTIVE · INACTIVE).
+`EstablishmentStatus` (ACTIVE · INACTIVE) · `DocumentType` (APPLICATION_LETTER ·
+ENDORSEMENT_LETTER · RESUME · MOA · PARENTS_CONSENT · WAIVER).
 
-`Document` (built) actually looks like this — `status` stayed a plain `String`
-(`PENDING`/`APPROVED`/`REJECTED`) rather than becoming an enum, a deliberate call in §7:
+`Document` is a **typed checklist**: one file per requirement type per student, no review
+state of any kind (approve/reject was removed at the professor's request):
 
 ```prisma
 model Document {
-  id           String       @id @default(cuid())
-  studentId    String                              // -> Student
-  name         String
-  fileUrl      String                              // object PATH, never a signed URL — see §7
-  status       String       @default("PENDING")    // PENDING · APPROVED · REJECTED
-  reviewedById String?
-  reviewedBy   Coordinator? @relation(fields: [reviewedById], references: [id])
-  reviewNote   String?                              // required by the service when REJECTED
-  reviewedAt   DateTime?
-  uploadedAt   DateTime     @default(now())
+  id               String       @id @default(cuid())
+  studentId        String                  // -> Student
+  type             DocumentType
+  fileUrl          String                  // object PATH, never a signed URL — see §7
+  originalFileName String?                 // null on rows migrated from Credential
+  uploadedAt       DateTime     @default(now())   // bumped when the file is replaced
+  @@unique([studentId, type])
 }
 ```
 
-`Credential` (built) actually looks like this — no status/review columns, since credentials
-have no review state:
-
-```prisma
-model Credential {
-  id        String   @id @default(cuid())
-  studentId String                              // -> Student
-  type      String                              // one of CREDENTIAL_TYPES, see student.service.ts
-  fileUrl   String                              // object PATH, never a signed URL — see §7
-  createdAt DateTime @default(now())
-}
-```
 
 **The three messaging models, as built — no migration was needed.** They already existed
 in the DB with every column `messages.service.ts` needs. *Scalar columns only below;
@@ -742,7 +727,7 @@ The three callers, and what each one spares:
 
 | Caller | Deletes | Deliberately keeps |
 |---|---|---|
-| `CoordinatorService.removeStudent` | attendance, documents, credentials, evaluations, own messages, participant rows, then `Student` + `User` | — |
+| `CoordinatorService.removeStudent` | attendance, documents, evaluations, own messages, participant rows, then `Student` + `User` | — |
 | `CoordinatorService.removeSupervisor` | evaluations, own messages, participant rows, then `Supervisor` + `User` | **attendance they approved** — rows stay, `approvedById` is nulled. A student's approved hours must survive their supervisor leaving |
 | `EstablishmentService.remove` | every supervisor at it, via `deleteSupervisorCascade` | **its students** — `establishmentId` is nulled so they can be reassigned. That column is nullable for exactly this |
 
@@ -772,9 +757,7 @@ recoverable, a half-deleted database is not.
 | `20260826033058_document_review_fields` | `Document`: `reviewedById` (FK to `Coordinator`, `SET NULL` on delete), `reviewNote`, `reviewedAt` — all nullable |
 | `20260905163310_official_evaluation_sheet` | **Rewrote `Evaluation` for the school's official form.** Dropped the 9 criteria, `overallRating`, `performanceLevel` and `periodStart`/`periodEnd`; added the 19 item columns, `totalRating`, `trainingStartedAt`/`trainingEndedAt`/`trainingEmployedAt`, `evaluatorName`/`evaluatorPosition` and `updatedAt`. Destructive — **the table was empty (verified: 0 rows)**, which is also why the new `NOT NULL` item columns could be added without defaults. Generated with `migrate diff` + `migrate deploy`, since `migrate dev` prompts on column drops. Touches no other table |
 | `20260914142544_evaluation_sheet_template` | **Moved the sheet into the database.** Added `EvaluationTemplate`, `EvaluationTemplateSection`, `EvaluationTemplateItem`, `EvaluationScore`; seeded template **version 1** PUBLISHED with the nineteen items' exact wording, keyed by the nineteen column names; added `Evaluation.templateId`/`maxTotalRating` backfilled to version 1 / 95; copied the nineteen columns into `EvaluationScore`; **then** dropped them. Hand-written in that order so it is one transaction and no signed sheet loses its scores — structural statements generated with `migrate diff --from-schema-datamodel <previous> --to-schema-datamodel <current> --script` (which never touches the DB), data steps added by hand |
-
-Credentials needed **no migration** — `Credential` already had every column its module
-needed (§7).
+| `20261005011611_documents_typed_checklist` | **Documents became a typed checklist; Credentials folded in.** Added enum `DocumentType`, `Document.type` and `originalFileName`; deleted the two pre-existing free-text Document rows (test data, no type mapping); copied the two `Credential` rows into `Document` (same id and path, `createdAt` → `uploadedAt`); a `DO $$` guard aborts if any row is untyped; dedup keeps the newest per `(studentId, type)`; then `type` NOT NULL, `@@unique([studentId, type])`, and dropped `name`, `status`, `reviewedById`/FK, `reviewNote`, `reviewedAt` and the `Credential` table. Hand-ordered like the one above; applied with `migrate deploy`. `migrate dev --create-only` refuses to run non-interactively when it would warn about data loss, so `migrate diff` between schema files was used |
 
 **Policy: one migration per module, and only when the module actually needs new columns.**
 
@@ -887,18 +870,17 @@ needed (§7).
   now state the exact counts they are about to destroy.
 - **Coordinator dashboard stats** — every tile and chart backed by real aggregates.
 - **Attendance oversight (Coordinator)** — read-only cross-establishment attendance %.
-- **Documents** — student upload (multipart, PDF/PNG/JPEG, 10MB) with server-side Supabase
-  Storage (`src/common/storage.ts`, private `student-files` bucket, 1-hour signed URLs);
-  coordinator cross-establishment review queue (approve/reject, reject requires a 3–500
-  char note). Delete is student-side, own document, PENDING only, and removes the storage
-  object too.
-- **Credentials** — student upload/list/delete only, same storage helper and validation as
-  Documents, under the `credentials/<studentId>/` prefix. `type` is one of `CREDENTIAL_TYPES`
-  (`RESUME`, `ENDORSEMENT_LETTER`, `MEDICAL_CERTIFICATE`, `PARENTAL_CONSENT`, `INSURANCE`,
-  `CERTIFICATE_OF_REGISTRATION`, `OTHER`), a plain string constant, not a Prisma enum, so the
-  client's dropdown imports the same list rather than duplicating it. No review state and no
-  coordinator screen — a credential is uploaded and listed, full stop. Delete has no status
-  guard (unlike Documents' PENDING-only rule) since there is no status to guard on.
+- **Documents (server)** — a typed checklist of six requirements (`DocumentType`), one
+  file each per student. Student: list (signed URLs), upload-or-replace (upsert on
+  `(studentId, type)`; new object uploaded, row pointed at it, *then* the old object
+  deleted — a failure part-way never leaves a row pointing at nothing), delete own.
+  Coordinator: per-student checklist (no signed URLs — one query), single-file download and
+  per-student ZIP (`archiver`, entries stored uncompressed since PDF/JPEG/PNG already are).
+  No approve/reject anywhere. Labels and filename helpers live in
+  `src/common/document-types.ts`; the client keeps its own label map, same deliberate
+  duplication as `SCHOOL_NAME`. **Credentials no longer exist** — model, routes and
+  service code are gone; the old rows are now Documents. The **client** still targets the
+  old API — see "Partially built".
 - **Messaging** — `GET /messages/contacts`, `GET`/`POST /messages/conversations`,
   `GET`/`POST /messages/conversations/:id`. Bare `/messages`, no `@Roles` (§5's third route
   shape); 1:1 conversations only (`isGroup` stays `false`, `Conversation.name` stays
@@ -946,7 +928,12 @@ start date and confirm the oversight page shows a real percentage.
 
 ### Partially built
 
-Nothing. The coordinator's sheet editor was the last piece of the template work.
+**Documents client (Steps 2–3 of the professor's revisions).** The server is done; the
+client still calls the removed routes and fields. Student side: drop the Credentials page,
+nav entry and hook, and turn the Documents upload into a `type` dropdown (one slot per type,
+re-upload replaces). Coordinator side: replace the review queue (`features/document/`,
+`RejectDialog`) with the per-student checklist, view/download per file and select/download-
+all as ZIP; drop every `_count.credentials` reference.
 
 `stats.averageRating` on the coordinator dashboard is an average out of
 `stats.maxTotalRating`, which is now the **published template's** maximum and may be
@@ -961,45 +948,45 @@ would only make the contact picker match the prototype's panel exactly.
 
 ### Remaining build order
 
-1. **Verify `Student.startDate` live** (above).
+1. **Documents client** (above).
+2. **Verify `Student.startDate` live** (above).
 
-`pdfkit` and `@types/pdfkit` are installed (`package.json`); on a fresh clone
-`npm install` provides them. Migration `20260914142544_evaluation_sheet_template` is the
+`pdfkit`, `archiver` and their `@types` are installed (`package.json`); on a fresh clone
+`npm install` provides them. **`archiver` is pinned to 7.x** — 8.x is ESM-only and this
+server compiles to CommonJS. Migration `20261005011611_documents_typed_checklist` is the
 latest.
 
 ### File storage — the decided design
 
 Settled, not open. Don't re-litigate it mid-task; if it needs to change, change it here
-first. **Implemented** by both Documents and Credentials (above).
+first. **Implemented** by Documents (above).
 
 | Question | Decision |
 |---|---|
 | Upload path | **Server-side multipart.** The client POSTs the file to Nest; Nest uploads it to Supabase Storage and stores the returned path. One code path, validation in one place, and the service key never reaches the browser. |
-| Bucket | One **private** bucket, `student-files`, with `documents/<studentId>/` and `credentials/<studentId>/` prefixes |
-| Read access | **Signed URLs, 1-hour TTL**, minted per request. These are ID scans and certificates — never a public bucket. `Document.fileUrl` / `Credential.fileUrl` store the **object path**, not a signed URL (a stored signed URL expires and rots). |
+| Bucket | One **private** bucket, `student-files`. New uploads go under `documents/<studentId>/`; rows migrated from Credential still point at `credentials/<studentId>/` objects, which is harmless — nothing reads the prefix |
+| Read access | **Signed URLs, 1-hour TTL**, minted per request. These are ID scans and certificates — never a public bucket. `Document.fileUrl` stores the **object path**, not a signed URL (a stored signed URL expires and rots). |
 | Env vars | `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, in `app/server/.env` only. **Never** a `NEXT_PUBLIC_*` var — that key bypasses row-level security and would ship in the client bundle. |
 | Limits | `application/pdf`, `image/png`, `image/jpeg`; 10 MB max. Reject anything else with a 400. |
-| Reviewer | **Coordinator.** The prototype has no supervisor-side documents screen. |
-| Review columns | Add `reviewedById`, `reviewNote`, `reviewedAt` to `Document`. Leave `status` as the existing free-form `String` (`PENDING` / `APPROVED` / `REJECTED`) rather than converting to an enum — converting is a destructive migration on a live DB for no gain right now. |
-| Credentials | No review state. A credential is uploaded and listed; that's all. |
+| Review | **None.** Removed at the professor's request; the coordinator views, downloads and ZIPs. No supervisor-side documents screen |
+| Coordinator downloads | Through the server (`downloadFile` → `@Res()`), not signed URLs: the checklist mints none, and a ZIP has to be built server-side anyway. Files are buffered before the first header, so a storage failure is a clean 503, never a truncated 200 |
 
 **The multipart gotcha.** `main.ts`'s global `ValidationPipe` runs `whitelist` +
 `forbidNonWhitelisted`, which rejects the fields a multipart body carries. The file must
 come through `@UploadedFile()` with `FileInterceptor`, and the DTO covers **only** the
 text fields alongside it. Validate the file's mimetype and size in the handler, not the
-DTO.
+DTO. And pass `defParamCharset: 'utf8'` to the interceptor (`DOCUMENT_UPLOAD_OPTIONS`):
+multer decodes the filename as latin1 by default, which mangles any non-ASCII
+`originalFileName` ("Résumé.pdf" → "RÃ©sumÃ©.pdf").
 
-**Shared helper.** The upload/sign/delete logic lives in `src/common/storage.ts`
-(`buildObjectPath`, `uploadFile`, `getSignedUrl`, `deleteFile`) — plain exported functions
-over a lazily-built Supabase client, not an injectable service, since there is no state to
-inject. Both `Document` and `Credential` upload/list/delete methods live in
-`student.service.ts` and call these same functions with different prefixes
-(`documents/<studentId>/` vs `credentials/<studentId>/`); `withSignedUrl` is generic over
-any `{ fileUrl }` record, so both reuse it unchanged. `student.service.ts` also exports
-`DOCUMENT_INCLUDE`, reused by `coordinator.service.ts` exactly the way
-`supervisor.service.ts` exports `EVALUATION_INCLUDE`/`withBreakdown` for the same
-coordinator read-side reuse — Credentials has no coordinator-side equivalent, so it needed
-no analogous export.
+**Shared helper.** The upload/sign/download/delete logic lives in `src/common/storage.ts`
+(`buildObjectPath`, `uploadFile`, `getSignedUrl`, `downloadFile`, `deleteFile`) — plain
+exported functions over a lazily-built Supabase client, not an injectable service, since
+there is no state to inject. The student's document methods live in `student.service.ts`
+(`withSignedUrl` stays there, generic over any `{ fileUrl }`); the coordinator's checklist,
+download and ZIP live in `coordinator.service.ts`. A display name must be resolved from the
+stored path (`documentFileName`) **before** the path is swapped for a signed URL — the
+signed URL's query string hides the extension.
 
 ---
 
@@ -1057,8 +1044,8 @@ Ordered roughly by how likely each is to bite.
     before this show `—`. One knock-on: the supervisor's evaluation form prefills "Training
     Date Ended" from `endDate`, so that prefill is now an *expected* date the supervisor is
     expected to correct if the training actually ended earlier or later.
-13. `getMyDocuments`/`getDocuments`/`getMyCredentials` mint a signed URL per row on every
-    request (`Promise.all(rows.map(withSignedUrl))`) — an extra Supabase round trip per
+13. `getMyDocuments` mints a signed URL per row on every request (at most six; the
+    coordinator's checklist deliberately mints none) (`Promise.all(rows.map(withSignedUrl))`) — an extra Supabase round trip per
     row, same scaling shape as item 4. Fine at current volume; revisit alongside item 3 if
     pagination work starts.
 14. **A PENDING or DECLINED attendance row is corrected by resubmitting the same date, not

@@ -36,6 +36,17 @@ enum EstablishmentStatus {
   INACTIVE
 }
 
+// The six OJT requirements a student submits, one file each. The client's
+// labels live in the student portal; the server's in student.service.ts.
+enum DocumentType {
+  APPLICATION_LETTER
+  ENDORSEMENT_LETTER
+  RESUME
+  MOA
+  PARENTS_CONSENT
+  WAIVER
+}
+
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
@@ -99,8 +110,6 @@ model Coordinator {
   id     String @id @default(cuid())
   userId String @unique
   user   User   @relation(fields: [userId], references: [id])
-
-  reviewedDocuments Document[]
 }
 
 model Student {
@@ -133,7 +142,6 @@ model Student {
 
   attendances Attendance[]
   documents   Document[]
-  credentials Credential[]
   evaluations Evaluation[]
 }
 
@@ -167,32 +175,22 @@ model Attendance {
 }
 
 model Document {
-  id        String  @id @default(cuid())
+  id        String       @id @default(cuid())
   studentId String
-  student   Student @relation(fields: [studentId], references: [id])
-  name      String
-  fileUrl   String
-  status    String  @default("PENDING")
+  student   Student      @relation(fields: [studentId], references: [id])
+  type      DocumentType
+  fileUrl   String // object PATH in the student-files bucket, never a signed URL
 
-  // Who actioned this review, their note, and when. `reviewNote` is required
-  // by the service when status is REJECTED, mirroring
-  // Attendance.declineReason; unlike Attendance.approvedById, this column is
-  // named for what it actually means — the reviewer, not just "who approved".
-  reviewedById String?
-  reviewedBy   Coordinator? @relation(fields: [reviewedById], references: [id])
-  reviewNote   String?
-  reviewedAt   DateTime?
+  // The name the file had on the student's machine, used for display. Null for
+  // rows migrated from Credential, which never stored one — the API falls back
+  // to "<Type Label>.<ext>".
+  originalFileName String?
 
   uploadedAt DateTime @default(now())
-}
 
-model Credential {
-  id        String   @id @default(cuid())
-  studentId String
-  student   Student  @relation(fields: [studentId], references: [id])
-  type      String
-  fileUrl   String
-  createdAt DateTime @default(now())
+  // One file per requirement per student. Re-uploading a type replaces the
+  // row's file rather than adding a second row.
+  @@unique([studentId, type])
 }
 
 model Evaluation {

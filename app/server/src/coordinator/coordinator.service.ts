@@ -19,13 +19,20 @@ import {
   evaluationPdfFilename,
   renderEvaluationPdf,
 } from '../common/evaluation-pdf';
-import { DOCUMENT_INCLUDE, withSignedUrl } from '../student/student.service';
 import {
   CASCADE_TRANSACTION_OPTIONS,
   deleteStudentCascade,
   deleteSupervisorCascade,
 } from '../common/cascade-delete';
-import { deleteFile } from '../common/storage';
+import { deleteFile, downloadFile } from '../common/storage';
+import {
+  DOCUMENT_TYPES,
+  DOCUMENT_TYPE_LABEL,
+  documentFileName,
+  fileExtension,
+  safeFileName,
+} from '../common/document-types';
+import { DocumentType } from '../../generated/prisma/client';
 import { SCHOOL_NAME } from '../common/school';
 
 /** Fields the coordinator can set on a student, shared by create and update. */
@@ -193,7 +200,6 @@ export class CoordinatorService {
         },
         _count: {
           select: {
-            credentials: true,
             documents: true,
             attendances: true,
             evaluations: true,
@@ -637,55 +643,151 @@ export class CoordinatorService {
     };
   }
 
-  /** Every document across every establishment — read/review oversight. */
+  /**
+   * The documents checklist: one row per student — including students who
+   * have submitted nothing — with one cell per requirement type, either
+   * `null` (not submitted) or the submitted file's summary.
+   *
+   * Starts from Student, not Document, precisely so the empty rows exist. No
+   * signed URLs are minted here: viewing and downloading go through
+   * `GET /coordinator/documents/:id/download`, so the list costs one query
+   * instead of one Supabase round trip per file (CLAUDE.md §8 item 13).
+   */
   async getDocuments() {
-    const documents = await this.prisma.client.document.findMany({
-      include: DOCUMENT_INCLUDE,
-      orderBy: { uploadedAt: 'desc' },
+    const students = await this.prisma.client.student.findMany({
+      select: {
+        id: true,
+        studentIdNumber: true,
+        user: { select: { name: true } },
+        establishment: { select: { id: true, name: true } },
+        documents: {
+          select: {
+            id: true,
+            type: true,
+            originalFileName: true,
+            fileUrl: true,
+            uploadedAt: true,
+          },
+        },
+      },
+      orderBy: { user: { name: 'asc' } },
     });
 
-    return Promise.all(documents.map(withSignedUrl));
+    return students.map((student) => {
+      const documents = Object.fromEntries(
+        DOCUMENT_TYPES.map((type) => [type, null]),
+      ) as Record<
+        DocumentType,
+        { id: string; uploadedAt: Date; fileName: string } | null
+      >;
+      for (const doc of student.documents) {
+        documents[doc.type] = {
+          id: doc.id,
+          uploadedAt: doc.uploadedAt,
+          fileName: documentFileName(doc),
+        };
+      }
+
+      return {
+        id: student.id,
+        name: student.user.name,
+        studentIdNumber: student.studentIdNumber,
+        establishment: student.establishment,
+        submittedCount: student.documents.length,
+        documents,
+      };
+    });
   }
 
-  async reviewDocument(
-    userId: string,
-    documentId: string,
-    status: 'APPROVED' | 'REJECTED',
-    reviewNote?: string,
-  ) {
-    const coordinator = await this.getCoordinatorByUserId(userId);
-
+  /** One document's bytes and the name to download it under. */
+  async getDocumentFile(documentId: string) {
     const document = await this.prisma.client.document.findUnique({
       where: { id: documentId },
+      select: { type: true, originalFileName: true, fileUrl: true },
     });
     if (!document) {
       throw new NotFoundException('Document not found');
     }
 
-    const updated = await this.prisma.client.document.update({
-      where: { id: documentId },
-      data: {
-        status,
-        // Only meaningful for a rejection; a later approval should not still
-        // carry the reason it was once rejected for.
-        reviewNote: status === 'REJECTED' ? reviewNote : null,
-        reviewedById: coordinator.id,
-        reviewedAt: new Date(),
-      },
-      include: DOCUMENT_INCLUDE,
-    });
-
-    return withSignedUrl(updated);
+    const file = await this.fetchStoredFile(document.fileUrl);
+    return { filename: documentFileName(document), ...file };
   }
 
-  private async getCoordinatorByUserId(userId: string) {
-    const coordinator = await this.prisma.client.coordinator.findUnique({
-      where: { userId },
+  /**
+   * The files to put in one student's ZIP, already fetched, with their entry
+   * names. `ids` empty means every document that student has.
+   *
+   * Every requested id must belong to `studentId`: the route names one
+   * student, and an id from another student's checklist would otherwise slip
+   * that student's file into this one's archive under this one's name.
+   */
+  async getStudentDocumentsZip(studentId: string, ids: string[]) {
+    const student = await this.prisma.client.student.findUnique({
+      where: { id: studentId },
+      select: { user: { select: { name: true } } },
     });
-    if (!coordinator) {
-      throw new NotFoundException('Coordinator profile not found');
+    if (!student) {
+      throw new NotFoundException('Student not found');
     }
-    return coordinator;
+
+    const documents = await this.prisma.client.document.findMany({
+      where: {
+        studentId,
+        ...(ids.length > 0 ? { id: { in: ids } } : {}),
+      },
+      select: { id: true, type: true, fileUrl: true },
+    });
+
+    if (ids.length > 0) {
+      const found = new Set(documents.map((d) => d.id));
+      const missing = ids.filter((id) => !found.has(id));
+      if (missing.length > 0) {
+        throw new BadRequestException(
+          `These documents do not belong to this student: ${missing.join(', ')}`,
+        );
+      }
+    }
+    if (documents.length === 0) {
+      throw new NotFoundException(
+        'This student has not submitted any documents',
+      );
+    }
+
+    const studentName = safeFileName(student.user.name);
+    // Checklist order, so the archive lists them the way the table does.
+    documents.sort(
+      (a, b) => DOCUMENT_TYPES.indexOf(a.type) - DOCUMENT_TYPES.indexOf(b.type),
+    );
+
+    // Sequential: at most six files, and it keeps the memory peak and the
+    // load on Storage predictable. Every file is fetched before the response
+    // starts, so a storage failure is a clean error, not a truncated ZIP.
+    const entries: { name: string; buffer: Buffer }[] = [];
+    for (const doc of documents) {
+      const { buffer } = await this.fetchStoredFile(doc.fileUrl);
+      entries.push({
+        // Unique per archive: one document per type per student.
+        name: `${DOCUMENT_TYPE_LABEL[doc.type]} - ${studentName}${fileExtension(doc.fileUrl)}`,
+        buffer,
+      });
+    }
+
+    return { filename: `${studentName} - OJT Documents.zip`, entries };
+  }
+
+  /** A missing object is the likeliest failure — say so, rather than a bare 500. */
+  private async fetchStoredFile(path: string) {
+    try {
+      return await downloadFile(path);
+    } catch (err) {
+      this.logger.error(
+        `Could not fetch storage object "${path}": ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+      throw new ServiceUnavailableException(
+        'The file could not be retrieved from storage',
+      );
+    }
   }
 
   /**

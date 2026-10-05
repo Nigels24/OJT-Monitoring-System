@@ -15,18 +15,14 @@ import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   IsDateString,
-  IsIn,
-  IsNotEmpty,
+  IsEnum,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
 } from 'class-validator';
-import {
-  StudentService,
-  MAX_DOCUMENT_SIZE_BYTES,
-  CREDENTIAL_TYPES,
-} from './student.service';
+import { StudentService, MAX_DOCUMENT_SIZE_BYTES } from './student.service';
+import { DocumentType } from '../../generated/prisma/client';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { AuthedRequest } from '../auth/authed-request';
 import { EmptyToNull } from '../common/transforms';
@@ -83,17 +79,20 @@ class UpdateProfileDto {
 // forbidNonWhitelisted has no notion of a multipart file part. See CLAUDE.md
 // §7 "File storage — the decided design".
 class UploadDocumentDto {
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(150)
-  name!: string;
+  @IsEnum(DocumentType)
+  type!: DocumentType;
 }
 
-// Same multipart shape as documents — see UploadDocumentDto above.
-class UploadCredentialDto {
-  @IsIn(CREDENTIAL_TYPES)
-  type!: (typeof CREDENTIAL_TYPES)[number];
-}
+/**
+ * Multer decodes the filename in a multipart header as latin1 unless told
+ * otherwise, which turns "Résumé.pdf" into "RÃ©sumÃ©.pdf". Browsers send it as
+ * UTF-8, and it is now stored (`Document.originalFileName`), so decode it as
+ * UTF-8.
+ */
+const DOCUMENT_UPLOAD_OPTIONS = {
+  limits: { fileSize: MAX_DOCUMENT_SIZE_BYTES },
+  defParamCharset: 'utf8',
+};
 
 @Controller('student')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -129,10 +128,9 @@ export class StudentController {
     return this.studentService.updateProfile(req.user.userId, dto);
   }
 
+  // Creates, or replaces the file already submitted for that type.
   @Post('documents')
-  @UseInterceptors(
-    FileInterceptor('file', { limits: { fileSize: MAX_DOCUMENT_SIZE_BYTES } }),
-  )
+  @UseInterceptors(FileInterceptor('file', DOCUMENT_UPLOAD_OPTIONS))
   uploadDocument(
     @Req() req: AuthedRequest,
     @Body() dto: UploadDocumentDto,
@@ -149,27 +147,5 @@ export class StudentController {
   @Delete('documents/:id')
   deleteDocument(@Req() req: AuthedRequest, @Param('id') id: string) {
     return this.studentService.deleteDocument(req.user.userId, id);
-  }
-
-  @Post('credentials')
-  @UseInterceptors(
-    FileInterceptor('file', { limits: { fileSize: MAX_DOCUMENT_SIZE_BYTES } }),
-  )
-  uploadCredential(
-    @Req() req: AuthedRequest,
-    @Body() dto: UploadCredentialDto,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
-    return this.studentService.uploadCredential(req.user.userId, dto, file);
-  }
-
-  @Get('credentials')
-  getMyCredentials(@Req() req: AuthedRequest) {
-    return this.studentService.getMyCredentials(req.user.userId);
-  }
-
-  @Delete('credentials/:id')
-  deleteCredential(@Req() req: AuthedRequest, @Param('id') id: string) {
-    return this.studentService.deleteCredential(req.user.userId, id);
   }
 }

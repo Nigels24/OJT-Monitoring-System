@@ -66,21 +66,16 @@ export async function deleteStudentCascade(
   userId: string,
 ): Promise<string[]> {
   // Sequential, not `Promise.all`: an interactive transaction is one
-  // connection, and concurrent queries on it are unsupported. Racing these two
-  // reads made one of them come back empty, which silently dropped that file
-  // from the cleanup list and orphaned the object in storage.
+  // connection, and concurrent queries on it are unsupported. Racing reads
+  // here once made one come back empty, which silently dropped files from the
+  // cleanup list and orphaned the objects in storage.
   const documents = await tx.document.findMany({
-    where: { studentId },
-    select: { fileUrl: true },
-  });
-  const credentials = await tx.credential.findMany({
     where: { studentId },
     select: { fileUrl: true },
   });
 
   await tx.attendance.deleteMany({ where: { studentId } });
   await tx.document.deleteMany({ where: { studentId } });
-  await tx.credential.deleteMany({ where: { studentId } });
   // Scores before evaluations: there is no onDelete: Cascade anywhere in this
   // schema, so a leftover EvaluationScore row aborts the evaluation delete.
   await tx.evaluationScore.deleteMany({
@@ -95,7 +90,7 @@ export async function deleteStudentCascade(
   await tx.student.delete({ where: { id: studentId } });
   await tx.user.delete({ where: { id: userId } });
 
-  return [...documents, ...credentials].map((row) => row.fileUrl);
+  return documents.map((row) => row.fileUrl);
 }
 
 /**

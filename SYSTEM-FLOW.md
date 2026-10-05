@@ -206,9 +206,26 @@ Auth ──┬─▶ Establishment ──┬─▶ Student Mgmt (Coordinator) �
        └─▶ Password recovery (cuts across all three roles once accounts exist)
 ```
 
-Documents / Credentials hang off Student Mgmt alone — the rows they need already exist,
-which is why they came next regardless of Messaging's state. Both are built, sharing
-`src/common/storage.ts`. Messaging is now fully built too, backend and client — polling
+Documents hang off Student Mgmt alone — the rows they need already exist, which is why
+they came next regardless of Messaging's state. Credentials used to be a sibling module;
+they were folded into Documents as a typed checklist (one file per `DocumentType` per
+student) and no longer exist. The server side is built on `src/common/storage.ts`; the
+client still targets the old API (CLAUDE.md §7, "Partially built").
+
+Replacing a document, which is the one write whose order matters:
+
+```
+POST /student/documents  (multipart: type + file)
+  1. read the existing row's fileUrl for (studentId, type), if any
+  2. upload the new object to documents/<studentId>/<uuid>.<ext>
+  3. upsert the row → new fileUrl, originalFileName, uploadedAt = now
+       └─ fails → delete the NEW object, rethrow; the old file is untouched
+  4. delete the OLD object (logged, never fatal — worst case an orphan)
+```
+
+Coordinator reads never mint signed URLs: the checklist is one `student.findMany`, and a
+view/download/ZIP goes through Nest (`downloadFile`), which buffers every file before the
+first response header so a storage failure is a 503, not a truncated download. Messaging is now fully built too, backend and client — polling
 (RTK Query), not a websocket gateway; see CLAUDE.md §7. Evaluations were rebuilt on the
 school's official sheet, backend and client (§5). Every module in the graph is built; what
 remains is the hand-verification pass listed in CLAUDE.md §7.
@@ -228,3 +245,4 @@ remains is the hand-verification pass listed in CLAUDE.md §7.
 | A date renders one day off, or a weekday doesn't match its date | A date-only column read in local time. Client: use `formatDateOnly`/`formatWeekdayOnly` (`lib/format.ts`). Server: `manilaToday()`, never `startOfUtcDay(new Date())` (§4) |
 | A whole page is blank after one query fails | The endpoint used `Promise.all`. The dashboards use `Promise.allSettled` + per-section defaults + `failedSections`; a list minting signed URLs must not let one bad row throw (§4, CLAUDE.md §8) |
 | A supervisor's own evaluation vanished or won't save | Authorship, not placement, governs a sheet. Check `getEvaluations`' union and that `updateEvaluation` guards on `supervisorId` only (§5) |
+| A document shows as submitted but View/Download fails, or a file is orphaned in Storage | The replace order in §6 — the row must be repointed before the old object is deleted. A 503 from `/coordinator/documents/:id/download` means the row's object is gone from the bucket |

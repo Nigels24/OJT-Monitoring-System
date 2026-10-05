@@ -20,6 +20,8 @@ import {
   getSignedUrl,
   uploadFile,
 } from '../common/storage';
+import { documentFileName } from '../common/document-types';
+import { DocumentType } from '../../generated/prisma/client';
 
 interface SubmitAttendanceInput {
   date: string;
@@ -37,43 +39,30 @@ interface UpdateProfileInput {
 }
 
 interface UploadDocumentInput {
-  name: string;
+  type: DocumentType;
 }
-
-interface UploadCredentialInput {
-  type: string;
-}
-
-/** Exported so the client's dropdown offers exactly these — no Prisma enum, no migration. */
-export const CREDENTIAL_TYPES = [
-  'APPLICATION_LETTER',
-  'ENDORSEMENT_LETTER',
-  'RESUME',
-  'MOA',
-  'PARENTS_CONSENT',
-  'WAIVER',
-] as const;
-export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 
 const PROFILE_INCLUDE = {
   user: { select: { id: true, email: true, name: true } },
   establishment: { select: { id: true, name: true } },
 } as const;
 
-/** Shared with `coordinator.service.ts` — the reviewer's cross-establishment list. */
-export const DOCUMENT_INCLUDE = {
-  student: {
-    select: {
-      id: true,
-      studentIdNumber: true,
-      user: { select: { name: true } },
-      establishment: { select: { id: true, name: true } },
-    },
-  },
-  reviewedBy: {
-    select: { id: true, user: { select: { name: true } } },
-  },
+/** What a student's own document list reads — `fileUrl` is the stored PATH, signed on the way out. */
+const MY_DOCUMENT_SELECT = {
+  id: true,
+  type: true,
+  originalFileName: true,
+  fileUrl: true,
+  uploadedAt: true,
 } as const;
+
+interface MyDocumentRow {
+  id: string;
+  type: DocumentType;
+  originalFileName: string | null;
+  fileUrl: string;
+  uploadedAt: Date;
+}
 
 export const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
   'application/pdf',
@@ -89,18 +78,18 @@ export class StudentService {
   constructor(private prisma: PrismaService) {}
 
   /**
-   * Removes a storage object after its row is already gone.
+   * Removes a storage object nothing points at any more.
    *
    * Non-fatal by design: an orphaned file wastes a few KB and can be swept up
    * later, while failing the request here would report an error for a delete
-   * that actually succeeded.
+   * or replace that actually succeeded. `reason` says why it is orphaned.
    */
-  private async deleteStoredObject(path: string, label: string) {
+  private async deleteStoredObject(path: string, reason: string) {
     try {
       await deleteFile(path);
     } catch (err) {
       this.logger.error(
-        `${label} row was deleted but its storage object "${path}" was not: ` +
+        `Storage object "${path}" (${reason}) could not be deleted: ` +
           (err instanceof Error ? err.message : String(err)),
       );
     }
@@ -133,7 +122,7 @@ export class StudentService {
           },
         },
         attendances: { orderBy: { date: 'desc' } },
-        _count: { select: { documents: true, credentials: true } },
+        _count: { select: { documents: true } },
       },
     });
     if (!student) {
@@ -332,6 +321,16 @@ export class StudentService {
     });
   }
 
+  /**
+   * Uploads the file for one requirement type, replacing any file already
+   * submitted for that type — `@@unique([studentId, type])` allows one.
+   *
+   * Order matters, because storage is not part of a database transaction:
+   * upload the new object first, then point the row at it, and only then
+   * delete the old object. Any failure part-way leaves the student's previous
+   * file intact and still referenced; the worst case is an orphaned object,
+   * never a row pointing at nothing.
+   */
   async uploadDocument(
     userId: string,
     data: UploadDocumentInput,
@@ -340,19 +339,43 @@ export class StudentService {
     const student = await this.getStudentByUserId(userId);
     assertValidDocumentFile(file);
 
+    const previous = await this.prisma.client.document.findUnique({
+      where: { studentId_type: { studentId: student.id, type: data.type } },
+      select: { fileUrl: true },
+    });
+
     const path = buildObjectPath('documents', student.id, file.originalname);
     await uploadFile(path, file.buffer, file.mimetype);
 
-    const created = await this.prisma.client.document.create({
-      data: {
-        studentId: student.id,
-        name: data.name,
-        fileUrl: path,
-        status: 'PENDING',
-      },
-    });
+    const fields = {
+      fileUrl: path,
+      originalFileName: file.originalname.slice(0, 255),
+      // A replacement counts as submitted now, not when the first file was.
+      uploadedAt: new Date(),
+    };
 
-    return withSignedUrl(created);
+    let saved: MyDocumentRow;
+    try {
+      saved = await this.prisma.client.document.upsert({
+        where: { studentId_type: { studentId: student.id, type: data.type } },
+        create: { studentId: student.id, type: data.type, ...fields },
+        update: fields,
+        select: MY_DOCUMENT_SELECT,
+      });
+    } catch (err) {
+      // The row was never pointed at the new object, so it is the one to go.
+      await this.deleteStoredObject(path, 'upload whose row was not saved');
+      throw err;
+    }
+
+    if (previous) {
+      await this.deleteStoredObject(
+        previous.fileUrl,
+        `replaced by a new upload on document ${saved.id}`,
+      );
+    }
+
+    return presentMyDocument(saved);
   }
 
   async getMyDocuments(userId: string) {
@@ -360,17 +383,23 @@ export class StudentService {
 
     const documents = await this.prisma.client.document.findMany({
       where: { studentId: student.id },
+      select: MY_DOCUMENT_SELECT,
       orderBy: { uploadedAt: 'desc' },
     });
 
-    return Promise.all(documents.map(withSignedUrl));
+    return Promise.all(documents.map(presentMyDocument));
   }
 
+  /**
+   * Deletes one of the student's own documents. There is no status to guard
+   * on any more — the review workflow is gone — so any of their own goes.
+   */
   async deleteDocument(userId: string, documentId: string) {
     const student = await this.getStudentByUserId(userId);
 
     const document = await this.prisma.client.document.findUnique({
       where: { id: documentId },
+      select: { studentId: true, fileUrl: true },
     });
     if (!document) {
       throw new NotFoundException('Document not found');
@@ -378,92 +407,43 @@ export class StudentService {
     if (document.studentId !== student.id) {
       throw new ForbiddenException('This document does not belong to you');
     }
-    // Once a coordinator has acted on it, the review record (and any note the
-    // student was given) should stay put rather than silently disappear.
-    if (document.status !== 'PENDING') {
-      throw new ConflictException(
-        'Only a document still pending review can be deleted',
-      );
-    }
 
     // Row first, then the object — the same order the cascade deletes use
     // (CLAUDE.md §6). Reversed, a storage success followed by a failed row
     // delete leaves a row pointing at nothing, which is the state that used to
     // 500 the whole documents list.
     await this.prisma.client.document.delete({ where: { id: documentId } });
-    await this.deleteStoredObject(document.fileUrl, `document ${documentId}`);
+    await this.deleteStoredObject(
+      document.fileUrl,
+      `document ${documentId} was deleted`,
+    );
 
     return { id: documentId, deleted: true };
   }
-
-  async uploadCredential(
-    userId: string,
-    data: UploadCredentialInput,
-    file: Express.Multer.File | undefined,
-  ) {
-    const student = await this.getStudentByUserId(userId);
-    assertValidDocumentFile(file);
-
-    const path = buildObjectPath('credentials', student.id, file.originalname);
-    await uploadFile(path, file.buffer, file.mimetype);
-
-    const created = await this.prisma.client.credential.create({
-      data: {
-        studentId: student.id,
-        type: data.type,
-        fileUrl: path,
-      },
-    });
-
-    return withSignedUrl(created);
-  }
-
-  async getMyCredentials(userId: string) {
-    const student = await this.getStudentByUserId(userId);
-
-    const credentials = await this.prisma.client.credential.findMany({
-      where: { studentId: student.id },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    return Promise.all(credentials.map(withSignedUrl));
-  }
-
-  async deleteCredential(userId: string, credentialId: string) {
-    const student = await this.getStudentByUserId(userId);
-
-    const credential = await this.prisma.client.credential.findUnique({
-      where: { id: credentialId },
-    });
-    if (!credential) {
-      throw new NotFoundException('Credential not found');
-    }
-    if (credential.studentId !== student.id) {
-      throw new ForbiddenException('This credential does not belong to you');
-    }
-
-    // No review state to guard on — a credential is uploaded and listed,
-    // that's the whole lifecycle, so the student may delete any of their own.
-    // Row first, then the object — see deleteDocument.
-    await this.prisma.client.credential.delete({
-      where: { id: credentialId },
-    });
-    await this.deleteStoredObject(
-      credential.fileUrl,
-      `credential ${credentialId}`,
-    );
-
-    return { id: credentialId, deleted: true };
-  }
 }
 
-/** Replaces the stored object path with a freshly minted signed URL. */
+/**
+ * The student-facing shape of a document: the display name resolved (with
+ * its fallback for migrated rows) from the stored path *before* the path is
+ * swapped for a signed URL, whose query string would hide the extension.
+ */
+async function presentMyDocument(row: MyDocumentRow) {
+  const signed = await withSignedUrl(row);
+  return {
+    id: row.id,
+    type: row.type,
+    fileName: documentFileName(row),
+    uploadedAt: row.uploadedAt,
+    fileUrl: signed.fileUrl,
+  };
+}
+
 /**
  * Swaps a stored object path for a short-lived signed URL.
  *
  * Never throws. A missing object yields `fileUrl: null` so the row still
  * renders as "unavailable" — these run under `Promise.all` across a whole list
- * (`getMyDocuments`, `getMyCredentials`, the coordinator's `getDocuments`), and
+ * (`getMyDocuments`), and
  * a throw there took out the entire page for every student rather than the one
  * bad row. The likeliest cause is a storage object deleted out from under the
  * row, so it is logged loudly and left for someone to clean up.

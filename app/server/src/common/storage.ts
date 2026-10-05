@@ -2,9 +2,10 @@ import { randomUUID } from 'crypto';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 /**
- * The single private bucket for student-owned files. Documents and
- * Credentials share it under different prefixes (`documents/<studentId>/`,
- * `credentials/<studentId>/`) — see CLAUDE.md §7 "File storage".
+ * The single private bucket for student-owned files. New uploads go under
+ * `documents/<studentId>/`; rows migrated from the retired Credential table
+ * still point at their original `credentials/<studentId>/` objects, which is
+ * harmless — nothing reads the prefix. See CLAUDE.md §7 "File storage".
  */
 const BUCKET = 'student-files';
 
@@ -33,9 +34,9 @@ function getClient(): SupabaseClient {
  * `buildObjectPath('documents', studentId, 'resume.pdf')` ->
  * `documents/<studentId>/<uuid>.pdf`.
  *
- * The original filename is discarded rather than sanitized and kept — the
- * human-readable name is stored separately (`Document.name`), so the object
- * path only needs to be unique and carry the right extension.
+ * The original filename is not used in the path — it is stored separately
+ * (`Document.originalFileName`), so the object path only needs to be unique
+ * and carry the right extension.
  */
 export function buildObjectPath(
   prefix: string,
@@ -82,4 +83,26 @@ export async function deleteFile(path: string): Promise<void> {
   if (error) {
     throw new Error(`Failed to delete file from storage: ${error.message}`);
   }
+}
+
+/**
+ * Fetches an object's bytes, for the coordinator's download and ZIP routes.
+ *
+ * Buffered rather than streamed: files are capped at 10MB, and having the
+ * whole thing in hand before any response header goes out means a storage
+ * failure becomes a clean HTTP error instead of a truncated 200.
+ */
+export async function downloadFile(
+  path: string,
+): Promise<{ buffer: Buffer; contentType: string }> {
+  const { data, error } = await getClient().storage.from(BUCKET).download(path);
+  if (error || !data) {
+    throw new Error(
+      `Failed to download file from storage: ${error?.message ?? 'unknown error'}`,
+    );
+  }
+  return {
+    buffer: Buffer.from(await data.arrayBuffer()),
+    contentType: data.type || 'application/octet-stream',
+  };
 }

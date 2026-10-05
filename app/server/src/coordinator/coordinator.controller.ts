@@ -7,9 +7,11 @@ import {
   Param,
   Body,
   UseGuards,
-  Req,
   Res,
+  Query,
+  Logger,
 } from '@nestjs/common';
+import archiver from 'archiver';
 import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
 import {
@@ -25,17 +27,16 @@ import {
   MaxLength,
   Min,
   MinLength,
-  ValidateIf,
 } from 'class-validator';
 import { CoordinatorService } from './coordinator.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
-import { AuthedRequest } from '../auth/authed-request';
 import {
   EmptyToNull,
   EmptyToUndefined,
   ToNullableNumber,
   ToOptionalNumber,
 } from '../common/transforms';
+import { attachmentDisposition } from '../common/document-types';
 
 // Usernames must not contain "@" so they can never shadow an email address
 // when AuthService.login matches an identifier against both columns.
@@ -220,25 +221,12 @@ class ResetPasswordDto {
   password!: string;
 }
 
-class ReviewDocumentDto {
-  @IsIn(['APPROVED', 'REJECTED'])
-  status!: 'APPROVED' | 'REJECTED';
-
-  // Required only on rejection — same shape as Attendance's decline reason.
-  // @ValidateIf skips every check below when the condition is false, so an
-  // APPROVED body needs nothing here at all.
-  @ValidateIf((o: ReviewDocumentDto) => o.status === 'REJECTED')
-  @IsString()
-  @IsNotEmpty()
-  @MinLength(3)
-  @MaxLength(500)
-  reviewNote?: string;
-}
-
 @Controller('coordinator')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles('COORDINATOR')
 export class CoordinatorController {
+  private readonly logger = new Logger(CoordinatorController.name);
+
   constructor(private coordinatorService: CoordinatorService) {}
 
   @Post('supervisors')
@@ -303,18 +291,66 @@ export class CoordinatorController {
     return this.coordinatorService.getDocuments();
   }
 
-  @Patch('documents/:id/review')
-  reviewDocument(
-    @Req() req: AuthedRequest,
+  /**
+   * One document as an attachment. The client fetches it with the bearer
+   * token and either saves it or opens it as an object URL to view — a plain
+   * link can't carry the Authorization header. `@Res()` for the same reason
+   * as the evaluation PDF above: bytes and headers, not JSON.
+   */
+  @Get('documents/:id/download')
+  async downloadDocument(
     @Param('id') id: string,
-    @Body() dto: ReviewDocumentDto,
-  ) {
-    return this.coordinatorService.reviewDocument(
-      req.user.userId,
-      id,
-      dto.status,
-      dto.reviewNote,
-    );
+    @Res() res: Response,
+  ): Promise<void> {
+    const { filename, buffer, contentType } =
+      await this.coordinatorService.getDocumentFile(id);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', attachmentDisposition(filename));
+    res.setHeader('Content-Length', buffer.length);
+    res.end(buffer);
+  }
+
+  /**
+   * A ZIP of one student's documents: `?ids=a,b,c` for a selection, no `ids`
+   * for all of them. The files are fetched first (see the service), so by the
+   * time a header is written the only thing left to fail is the zipping
+   * itself, in memory.
+   */
+  @Get('students/:studentId/documents/zip')
+  async downloadStudentDocumentsZip(
+    @Param('studentId') studentId: string,
+    @Query('ids') ids: string | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    const requested = [
+      ...new Set(
+        (ids ?? '')
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean),
+      ),
+    ];
+    const { filename, entries } =
+      await this.coordinatorService.getStudentDocumentsZip(
+        studentId,
+        requested,
+      );
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', attachmentDisposition(filename));
+
+    // PDFs and JPEG/PNG are already compressed; deflating them again costs
+    // CPU and saves next to nothing, so entries are stored as-is.
+    const archive = archiver('zip', { store: true });
+    archive.on('error', (err) => {
+      this.logger.error(`ZIP for student ${studentId} failed: ${err.message}`);
+      res.destroy(err);
+    });
+    archive.pipe(res);
+    for (const entry of entries) {
+      archive.append(entry.buffer, { name: entry.name });
+    }
+    await archive.finalize();
   }
 
   @Patch('students/:id')
