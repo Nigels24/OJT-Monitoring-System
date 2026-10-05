@@ -102,12 +102,6 @@ export interface UpdateProfileRequest {
   address?: string | null;
 }
 
-/**
- * Only the coordinator's old review queue (`features/document/`) still imports
- * this; Documents have no status any more. Delete it with that queue.
- */
-export type DocumentStatus = "PENDING" | "APPROVED" | "REJECTED";
-
 /** Mirrors the server's `DocumentType` enum, in the same order — keep both in sync by hand. */
 export const DOCUMENT_TYPES = [
   "APPLICATION_LETTER",

@@ -5,43 +5,49 @@ import { COORDINATOR_NAV } from "@/features/coordinator/nav";
 import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
-import { FileText, Hourglass, ListChecks } from "lucide-react";
+import { FileText, CheckCircle2, AlertCircle, Users } from "lucide-react";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
-import { useDocumentsReview } from "@/features/document/hooks/use-documents-review";
-import DocumentsReviewTable from "@/features/document/components/DocumentsReviewTable";
-import RejectDialog from "@/features/document/components/RejectDialog";
+import {
+  useCoordinatorDocuments,
+  TOTAL_DOCUMENT_TYPES,
+} from "@/features/document/hooks/use-coordinator-documents";
+import DocumentsChecklistTable from "@/features/document/components/DocumentsChecklistTable";
+import StudentDocumentsDialog from "@/features/document/components/StudentDocumentsDialog";
 
 /**
- * Cross-establishment document review queue. Modeled on the attendance
- * approval page — the coordinator reviews, students upload and see the
- * outcome on their own Documents page.
+ * Cross-establishment requirements checklist: one row per student, one column
+ * per document type. The coordinator views and downloads; there is no review.
  */
 export default function CoordinatorDocumentsPage() {
   const currentUser = useCurrentUser();
   const {
     isLoading,
     isError,
-    statusFilter,
+    stats,
     search,
+    completionFilter,
+    establishmentFilter,
+    establishmentOptions,
     page,
     paged,
     totalPages,
-    filtered,
-    pendingCount,
-    rejectTarget,
-    rejectReason,
-    rejectError,
-    isRejecting,
-    actioningId,
-    setStatusFilter,
+    viewTarget,
+    selectedIds,
+    allSelected,
+    busyKey,
     setSearch,
+    setCompletionFilter,
+    setEstablishmentFilter,
     setPage,
-    setRejectReason,
-    handleApprove,
-    openReject,
-    closeReject,
-    handleRejectConfirm,
-  } = useDocumentsReview();
+    openView,
+    closeView,
+    toggleSelected,
+    toggleSelectAll,
+    viewFile,
+    downloadOne,
+    downloadAll,
+    downloadSelected,
+  } = useCoordinatorDocuments();
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -52,56 +58,67 @@ export default function CoordinatorDocumentsPage() {
         userName={currentUser?.name || "Coordinator"}
       />
 
-      <main className="flex-1 p-4 md:p-6">
+      <main className="flex-1 min-w-0 p-4 md:p-6">
         <div className="bg-gradient-to-r from-gray-800 to-gray-700 rounded-2xl p-4 md:p-6 mb-6">
           <PageHeader
             title="Documents"
-            subtitle="Review requirements uploaded across every establishment"
+            subtitle="Track requirements submitted by every student"
             icon={FileText}
           />
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
           <StatCard
-            label="Awaiting Review"
-            value={isError ? "—" : pendingCount}
-            icon={Hourglass}
+            label={`Complete (${TOTAL_DOCUMENT_TYPES}/${TOTAL_DOCUMENT_TYPES})`}
+            value={isError ? "—" : stats.complete}
+            icon={CheckCircle2}
             variant="accent"
           />
           <StatCard
-            label="Records Shown"
-            value={isError ? "—" : filtered.length}
-            icon={ListChecks}
+            label="Incomplete"
+            value={isError ? "—" : stats.incomplete}
+            icon={AlertCircle}
+          />
+          <StatCard
+            label="Students"
+            value={isError ? "—" : stats.students}
+            icon={Users}
           />
         </div>
 
         <Card>
-          <DocumentsReviewTable
+          <DocumentsChecklistTable
             rows={paged}
             isLoading={isLoading}
             isError={isError}
             search={search}
-            statusFilter={statusFilter}
+            completionFilter={completionFilter}
+            establishmentFilter={establishmentFilter}
+            establishmentOptions={establishmentOptions}
             page={page}
             totalPages={totalPages}
-            actioningId={actioningId}
+            busyKey={busyKey}
             onSearchChange={setSearch}
-            onStatusFilterChange={setStatusFilter}
+            onCompletionFilterChange={setCompletionFilter}
+            onEstablishmentFilterChange={setEstablishmentFilter}
             onPageChange={setPage}
-            onApprove={handleApprove}
-            onReject={openReject}
+            onView={openView}
+            onDownloadAll={downloadAll}
           />
         </Card>
       </main>
 
-      <RejectDialog
-        target={rejectTarget}
-        reason={rejectReason}
-        error={rejectError}
-        isSubmitting={isRejecting}
-        onReasonChange={setRejectReason}
-        onConfirm={handleRejectConfirm}
-        onCancel={closeReject}
+      <StudentDocumentsDialog
+        student={viewTarget}
+        selectedIds={selectedIds}
+        allSelected={allSelected}
+        busyKey={busyKey}
+        onToggleSelected={toggleSelected}
+        onToggleSelectAll={toggleSelectAll}
+        onViewFile={viewFile}
+        onDownloadFile={downloadOne}
+        onDownloadSelected={downloadSelected}
+        onClose={closeView}
       />
     </div>
   );

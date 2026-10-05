@@ -4,6 +4,8 @@ import { LucideIcon } from "lucide-react";
 export interface DataTableColumn<T> {
   key: string;
   label: string;
+  /** Header tooltip — the full name when `label` is abbreviated. */
+  headerTitle?: string;
   render: (row: T) => ReactNode;
 }
 
@@ -50,6 +52,7 @@ export default function DataTable<T>({
               {columns.map((col) => (
                 <th
                   key={col.key}
+                  title={col.headerTitle}
                   className="text-left font-semibold text-gray-700 pb-3 pr-4 whitespace-nowrap text-xs md:text-sm"
                 >
                   {col.label}

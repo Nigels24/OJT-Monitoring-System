@@ -14,11 +14,15 @@ import { clearSession } from "@/lib/auth";
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
 
+/** The session's bearer token, or `null` outside the browser / signed out. */
+export function getAuthToken(): string | null {
+  return typeof window !== "undefined" ? localStorage.getItem("token") : null;
+}
+
 const rawBaseQuery = fetchBaseQuery({
   baseUrl: API_BASE_URL,
   prepareHeaders: (headers) => {
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const token = getAuthToken();
     if (token) {
       headers.set("Authorization", `Bearer ${token}`);
     }

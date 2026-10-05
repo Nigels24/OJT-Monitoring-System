@@ -100,7 +100,7 @@ of supervisors — same create/list/reset-password split as student vs student-p
 `evaluation` (submitted sheets, supervisor and coordinator), `evaluation-template` (the
 *coordinator's* editor for the sheet itself — a different audience and a different shape
 from the evaluations written on it, so a separate domain), `attendance-oversight`,
-`document` (the *coordinator's* cross-student review queue — `student-portal` owns the
+`document` (the *coordinator's* cross-student requirements checklist — `student-portal` owns the
 student's own upload/list/delete view of the same table), `messaging` (one domain, all
 three roles — see §5 "Which feature domain?"), `coordinator` (nav only), `account`.
 
@@ -125,7 +125,7 @@ only, tracked in a module-level stack, so Escape closes the dialog on top rather
 of them. `ConfirmDialog`, `ViewDialog`, `FormDialog`, the eight feature dialogs
 (`ChangePasswordDialog`, `StudentEditDialog`, `ResetPasswordDialog`,
 `SupervisorFormDialog`, `ResetSupervisorPasswordDialog`, `EstablishmentEditDialog`,
-`RejectDialog`, `DeclineDialog`) and the login page's recovery panel all render through
+`StudentDocumentsDialog`, `DeclineDialog`) and the login page's recovery panel all render through
 it. Its `Z_LAYERS` export (sidebar 20 · stickyHeader 30 · dropdown 40 · dialog 50 ·
 snackbar 60 — the snackbar above dialogs so a save error is readable over an open form) is
 the **only** place a z-index is chosen: `Sidebar`, `SelectField` and `Snackbar` read from
@@ -879,8 +879,7 @@ recoverable, a half-deleted database is not.
   No approve/reject anywhere. Labels and filename helpers live in
   `src/common/document-types.ts`; the client keeps its own label map, same deliberate
   duplication as `SCHOOL_NAME`. **Credentials no longer exist** — model, routes and
-  service code are gone; the old rows are now Documents. The coordinator's **client**
-  still targets the old review API — see "Partially built".
+  service code are gone; the old rows are now Documents.
 - **Documents (student client)** — `/student/documents`, no Credentials page or nav entry.
   Upload form is a `Document Type` dropdown (`SelectField`, "Select a document type") whose
   already-uploaded options read "<Type> — uploaded, will replace"; the table (Document ·
@@ -892,6 +891,20 @@ recoverable, a half-deleted database is not.
   `studentPortalApi.ts`, in enum order. The coordinator's student list/view and delete
   confirmation show `_count.documents` (view: "n / 6"); `_count.credentials` is gone
   client-side.
+- **Documents (coordinator client)** — `/coordinator/documents` is the checklist table: one
+  row per student (name, ID, establishment), one column per `DocumentType` in enum order
+  (short header, full label as `DataTableColumn.headerTitle` tooltip; green check with
+  file name + date tooltip, or a muted empty mark), Submitted `x/6`, and View / Download
+  all (disabled at 0, ZIP route with no `ids`). Stat cards Complete (6/6) · Incomplete ·
+  Students; filters search · All/Complete/Incomplete · establishment (incl. "No
+  establishment"); client-side pagination, 10 per page. View opens
+  `StudentDocumentsDialog` (`ViewDialog`): all six types with checkbox (submitted only),
+  per-file View/Download, Select all, "Download selected (n)" — **one selected uses the
+  single-file route, two or more the ZIP route with `ids`**. No approve/reject anywhere;
+  `RejectDialog`, the review hook/table and `DocumentStatus` are deleted. Bytes go through
+  `lib/api/fileDownload.ts`, not RTK Query (§8 item 28). Hook:
+  `features/document/hooks/use-coordinator-documents.ts`; `busyKey` lets one transfer run at
+  a time and spins only its button.
 - **Messaging** — `GET /messages/contacts`, `GET`/`POST /messages/conversations`,
   `GET`/`POST /messages/conversations/:id`. Bare `/messages`, no `@Roles` (§5's third route
   shape); 1:1 conversations only (`isGroup` stays `false`, `Conversation.name` stays
@@ -939,12 +952,6 @@ start date and confirm the oversight page shows a real percentage.
 
 ### Partially built
 
-**Coordinator Documents client (Step 3 of the professor's revisions).** The server and the
-student side are done; `/coordinator/documents` still renders the old review queue against
-removed routes. Replace it (`features/document/`, `RejectDialog`, `documentApi.ts`) with the
-per-student checklist, view/download per file and select/download-all as ZIP. When it goes,
-delete `DocumentStatus` from `studentPortalApi.ts` — that queue is its only importer.
-
 `stats.averageRating` on the coordinator dashboard is an average out of
 `stats.maxTotalRating`, which is now the **published template's** maximum and may be
 `null` (§8 item 23).
@@ -958,8 +965,7 @@ would only make the contact picker match the prototype's panel exactly.
 
 ### Remaining build order
 
-1. **Coordinator Documents client** (above).
-2. **Verify `Student.startDate` live** (above).
+1. **Verify `Student.startDate` live** (above).
 
 `pdfkit`, `archiver` and their `@types` are installed (`package.json`); on a fresh clone
 `npm install` provides them. **`archiver` is pinned to 7.x** — 8.x is ESM-only and this
@@ -1206,6 +1212,18 @@ Ordered roughly by how likely each is to bite.
     slice returns plain JSON, so the exemption hides nothing. The endpoint's
     `responseHandler` also parses a **non-ok** response as JSON rather than as a blob, or
     the snackbar would show bytes instead of Nest's message.
+
+28. **The coordinator's document downloads bypass RTK Query: `lib/api/fileDownload.ts`.**
+    A plain `fetch` with `getAuthToken()` (exported from `baseQuery.ts`) and the same
+    401 → `clearSession` + `/login` handling, so no Blob ever enters the store. Two traps
+    it handles: the server's `attachmentDisposition` sends **both** `filename="ascii_"` and
+    `filename*=UTF-8''…`, and the evaluation slice's `filenameFromDisposition` takes the
+    first match — fine for its ASCII-only names, wrong for "Résumé.pdf" — so this module's
+    parser prefers `filename*`. And **View must call `window.open` synchronously in the
+    click handler** (`openFileInNewTab` opens a blank tab, then points it at the blob URL):
+    a `window.open` after an `await` is popup-blocked. Don't add an `await` before it, and
+    don't pass `noopener` (that makes `window.open` return `null`; the opener is nulled by
+    hand instead).
 
 ---
 
