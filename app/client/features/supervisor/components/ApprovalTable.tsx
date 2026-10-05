@@ -5,85 +5,112 @@ import {
   Check,
   X,
   CalendarCheck,
+  Loader2,
 } from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
-import StatusBadge, { BadgeVariant } from "@/components/ui/StatusBadge";
+import StatusBadge from "@/components/ui/StatusBadge";
 import SelectField from "@/components/ui/SelectField";
+import PunchStamp from "@/components/ui/PunchStamp";
 import { SupervisorAttendance } from "@/lib/api/supervisorApi";
-import type { AttendanceStatus } from "@/lib/api/studentPortalApi";
+import type { Punch, PunchKind } from "@/lib/api/studentPortalApi";
+import {
+  DAY_STATUS_LABEL,
+  DAY_STATUS_VARIANT,
+  PUNCH_LABEL,
+} from "@/lib/attendance";
 import { formatDateOnly } from "@/lib/format";
+import type { QueueFilter } from "../hooks/use-attendance-approval";
 
 interface ApprovalTableProps {
   rows: SupervisorAttendance[];
   isLoading: boolean;
   search: string;
-  statusFilter: AttendanceStatus | "";
+  filter: QueueFilter;
   page: number;
   totalPages: number;
   actioningId: string | null;
   onSearchChange: (value: string) => void;
-  onStatusFilterChange: (value: AttendanceStatus | "") => void;
+  onFilterChange: (value: QueueFilter) => void;
   onPageChange: (page: number) => void;
-  onApprove: (record: SupervisorAttendance) => void;
-  onDecline: (record: SupervisorAttendance) => void;
+  onApprove: (day: SupervisorAttendance, punch: Punch) => void;
+  onDecline: (day: SupervisorAttendance, punch: Punch) => void;
 }
 
-const STATUS_VARIANT: Record<AttendanceStatus, BadgeVariant> = {
-  PENDING: "pending",
-  APPROVED: "approved",
-  DECLINED: "declined",
-};
-
-const STATUS_LABEL: Record<AttendanceStatus, string> = {
-  PENDING: "Pending",
-  APPROVED: "Approved",
-  DECLINED: "Declined",
-};
-
-const STATUS_FILTER_OPTIONS = [
-  { label: "Pending", value: "PENDING" },
-  { label: "Approved", value: "APPROVED" },
-  { label: "Declined", value: "DECLINED" },
-  { label: "All Statuses", value: "" },
+const FILTER_OPTIONS = [
+  { label: "Has pending punches", value: "PENDING" },
+  { label: "All", value: "" },
 ];
 
-function clock(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
+const PUNCH_COLUMNS: { kind: PunchKind; label: string }[] = [
+  { kind: "TIME_IN_AM", label: "Morning In" },
+  { kind: "TIME_OUT_AM", label: "Morning Out" },
+  { kind: "TIME_IN_PM", label: "Afternoon In" },
+  { kind: "TIME_OUT_PM", label: "Afternoon Out" },
+];
 
+/**
+ * One row per student-day, one column per punch. Only a PENDING punch has
+ * Approve/Decline buttons — decisions are final, so a decided punch shows its
+ * result (and, on hover, who decided it) and nothing to click.
+ */
 export default function ApprovalTable({
   rows,
   isLoading,
   search,
-  statusFilter,
+  filter,
   page,
   totalPages,
   actioningId,
   onSearchChange,
-  onStatusFilterChange,
+  onFilterChange,
   onPageChange,
   onApprove,
   onDecline,
 }: ApprovalTableProps) {
+  const renderPunchCell = (kind: PunchKind, r: SupervisorAttendance) => {
+    const punch = r.punches[kind];
+    if (!punch || punch.status !== "PENDING") {
+      return <PunchStamp punch={punch} showReason />;
+    }
+    const busy = actioningId === punch.id;
+    const label = `${PUNCH_LABEL[kind]} for ${r.student.user.name}`;
+    return (
+      <div className="space-y-1.5">
+        <PunchStamp punch={punch} />
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => onApprove(r, punch)}
+            disabled={busy}
+            title={`Approve ${PUNCH_LABEL[kind]}`}
+            aria-label={`Approve ${label}`}
+            className="p-1.5 rounded-md border border-green-200 text-green-700 hover:bg-green-50 disabled:opacity-40"
+          >
+            {busy ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Check size={14} />
+            )}
+          </button>
+          <button
+            onClick={() => onDecline(r, punch)}
+            disabled={busy}
+            title={`Decline ${PUNCH_LABEL[kind]}`}
+            aria-label={`Decline ${label}`}
+            className="p-1.5 rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const columns: DataTableColumn<SupervisorAttendance>[] = [
-    {
-      key: "date",
-      label: "Date",
-      render: (r) => (
-        <span className="font-medium text-gray-900 whitespace-nowrap">
-          {formatDateOnly(r.date)}
-        </span>
-      ),
-    },
     {
       key: "student",
       label: "Student",
       render: (r) => (
-        <div>
+        <div className="min-w-36">
           <div className="font-semibold text-gray-900">
             {r.student.user.name}
           </div>
@@ -95,82 +122,54 @@ export default function ApprovalTable({
       ),
     },
     {
-      key: "am",
-      label: "AM (in — out)",
+      key: "date",
+      label: "Date",
       render: (r) => (
-        <span className="whitespace-nowrap">
-          {clock(r.timeInAM)} — {clock(r.timeOutAM)}
-        </span>
+        <div>
+          <div className="font-medium text-gray-900 whitespace-nowrap">
+            {formatDateOnly(r.date)}
+          </div>
+          {r.remarks && (
+            <div
+              className="text-xs text-gray-500 max-w-48 mt-0.5"
+              title="The student's note"
+            >
+              Note: {r.remarks}
+            </div>
+          )}
+        </div>
       ),
     },
-    {
-      key: "pm",
-      label: "PM (in — out)",
-      render: (r) => (
-        <span className="whitespace-nowrap">
-          {clock(r.timeInPM)} — {clock(r.timeOutPM)}
-        </span>
-      ),
-    },
+    ...PUNCH_COLUMNS.map(({ kind, label }) => ({
+      key: kind,
+      label,
+      render: (r: SupervisorAttendance) => renderPunchCell(kind, r),
+    })),
     {
       key: "hours",
       label: "Hours",
       render: (r) => (
-        <span className="font-semibold text-gray-900">{r.hours}</span>
-      ),
-    },
-    {
-      key: "remarks",
-      label: "Remarks",
-      render: (r) => (
-        <div className="max-w-xs">
-          <span className="text-gray-600">{r.remarks || "—"}</span>
-          {r.status === "DECLINED" && r.declineReason && (
-            <p className="text-xs text-red-600 mt-1">
-              <span className="font-medium">Declined:</span> {r.declineReason}
-            </p>
+        <div className="whitespace-nowrap">
+          <div className="font-semibold text-gray-900">
+            {r.approvedHours} hrs
+          </div>
+          {r.pendingHours > 0 && (
+            <div className="text-xs text-gray-500">
+              {r.pendingHours} pending
+            </div>
           )}
         </div>
       ),
     },
     {
       key: "status",
-      label: "Status",
+      label: "Day Status",
       render: (r) => (
         <StatusBadge
-          label={STATUS_LABEL[r.status]}
-          variant={STATUS_VARIANT[r.status]}
+          label={DAY_STATUS_LABEL[r.dayStatus]}
+          variant={DAY_STATUS_VARIANT[r.dayStatus]}
         />
       ),
-    },
-    {
-      key: "actions",
-      label: "Actions",
-      render: (r) => {
-        const busy = actioningId === r.id;
-        return (
-          <div className="flex gap-2">
-            <button
-              onClick={() => onApprove(r)}
-              disabled={busy || r.status === "APPROVED"}
-              className="px-2 py-1.5 rounded-md border border-green-200 text-green-700 hover:bg-green-50 disabled:opacity-40 disabled:hover:bg-transparent inline-flex items-center gap-1 text-xs font-medium"
-              aria-label={`Approve ${r.student.user.name}'s log`}
-            >
-              <Check size={14} />
-              Approve
-            </button>
-            <button
-              onClick={() => onDecline(r)}
-              disabled={busy || r.status === "DECLINED"}
-              className="px-2 py-1.5 rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent inline-flex items-center gap-1 text-xs font-medium"
-              aria-label={`Decline ${r.student.user.name}'s log`}
-            >
-              <X size={14} />
-              Decline
-            </button>
-          </div>
-        );
-      },
     },
   ];
 
@@ -184,23 +183,16 @@ export default function ApprovalTable({
           />
           <input
             value={search}
-            onChange={(e) => {
-              onSearchChange(e.target.value);
-              onPageChange(1);
-            }}
+            onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search by student name, ID or course..."
             className="w-full h-10 md:h-12 pl-9 md:pl-11 pr-3 md:pr-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-900 placeholder-gray-400"
           />
         </div>
-        <div className="md:w-52">
+        <div className="md:w-56">
           <SelectField
-            value={statusFilter}
-            onChange={(value) => {
-              onStatusFilterChange(value as AttendanceStatus | "");
-              onPageChange(1);
-            }}
-            placeholder="Pending"
-            options={STATUS_FILTER_OPTIONS}
+            value={filter}
+            onChange={(value) => onFilterChange(value as QueueFilter)}
+            options={FILTER_OPTIONS}
             className="w-full"
           />
         </div>
@@ -210,9 +202,9 @@ export default function ApprovalTable({
         <p className="text-gray-400 text-sm">Loading...</p>
       ) : rows.length === 0 ? (
         <p className="text-gray-500 text-sm py-8 text-center">
-          {statusFilter === "PENDING"
-            ? "Nothing waiting for approval. You're all caught up."
-            : "No attendance records match your filters."}
+          {filter === "PENDING" && !search.trim()
+            ? "No punches waiting for approval. You're all caught up."
+            : "No attendance matches your filters."}
         </p>
       ) : (
         <>

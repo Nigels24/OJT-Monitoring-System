@@ -10,7 +10,7 @@ import DetailItem from "@/components/ui/DetailItem";
 import {
   LayoutDashboard,
   Clock,
-  CheckCircle2,
+  XCircle,
   Hourglass,
   CalendarCheck,
   Building2,
@@ -74,16 +74,16 @@ export default function StudentDashboardPage() {
                 subtext="until you finish"
               />
               <StatCard
-                label="Approved Logs"
-                value={data.stats.approvedCount}
-                icon={CheckCircle2}
-                subtext={`${data.stats.totalLogs} submitted`}
-              />
-              <StatCard
-                label="Awaiting Approval"
+                label="Punches Awaiting Approval"
                 value={data.stats.pendingCount}
                 icon={CalendarCheck}
                 subtext={`${data.stats.pendingHours} hrs pending`}
+              />
+              <StatCard
+                label="Declined Punches"
+                value={data.stats.declinedCount}
+                icon={XCircle}
+                subtext={`${data.stats.approvedCount} approved · ${data.stats.totalLogs} days logged`}
               />
             </div>
 
@@ -99,7 +99,8 @@ export default function StudentDashboardPage() {
                 colorByValue
               />
               <p className="text-xs text-gray-500 mt-2">
-                Only hours your supervisor has approved count toward this total.
+                Only sessions whose Time In and Time Out your supervisor has
+                both approved count toward this total.
                 {data.stats.pendingHours > 0 &&
                   ` ${data.stats.pendingHours} more hours are awaiting approval.`}
               </p>
@@ -194,7 +195,7 @@ export default function StudentDashboardPage() {
                   href="/student/attendance"
                   className="text-sm font-medium text-blue-600 hover:underline"
                 >
-                  Log attendance
+                  Punch in
                 </Link>
               </div>
               <AttendanceTable

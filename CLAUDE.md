@@ -112,7 +112,8 @@ three roles — see §5 "Which feature domain?"), `coordinator` (nav only), `acc
 **UI primitives** (`components/ui/`): Overlay, DataTable, StatCard, StatusBadge,
 ProgressBar, TrendChart, RankedBarList, ConfirmDialog, ViewDialog, FormDialog, TextField,
 TextArea, SelectField, SearchInput, Tabs, Card, Button, PageHeader, Avatar, DetailItem,
-Snackbar, FileLink, SectionError. Reuse these
+Snackbar, FileLink, SectionError, PunchStamp (one attendance punch: Manila time +
+status badge, decider on hover). Reuse these
 before adding a new one.
 
 **`Overlay` is the base every modal sits on, and the single source of the app's stacking
@@ -853,8 +854,23 @@ recoverable, a half-deleted database is not.
 - **Attendance punches (server)** — §6 "Attendance is a day plus four separately approved
   punches": live punch endpoints (server-stamped, Manila today), today/history with
   `dayStatus` and approved/pending hours, per-punch final approve/decline, dashboards and
-  oversight recomputed from approved sessions, cascades updated. The **client** still
-  targets the old per-day API — see "Partially built".
+  oversight recomputed from approved sessions, cascades updated.
+- **Attendance punches (client)** — the client holds **no punch rules**; every
+  enabled/disabled state and reason is the server's `allowed`/`blockedReason`.
+  Student `/student/attendance`: `PunchCard` (2×2, Morning/Afternoon × In/Out; a punched
+  tile shows Manila time + badge, a declined one its reason and "Punch again" when
+  allowed, an unpunched one a button with the server's reason when disabled), a
+  `ConfirmDialog` before every punch (Cancel holds focus), remarks with Save (mirrored-state
+  seeding, §8 item 18 — the student's unsaved typing survives a poll); `/today` polls
+  every 30s (`skipPollingIfUnfocused`). `AttendanceTable` (history + dashboard recent
+  list): Date · Morning · Afternoon (In/Out each a `PunchStamp`, declined reason inline) ·
+  Day Status · Remarks — **no Hours column** (§8 item 29). Supervisor
+  `/supervisor/attendance`: one row per day, a column per punch, ✓/✕ only on PENDING
+  punches, filter "Has pending punches" (default) / "All", polls every 30s; `DeclineDialog`
+  is titled "Decline <Punch> — <Student>, <Date>". Approve/decline invalidate
+  `SupervisorStudent` too (fixes the stale roster hours). Shared labels/variants/clock
+  format: `lib/attendance.ts` (presentation only). Coordinator: supervisor delete reads
+  `_count.approvedPunches`; dashboard copy says punches. Oversight unchanged.
 - **Supervisor Management (Coordinator)** — create, list, password reset, and delete
   (guarded — see §6). No edit yet (§8 item 10). Table columns: name, username, email,
   establishment, position.
@@ -1003,20 +1019,17 @@ recoverable, a half-deleted database is not.
 
 ### Needs live verification
 
+**The attendance punch flow end to end** (student punch → supervisor approve/decline →
+re-punch → hours on every dashboard). Server reads and refusals were verified against
+the live DB; no punch, approval or remark has been written yet. The user is testing it in
+the UI.
+
 `Student.startDate` is writable from the coordinator's student form and is what makes
 attendance-oversight percentages report real numbers instead of `null` for every student.
 The code is committed but **has not been clicked through** — create/edit a student with a
 start date and confirm the oversight page shows a real percentage.
 
 ### Partially built
-
-**Attendance punches client (Step 4c).** Server done; the client still posts the old
-day form and approves whole days. Student: replace `AttendanceForm` + the correction flow
-with a punch card (four buttons from `/today`'s `allowed`, a `ConfirmDialog` per punch,
-remarks), history from the new shape. Supervisor: per-punch Approve/Decline on
-`/supervisor/punches/:id/…`, invalidating `SupervisorStudent` too. Coordinator: supervisor
-delete copy reads `_count.approvedPunches` (was `attendanceApprovals`); dashboard trend and
-pending counts are punches.
 
 `stats.averageRating` on the coordinator dashboard is an average out of
 `stats.maxTotalRating`, which is now the **published template's** maximum and may be
@@ -1292,6 +1305,16 @@ Ordered roughly by how likely each is to bite.
     a `window.open` after an `await` is popup-blocked. Don't add an `await` before it, and
     don't pass `noopener` (that makes `window.open` return `null`; the opener is nulled by
     hand instead).
+
+29. **The student's attendance screens show no per-day or per-punch hours — by the
+    client's request.** No Hours column in `AttendanceTable` (`/student/attendance` history
+    and the student dashboard's recent list) and no "today's hours" line on `PunchCard`.
+    The API still returns `approvedHours`/`pendingHours` per day; leave them unrendered
+    there. Hours *totals* stay where they always were: the student dashboard's stats and
+    progress bar, the attendance page's Approved Hours card and its "x hrs awaiting"
+    subtext, the supervisor's queue and roster, and the coordinator's views. A handoff once
+    asked for the column back by mistake and it was removed again — don't re-add it
+    without the user saying the client changed their mind.
 
 ---
 

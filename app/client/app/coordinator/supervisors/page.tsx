@@ -115,7 +115,7 @@ export default function SupervisorManagementPage() {
           deleteTarget
             ? deleteSupervisorMessage(deleteTarget.user.name, {
                 evaluations: deleteTarget._count?.evaluations ?? 0,
-                attendanceApprovals: deleteTarget._count?.attendanceApprovals ?? 0,
+                approvedPunches: deleteTarget._count?.approvedPunches ?? 0,
               })
             : ""
         }

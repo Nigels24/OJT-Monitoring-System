@@ -1,12 +1,14 @@
 import { XCircle, X } from "lucide-react";
 import TextArea from "@/components/ui/TextArea";
 import Button from "@/components/ui/Button";
-import { SupervisorAttendance } from "@/lib/api/supervisorApi";
+import type { DeclineTarget } from "../hooks/use-attendance-approval";
+import { PUNCH_LABEL, formatPunchTime } from "@/lib/attendance";
 import { formatDateOnly } from "@/lib/format";
 import Overlay from "@/components/ui/Overlay";
 
 interface DeclineDialogProps {
-  target: SupervisorAttendance | null;
+  /** The one punch being declined, with its day for context. */
+  target: DeclineTarget | null;
   reason: string;
   error: string;
   isSubmitting: boolean;
@@ -16,8 +18,8 @@ interface DeclineDialogProps {
 }
 
 /**
- * Declining requires a written reason — it is stored on the record and shown
- * to the student, so a plain yes/no confirm would not be enough.
+ * Declining a punch requires a written reason — it is stored on that punch and
+ * shown to the student, so a plain yes/no confirm would not be enough.
  */
 export default function DeclineDialog({
   target,
@@ -30,20 +32,16 @@ export default function DeclineDialog({
 }: DeclineDialogProps) {
   if (!target) return null;
 
+  const { day, punch } = target;
+  const title = `Decline ${PUNCH_LABEL[punch.kind]} — ${day.student.user.name}, ${formatDateOnly(day.date)}`;
+
   return (
-    <Overlay
-      open
-      label="Decline Attendance"
-      onClose={onCancel}
-      closeOnBackdrop={false}
-    >
+    <Overlay open label={title} onClose={onCancel} closeOnBackdrop={false}>
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
         <div className="flex items-center justify-between p-4 md:p-6 border-b border-gray-200">
           <div className="flex items-center gap-2">
             <XCircle size={20} className="text-red-600" />
-            <h2 className="text-lg font-semibold text-gray-900">
-              Decline Attendance
-            </h2>
+            <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
           </div>
           <button
             onClick={onCancel}
@@ -57,14 +55,15 @@ export default function DeclineDialog({
         <div className="p-4 md:p-6 space-y-4">
           <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm">
             <div className="font-semibold text-gray-900">
-              {target.student.user.name}
+              {day.student.user.name}
             </div>
             <div className="text-gray-600">
-              {formatDateOnly(target.date)} · {target.hours} hrs
+              {PUNCH_LABEL[punch.kind]} at {formatPunchTime(punch.time)} ·{" "}
+              {formatDateOnly(day.date)}
             </div>
-            {target.remarks && (
+            {day.remarks && (
               <div className="text-gray-500 mt-1">
-                Student&apos;s note: {target.remarks}
+                Student&apos;s note: {day.remarks}
               </div>
             )}
           </div>
@@ -76,12 +75,13 @@ export default function DeclineDialog({
             onChange={(e) => {
               onReasonChange(e.target.value);
             }}
-            placeholder="e.g. Time out doesn't match the logbook — please resubmit."
+            placeholder="e.g. You weren't on site at this time — please punch again when you arrive."
             rows={3}
           />
           <p className="text-xs text-gray-500">
-            The student sees this on their attendance history, so make it
-            specific enough for them to fix.
+            The student sees this on their punch card and history, and can punch
+            again the same day. Decisions are final — this can&apos;t be changed
+            afterwards.
           </p>
 
           {error && (
@@ -105,7 +105,7 @@ export default function DeclineDialog({
                 loading={isSubmitting}
                 onClick={onConfirm}
               >
-                Decline log
+                Decline punch
               </Button>
             </div>
           </div>

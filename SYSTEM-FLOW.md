@@ -117,6 +117,10 @@ Supervisor decides each punch on its own (no bulk approve)
     FINAL: updateMany where status = PENDING; a decided punch → 409, never overwritten
     sets decidedById + decidedAt
        ↓
+Client: the student's PunchCard renders /today's `allowed` and `blockedReason` verbatim
+  (no rule copies), confirms every punch, polls /today every 30s; the supervisor's queue
+  polls every 30s and shows ✓/✕ only on PENDING punches. Labels live in lib/attendance.ts.
+       ↓
 A session (AM or PM) counts only when its In AND Out are both APPROVED.
 Every hour figure goes through src/common/attendance-hours.ts
 (totalApprovedHours / summarizeDay / hasApprovedSession):

@@ -75,15 +75,15 @@ export function deleteStudentMessage(
   );
 }
 
-/** Approved attendance survives a supervisor's deletion — it just loses its approver. */
+/** Approved punches survive a supervisor's deletion — they just lose their decider. */
 export function deleteSupervisorMessage(
   name: string,
-  counts: { evaluations: number; attendanceApprovals: number },
+  counts: { evaluations: number; approvedPunches: number },
 ): string {
   return (
     `Permanently delete ${name}? This also deletes ` +
     `${countLabel(counts.evaluations, "evaluation")} and their login. ` +
-    `${countLabel(counts.attendanceApprovals, "approved attendance record")} will be kept ` +
+    `${countLabel(counts.approvedPunches, "approved punch", "approved punches")} will be kept ` +
     "but will no longer show who approved them. This cannot be undone."
   );
 }

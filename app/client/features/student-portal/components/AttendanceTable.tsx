@@ -1,41 +1,25 @@
-import { ChevronLeft, ChevronRight, CalendarCheck, PencilLine } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarCheck } from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
-import StatusBadge, { BadgeVariant } from "@/components/ui/StatusBadge";
-import { AttendanceRecord, AttendanceStatus } from "@/lib/api/studentPortalApi";
+import StatusBadge from "@/components/ui/StatusBadge";
+import PunchStamp from "@/components/ui/PunchStamp";
+import { AttendanceDay } from "@/lib/api/studentPortalApi";
+import {
+  DAY_STATUS_LABEL,
+  DAY_STATUS_VARIANT,
+  SESSIONS,
+} from "@/lib/attendance";
 import { formatDateOnly, formatWeekdayOnly } from "@/lib/format";
 
 interface AttendanceTableProps {
-  rows: AttendanceRecord[];
+  rows: AttendanceDay[];
   isLoading: boolean;
   page?: number;
   totalPages?: number;
   onPageChange?: (page: number) => void;
   emptyMessage?: string;
-  /** Loads a PENDING/DECLINED row into the log form for correction. Omitted -> no action column. */
-  onCorrect?: (record: AttendanceRecord) => void;
 }
 
-const STATUS_VARIANT: Record<AttendanceStatus, BadgeVariant> = {
-  PENDING: "pending",
-  APPROVED: "approved",
-  DECLINED: "declined",
-};
-
-const STATUS_LABEL: Record<AttendanceStatus, string> = {
-  PENDING: "Pending",
-  APPROVED: "Approved",
-  DECLINED: "Declined",
-};
-
-/** `HH:mm` in the viewer's timezone, or an em dash when the slot is unused. */
-function clock(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
+/** Attendance history, one row per day. Also the student dashboard's recent list. */
 export default function AttendanceTable({
   rows,
   isLoading,
@@ -43,52 +27,52 @@ export default function AttendanceTable({
   totalPages,
   onPageChange,
   emptyMessage = "No attendance logged yet.",
-  onCorrect,
 }: AttendanceTableProps) {
-  const columns: DataTableColumn<AttendanceRecord>[] = [
+  const columns: DataTableColumn<AttendanceDay>[] = [
     {
       key: "date",
       label: "Date",
       render: (r) => (
-        <span className="font-medium text-gray-900 whitespace-nowrap">
-          {formatDateOnly(r.date)}
-        </span>
+        <div className="whitespace-nowrap">
+          <div className="font-medium text-gray-900">
+            {formatDateOnly(r.date)}
+          </div>
+          <div className="text-xs text-gray-500">
+            {formatWeekdayOnly(r.date)}
+          </div>
+        </div>
       ),
     },
-    {
-      key: "day",
-      label: "Day",
-      render: (r) =>
-        formatWeekdayOnly(r.date),
-    },
-    {
-      key: "am",
-      label: "AM (in — out)",
-      render: (r) => (
-        <span className="whitespace-nowrap">
-          {clock(r.timeInAM)} — {clock(r.timeOutAM)}
-        </span>
+    // In above Out in one cell per session. A declined punch carries its
+    // reason inline — never behind a hover — since it is only actionable if
+    // the student can see why.
+    ...SESSIONS.map((session) => ({
+      key: session.label,
+      label: session.label,
+      render: (r: AttendanceDay) => (
+        <div className="space-y-2">
+          <div className="flex items-start gap-2">
+            <span className="text-xs text-gray-500 w-7 pt-1">In</span>
+            <PunchStamp punch={r.punches[session.inKind]} showReason />
+          </div>
+          <div className="flex items-start gap-2">
+            <span className="text-xs text-gray-500 w-7 pt-1">Out</span>
+            <PunchStamp punch={r.punches[session.outKind]} showReason />
+          </div>
+        </div>
       ),
-    },
-    {
-      key: "pm",
-      label: "PM (in — out)",
-      render: (r) => (
-        <span className="whitespace-nowrap">
-          {clock(r.timeInPM)} — {clock(r.timeOutPM)}
-        </span>
-      ),
-    },
-    // No "Total Hours" column — removed at the client's request. Hours are
-    // still tracked and shown as the running totals on the dashboard, which is
-    // what tells the student how far through their requirement they are.
+    })),
+    // No Hours column — removed at the client's request (CLAUDE.md §8 item
+    // 29). Hours are shown as the running totals on the dashboard and the
+    // stat cards, which is what tells the student how far through their
+    // requirement they are.
     {
       key: "status",
-      label: "Status",
+      label: "Day Status",
       render: (r) => (
         <StatusBadge
-          label={STATUS_LABEL[r.status]}
-          variant={STATUS_VARIANT[r.status]}
+          label={DAY_STATUS_LABEL[r.dayStatus]}
+          variant={DAY_STATUS_VARIANT[r.dayStatus]}
         />
       ),
     },
@@ -96,38 +80,10 @@ export default function AttendanceTable({
       key: "remarks",
       label: "Remarks",
       render: (r) => (
-        <div className="max-w-xs">
-          <span className="text-gray-600">{r.remarks || "—"}</span>
-          {/* A declined log is only actionable if the student can see why. */}
-          {r.status === "DECLINED" && r.declineReason && (
-            <p className="text-xs text-red-600 mt-1">
-              <span className="font-medium">Declined:</span> {r.declineReason}
-            </p>
-          )}
-        </div>
+        <span className="text-gray-600 block max-w-xs">{r.remarks || "—"}</span>
       ),
     },
   ];
-
-  if (onCorrect) {
-    columns.push({
-      key: "actions",
-      label: "",
-      // APPROVED hours must never change after the fact, so only PENDING and
-      // DECLINED rows get a correction action.
-      render: (r) =>
-        r.status !== "APPROVED" ? (
-          <button
-            type="button"
-            onClick={() => onCorrect(r)}
-            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 whitespace-nowrap"
-          >
-            <PencilLine size={13} />
-            Correct this log
-          </button>
-        ) : null,
-    });
-  }
 
   if (isLoading) {
     return <p className="text-gray-400 text-sm">Loading...</p>;

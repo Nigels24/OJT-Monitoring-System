@@ -32,12 +32,12 @@ import {
 import { formatDateOnly } from "@/lib/format";
 import SectionError from "@/components/ui/SectionError";
 
-// Charting the statuses that actually exist. The prototype showed
-// present/late/absent; attendance has no such states.
+// Charting the statuses that actually exist, one count per punch. The
+// prototype showed present/late/absent; attendance has no such states.
 const TREND_SERIES = [
-  { key: "approved", label: "Approved", color: "#22c55e" },
-  { key: "pending", label: "Pending", color: "#eab308" },
-  { key: "declined", label: "Declined", color: "#ef4444" },
+  { key: "approved", label: "Approved punches", color: "#22c55e" },
+  { key: "pending", label: "Pending punches", color: "#eab308" },
+  { key: "declined", label: "Declined punches", color: "#ef4444" },
 ];
 
 const STUDENT_COLUMNS: DataTableColumn<RecentStudent>[] = [
@@ -212,7 +212,7 @@ export default function CoordinatorDashboard() {
                 label="Pending Approvals"
                 value={data.stats.pendingApprovals}
                 icon={Hourglass}
-                subtext="awaiting supervisors"
+                subtext="punches awaiting supervisors"
               />
               <StatCard
                 label="Evaluations"
@@ -229,7 +229,7 @@ export default function CoordinatorDashboard() {
                   Attendance Trends (last 6 weeks)
                 </h2>
                 <p className="text-xs text-gray-500 mb-3">
-                  Attendance logs by week, grouped by approval status.
+                  Punches by week, grouped by approval status.
                 </p>
                 {failed("attendanceTrend") && (
                   <SectionError
@@ -247,7 +247,7 @@ export default function CoordinatorDashboard() {
                   />
                 ) : (
                   <p className="text-gray-500 text-sm py-8 text-center">
-                    No attendance logged in the last six weeks.
+                    No punches recorded in the last six weeks.
                   </p>
                 )}
               </Card>

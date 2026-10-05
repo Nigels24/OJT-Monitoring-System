@@ -10,21 +10,74 @@ import { baseQueryWithAuth } from "./baseQuery";
 
 export type AttendanceStatus = "PENDING" | "APPROVED" | "DECLINED";
 
-export interface AttendanceRecord {
+/** Mirrors the server's `PunchKind` enum, in the order a day is lived. */
+export const PUNCH_KINDS = [
+  "TIME_IN_AM",
+  "TIME_OUT_AM",
+  "TIME_IN_PM",
+  "TIME_OUT_PM",
+] as const;
+
+export type PunchKind = (typeof PUNCH_KINDS)[number];
+
+/** One clock event, stamped by the server and decided on its own. */
+export interface Punch {
   id: string;
-  date: string;
-  timeInAM: string | null;
-  timeOutAM: string | null;
-  timeInPM: string | null;
-  timeOutPM: string | null;
-  /** The student's own note. */
-  remarks: string | null;
-  /** The supervisor's explanation when status is DECLINED. */
-  declineReason: string | null;
+  kind: PunchKind;
+  /** A real instant (ISO), stamped by the server. */
+  time: string;
   status: AttendanceStatus;
+  /** The supervisor's explanation, set only when status is DECLINED. */
+  declineReason: string | null;
+  /** `null` while pending, and on punches migrated from the old per-day model. */
+  decidedAt: string | null;
+  decidedBy: { id: string; user: { name: string } } | null;
+}
+
+/** Every kind as a key; `null` where nothing was punched. */
+export type PunchMap = Record<PunchKind, Punch | null>;
+
+/**
+ * Derived by the server, never stored: PENDING (a punch awaits a decision),
+ * PARTIAL (something declined, a session approved), DECLINED, APPROVED (all
+ * approved, at least one complete session), INCOMPLETE (no complete session).
+ */
+export type DayStatus =
+  "PENDING" | "PARTIAL" | "DECLINED" | "APPROVED" | "INCOMPLETE";
+
+/** One day with its punches, as history and the dashboard read it. */
+export interface AttendanceDay {
+  id: string;
+  /** UTC midnight of the Manila day — render with formatDateOnly. */
+  date: string;
+  /** The student's own note. Never a decline reason — those are per punch. */
+  remarks: string | null;
   createdAt: string;
-  /** Derived server-side from the four clock fields. */
-  hours: number;
+  punches: PunchMap;
+  dayStatus: DayStatus;
+  /** Sessions with both punches approved — the hours that count. */
+  approvedHours: number;
+  /** Sessions with both punches present, none declined, not yet both approved. */
+  pendingHours: number;
+}
+
+/**
+ * Today's punch card. `allowed` is the server's verdict per kind — `true`, or
+ * the reason it can't be punched now, shown verbatim. The client holds no
+ * copy of the punch rules.
+ */
+export interface TodayAttendance {
+  date: string;
+  attendanceId: string | null;
+  remarks: string | null;
+  punches: PunchMap;
+  /** `null` when nothing has been logged today yet. */
+  dayStatus: DayStatus | null;
+  approvedHours: number;
+  pendingHours: number;
+  allowed: Record<PunchKind, true | string>;
+  /** Completed OJT, no establishment, or before the start date — blocks every punch. */
+  blockedReason: string | null;
 }
 
 export interface StudentDashboard {
@@ -53,24 +106,15 @@ export interface StudentDashboard {
     pendingHours: number;
     requiredHours: number;
     remainingHours: number;
+    /** Days logged. */
     totalLogs: number;
+    /** Punch counts, not days — each punch is its own decision. */
     approvedCount: number;
     pendingCount: number;
     declinedCount: number;
   };
-  recentAttendance: AttendanceRecord[];
+  recentAttendance: AttendanceDay[];
   _count: { documents: number };
-}
-
-export interface SubmitAttendanceRequest {
-  /** Calendar day, `yyyy-mm-dd`. */
-  date: string;
-  /** Full ISO timestamps — the server stores real instants, not clock strings. */
-  timeInAM?: string;
-  timeOutAM?: string;
-  timeInPM?: string;
-  timeOutPM?: string;
-  remarks?: string;
 }
 
 export interface StudentProfile {
@@ -133,31 +177,40 @@ export interface StudentDocument {
 export const studentPortalApi = createApi({
   reducerPath: "studentPortalApi",
   baseQuery: baseQueryWithAuth,
-  tagTypes: [
-    "MyDashboard",
-    "MyAttendance",
-    "MyProfile",
-    "MyDocuments",
-  ],
+  tagTypes: ["MyDashboard", "MyAttendance", "MyProfile", "MyDocuments"],
   endpoints: (builder) => ({
     getMyDashboard: builder.query<StudentDashboard, void>({
       query: () => "/student/dashboard",
       providesTags: ["MyDashboard"],
     }),
-    getMyAttendance: builder.query<AttendanceRecord[], void>({
+    getAttendanceHistory: builder.query<AttendanceDay[], void>({
       query: () => "/student/attendance",
       providesTags: ["MyAttendance"],
     }),
-    submitAttendance: builder.mutation<
-      AttendanceRecord,
-      SubmitAttendanceRequest
-    >({
+    getTodayAttendance: builder.query<TodayAttendance, void>({
+      query: () => "/student/attendance/today",
+      providesTags: ["MyAttendance"],
+    }),
+    /** `{ kind }` only — the server stamps the time and the day. */
+    punch: builder.mutation<TodayAttendance, { kind: PunchKind }>({
       query: (body) => ({
-        url: "/student/attendance",
+        url: "/student/attendance/punch",
         method: "POST",
         body,
       }),
-      // A new log changes the dashboard totals too.
+      // Today, history and the dashboard's counts and hours all move.
+      invalidatesTags: ["MyAttendance", "MyDashboard"],
+    }),
+    updateTodayRemarks: builder.mutation<
+      TodayAttendance,
+      { remarks: string | null }
+    >({
+      query: (body) => ({
+        url: "/student/attendance/today/remarks",
+        method: "PATCH",
+        body,
+      }),
+      // The dashboard's recent-attendance table shows remarks too.
       invalidatesTags: ["MyAttendance", "MyDashboard"],
     }),
     getMyProfile: builder.query<StudentProfile, void>({
@@ -191,22 +244,22 @@ export const studentPortalApi = createApi({
       // The dashboard's _count.documents changes on every upload too.
       invalidatesTags: ["MyDocuments", "MyDashboard"],
     }),
-    deleteDocument: builder.mutation<{ id: string; deleted: boolean }, string>(
-      {
-        query: (id) => ({
-          url: `/student/documents/${id}`,
-          method: "DELETE",
-        }),
-        invalidatesTags: ["MyDocuments", "MyDashboard"],
-      },
-    ),
+    deleteDocument: builder.mutation<{ id: string; deleted: boolean }, string>({
+      query: (id) => ({
+        url: `/student/documents/${id}`,
+        method: "DELETE",
+      }),
+      invalidatesTags: ["MyDocuments", "MyDashboard"],
+    }),
   }),
 });
 
 export const {
   useGetMyDashboardQuery,
-  useGetMyAttendanceQuery,
-  useSubmitAttendanceMutation,
+  useGetAttendanceHistoryQuery,
+  useGetTodayAttendanceQuery,
+  usePunchMutation,
+  useUpdateTodayRemarksMutation,
   useGetMyProfileQuery,
   useUpdateMyProfileMutation,
   useGetMyDocumentsQuery,

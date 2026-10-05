@@ -5,52 +5,57 @@ import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
 import SelectField from "@/components/ui/SelectField";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import {
   CalendarCheck,
   Clock,
-  CheckCircle2,
   Hourglass,
   XCircle,
-  ClipboardList,
+  Fingerprint,
+  CheckCircle2,
 } from "lucide-react";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
-import { AttendanceStatus } from "@/lib/api/studentPortalApi";
+import { DayStatus } from "@/lib/api/studentPortalApi";
+import { DAY_STATUS_LABEL, PUNCH_LABEL } from "@/lib/attendance";
 import { STUDENT_NAV } from "@/features/student-portal/nav";
 import { useAttendanceLog } from "@/features/student-portal/hooks/use-attendance-log";
-import AttendanceForm from "@/features/student-portal/components/AttendanceForm";
+import PunchCard from "@/features/student-portal/components/PunchCard";
 import AttendanceTable from "@/features/student-portal/components/AttendanceTable";
 
 const STATUS_FILTER_OPTIONS = [
-  { label: "All Statuses", value: "" },
-  { label: "Pending", value: "PENDING" },
-  { label: "Approved", value: "APPROVED" },
-  { label: "Declined", value: "DECLINED" },
+  { label: "All Days", value: "" },
+  ...(Object.keys(DAY_STATUS_LABEL) as DayStatus[]).map((value) => ({
+    label: DAY_STATUS_LABEL[value],
+    value,
+  })),
 ];
 
 export default function StudentAttendancePage() {
   const currentUser = useCurrentUser();
   const {
-    form,
-    error,
-    isLoading,
-    isSubmitting,
-    minDate,
-    maxDate,
-    isDisabled,
-    disabledMessage,
+    today,
+    isTodayLoading,
+    isTodayError,
+    blockedReason,
     noticeMessage,
+    confirmKind,
+    punchingKind,
+    remarksDraft,
+    remarksDirty,
+    isSavingRemarks,
+    isHistoryLoading,
     statusFilter,
     page,
     paged,
     totalPages,
     summary,
-    correctionTarget,
-    setField,
+    requestPunch,
+    cancelPunch,
+    confirmPunch,
+    setRemarksDraft,
+    saveRemarks,
     setStatusFilter,
     setPage,
-    handleSubmit,
-    startCorrection,
-    cancelCorrection,
   } = useAttendanceLog();
 
   return (
@@ -62,11 +67,11 @@ export default function StudentAttendancePage() {
         userName={currentUser?.name || "Student"}
       />
 
-      <main className="flex-1 p-4 md:p-6">
+      <main className="flex-1 min-w-0 p-4 md:p-6">
         <div className="bg-gradient-to-r from-gray-800 to-gray-700 rounded-2xl p-4 md:p-6 mb-6">
           <PageHeader
             title="Attendance"
-            subtitle="Log your daily hours and track their approval"
+            subtitle="Punch in and out — each punch is approved by your supervisor"
             icon={CalendarCheck}
             showDateTime
           />
@@ -80,19 +85,19 @@ export default function StudentAttendancePage() {
             variant="accent"
           />
           <StatCard
-            label="Approved Logs"
-            value={summary.approvedCount}
+            label="Approved Punches"
+            value={summary.approvedPunches}
             icon={CheckCircle2}
           />
           <StatCard
-            label="Pending"
-            value={summary.pendingCount}
+            label="Punches Awaiting Approval"
+            value={summary.pendingPunches}
             icon={Hourglass}
             subtext={`${summary.pendingHours} hrs awaiting`}
           />
           <StatCard
-            label="Declined"
-            value={summary.declinedCount}
+            label="Declined Punches"
+            value={summary.declinedPunches}
             icon={XCircle}
           />
         </div>
@@ -100,39 +105,36 @@ export default function StudentAttendancePage() {
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
           <Card className="xl:col-span-2 h-fit">
             <h2 className="text-base md:text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <ClipboardList size={18} className="text-blue-600" />
-              Log Attendance
+              <Fingerprint size={18} className="text-blue-600" />
+              Today
             </h2>
-            <AttendanceForm
-              form={form}
-              error={error}
-              isSubmitting={isSubmitting}
-              minDate={minDate}
-              maxDate={maxDate}
-              disabled={isDisabled}
-              disabledMessage={disabledMessage}
+            <PunchCard
+              today={today}
+              isLoading={isTodayLoading}
+              isError={isTodayError}
+              blockedReason={blockedReason}
               noticeMessage={noticeMessage}
-              correctionTarget={correctionTarget}
-              setField={setField}
-              onSubmit={handleSubmit}
-              onCancelCorrection={cancelCorrection}
+              punchingKind={punchingKind}
+              remarksDraft={remarksDraft}
+              remarksDirty={remarksDirty}
+              isSavingRemarks={isSavingRemarks}
+              onPunch={requestPunch}
+              onRemarksChange={setRemarksDraft}
+              onSaveRemarks={saveRemarks}
             />
           </Card>
 
-          <Card className="xl:col-span-3">
+          <Card className="xl:col-span-3 min-w-0">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
               <h2 className="text-base md:text-lg font-semibold text-gray-800 flex items-center gap-2">
                 <CalendarCheck size={18} className="text-blue-600" />
                 Attendance History
               </h2>
-              <div className="sm:w-48">
+              <div className="sm:w-52">
                 <SelectField
                   value={statusFilter}
-                  onChange={(value) => {
-                    setStatusFilter(value as AttendanceStatus | "");
-                    setPage(1);
-                  }}
-                  placeholder="All Statuses"
+                  onChange={(value) => setStatusFilter(value as DayStatus | "")}
+                  placeholder="All Days"
                   options={STATUS_FILTER_OPTIONS}
                   className="w-full"
                 />
@@ -141,20 +143,35 @@ export default function StudentAttendancePage() {
 
             <AttendanceTable
               rows={paged}
-              isLoading={isLoading}
+              isLoading={isHistoryLoading}
               page={page}
               totalPages={totalPages}
               onPageChange={setPage}
               emptyMessage={
                 statusFilter
-                  ? "No logs with that status."
+                  ? "No days with that status."
                   : "You haven't logged any attendance yet."
               }
-              onCorrect={startCorrection}
             />
           </Card>
         </div>
       </main>
+
+      {/* A punch can't be undone, so every one is confirmed. Cancel holds
+          focus (ConfirmDialog's default), so a stray Enter doesn't punch. */}
+      <ConfirmDialog
+        open={!!confirmKind}
+        title={confirmKind ? `Record ${PUNCH_LABEL[confirmKind]}?` : ""}
+        message={
+          confirmKind
+            ? `Record ${PUNCH_LABEL[confirmKind]} now? The time is taken from the server when you confirm. This can't be undone.`
+            : ""
+        }
+        confirmLabel="Yes, record it"
+        icon={Fingerprint}
+        onConfirm={confirmPunch}
+        onCancel={cancelPunch}
+      />
     </div>
   );
 }

@@ -89,13 +89,13 @@ export default function SupervisorDashboardPage() {
                 label="Pending Approvals"
                 value={data.stats.pendingApprovals}
                 icon={Hourglass}
-                subtext="Needs your review"
+                subtext="punches waiting for approval"
               />
               <StatCard
                 label="Approved This Week"
                 value={data.stats.approvedThisWeek}
                 icon={CheckCircle2}
-                subtext="since Monday"
+                subtext="punches approved since Monday"
               />
               <StatCard
                 label="Total Hours Approved"
@@ -128,7 +128,7 @@ export default function SupervisorDashboardPage() {
                     icon={UserCheck}
                   />
                   <DetailItem
-                    label="Declined Logs"
+                    label="Declined Punches"
                     value={data.stats.declinedCount}
                     icon={XCircle}
                   />
@@ -146,10 +146,10 @@ export default function SupervisorDashboardPage() {
                       <span className="font-semibold text-gray-900">
                         {data.stats.pendingApprovals}
                       </span>{" "}
-                      attendance log
-                      {data.stats.pendingApprovals === 1 ? "" : "s"} are waiting
-                      on you. Students&apos; hours don&apos;t count toward their
-                      requirement until you approve them.
+                      punch
+                      {data.stats.pendingApprovals === 1 ? " is" : "es are"}{" "}
+                      waiting for approval. A session&apos;s hours count only
+                      once you approve both its Time In and Time Out.
                     </p>
                     <Link
                       href="/supervisor/attendance"
@@ -160,7 +160,7 @@ export default function SupervisorDashboardPage() {
                   </>
                 ) : (
                   <p className="text-sm text-gray-600">
-                    Nothing waiting for approval — you&apos;re all caught up.
+                    No punches waiting for approval — you&apos;re all caught up.
                   </p>
                 )}
               </Card>

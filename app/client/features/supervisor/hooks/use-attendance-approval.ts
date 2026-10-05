@@ -1,55 +1,70 @@
 import { useMemo, useState } from "react";
 import {
   useGetSupervisorAttendanceQuery,
-  useApproveAttendanceMutation,
-  useDeclineAttendanceMutation,
+  useApprovePunchMutation,
+  useDeclinePunchMutation,
   SupervisorAttendance,
 } from "@/lib/api/supervisorApi";
-import type { AttendanceStatus } from "@/lib/api/studentPortalApi";
+import type { Punch } from "@/lib/api/studentPortalApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
+import { PUNCH_LABEL } from "@/lib/attendance";
+import { formatDateOnly } from "@/lib/format";
 
 const PAGE_SIZE = 10;
 
+/** "PENDING" = days with a punch still awaiting a decision; "" = every day. */
+export type QueueFilter = "PENDING" | "";
+
+/** The punch being declined, with the day it belongs to for the dialog's context. */
+export interface DeclineTarget {
+  day: SupervisorAttendance;
+  punch: Punch;
+}
+
+/**
+ * The supervisor's approval queue. Every punch is approved or declined on its
+ * own — there is deliberately no "approve the whole day" action, per the
+ * professor's requirement.
+ */
 export function useAttendanceApproval() {
-  // Defaults to PENDING: the whole point of this screen is the approval queue,
-  // and the old endpoint returned every status with no way to tell them apart.
-  const [statusFilter, setStatusFilter] = useState<AttendanceStatus | "">(
-    "PENDING",
-  );
+  const [filter, setFilter] = useState<QueueFilter>("PENDING");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [declineTarget, setDeclineTarget] =
-    useState<SupervisorAttendance | null>(null);
+  const [declineTarget, setDeclineTarget] = useState<DeclineTarget | null>(
+    null,
+  );
   const [declineReason, setDeclineReason] = useState("");
   const [declineError, setDeclineError] = useState("");
-  // Tracks which row is mid-request so only that row's buttons disable.
+  // The punch mid-request, so only its buttons disable.
   const [actioningId, setActioningId] = useState<string | null>(null);
 
   const { showSuccess, showError } = useSnackbar();
 
+  // Polled: students punch throughout the day. Paused while unfocused.
   const { data: attendance, isLoading } = useGetSupervisorAttendanceQuery(
-    statusFilter || undefined,
+    filter || undefined,
+    { pollingInterval: 30_000, skipPollingIfUnfocused: true },
   );
-  const [approveAttendance] = useApproveAttendanceMutation();
-  const [declineAttendance, { isLoading: isDeclining }] =
-    useDeclineAttendanceMutation();
+  const [approvePunch] = useApprovePunchMutation();
+  const [declinePunch, { isLoading: isDeclining }] = useDeclinePunchMutation();
 
-  const handleApprove = async (record: SupervisorAttendance) => {
-    setActioningId(record.id);
+  const handleApprove = async (day: SupervisorAttendance, punch: Punch) => {
+    setActioningId(punch.id);
     try {
-      await approveAttendance(record.id).unwrap();
+      await approvePunch(punch.id).unwrap();
       showSuccess(
-        `Approved ${record.hours} hrs for ${record.student.user.name}.`,
+        `Approved ${PUNCH_LABEL[punch.kind]} for ${day.student.user.name}.`,
       );
     } catch (err: unknown) {
-      showError(readError(err, "Failed to approve attendance."));
+      // A 409 means someone already decided it; the refetch shows the result.
+      showError(readError(err, "Failed to approve the punch."));
     } finally {
       setActioningId(null);
     }
   };
 
-  const openDecline = (record: SupervisorAttendance) => {
-    setDeclineTarget(record);
+  const openDecline = (day: SupervisorAttendance, punch: Punch) => {
+    setDeclineTarget({ day, punch });
     setDeclineReason("");
     setDeclineError("");
   };
@@ -65,67 +80,81 @@ export function useAttendanceApproval() {
 
     // Mirrors the server's MinLength(3); a bare "no" helps nobody.
     if (declineReason.trim().length < 3) {
-      setDeclineError("Give the student a reason so they can correct it.");
+      setDeclineError("Give the student a reason so they know what to fix.");
       return;
     }
 
+    const { day, punch } = declineTarget;
     try {
-      await declineAttendance({
-        id: declineTarget.id,
+      await declinePunch({
+        id: punch.id,
         reason: declineReason.trim(),
       }).unwrap();
-      showSuccess(`Declined ${declineTarget.student.user.name}'s log.`);
+      showSuccess(
+        `Declined ${PUNCH_LABEL[punch.kind]} for ${day.student.user.name}, ${formatDateOnly(day.date)}.`,
+      );
       closeDecline();
     } catch (err: unknown) {
-      const message = readError(err, "Failed to decline attendance.");
+      const message = readError(err, "Failed to decline the punch.");
       setDeclineError(message);
       showError(message);
     }
   };
 
+  const days = useMemo(() => attendance ?? [], [attendance]);
+
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term) return attendance ?? [];
-    return (attendance ?? []).filter((a) =>
-      [a.student.user.name, a.student.studentIdNumber, a.student.course]
+    if (!term) return days;
+    return days.filter((d) =>
+      [d.student.user.name, d.student.studentIdNumber, d.student.course]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
         .includes(term),
     );
-  }, [attendance, search]);
+  }, [days, search]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const pendingHours = useMemo(
-    () =>
-      Math.round(
-        (attendance ?? [])
-          .filter((a) => a.status === "PENDING")
-          .reduce((acc, a) => acc + a.hours, 0) * 100,
-      ) / 100,
-    [attendance],
-  );
+  const summary = useMemo(() => {
+    const punches = filtered.flatMap((d) =>
+      Object.values(d.punches).filter((p) => p !== null),
+    );
+    const round = (n: number) => Math.round(n * 100) / 100;
+    return {
+      pendingPunches: punches.filter((p) => p.status === "PENDING").length,
+      pendingHours: round(filtered.reduce((acc, d) => acc + d.pendingHours, 0)),
+      approvedHours: round(
+        filtered.reduce((acc, d) => acc + d.approvedHours, 0),
+      ),
+    };
+  }, [filtered]);
 
   return {
-    attendance,
     isLoading,
-    statusFilter,
+    filter,
     search,
     page,
     paged,
     totalPages,
     filtered,
-    pendingHours,
+    summary,
     declineTarget,
     declineReason,
     declineError,
     isDeclining,
     actioningId,
 
-    setStatusFilter,
-    setSearch,
+    setFilter: (value: QueueFilter) => {
+      setFilter(value);
+      setPage(1);
+    },
+    setSearch: (value: string) => {
+      setSearch(value);
+      setPage(1);
+    },
     setPage,
     setDeclineReason,
 

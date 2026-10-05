@@ -1,21 +1,15 @@
 import { createApi } from "@reduxjs/toolkit/query/react";
 import { baseQueryWithAuth } from "./baseQuery";
-import type { AttendanceStatus } from "./studentPortalApi";
+import type {
+  AttendanceDay,
+  AttendanceStatus,
+  Punch,
+} from "./studentPortalApi";
 
 /** The signed-in supervisor's view of their establishment (`/supervisor/*`). */
 
-export interface SupervisorAttendance {
-  id: string;
-  date: string;
-  timeInAM: string | null;
-  timeOutAM: string | null;
-  timeInPM: string | null;
-  timeOutPM: string | null;
-  remarks: string | null;
-  declineReason: string | null;
-  status: AttendanceStatus;
-  createdAt: string;
-  hours: number;
+/** One student's day, punches nested — the same day shape the student reads. */
+export interface SupervisorAttendance extends AttendanceDay {
   student: {
     id: string;
     studentIdNumber: string;
@@ -23,7 +17,6 @@ export interface SupervisorAttendance {
     requiredHours: number;
     user: { name: string; email: string };
   };
-  approvedBy: { id: string; user: { name: string } } | null;
 }
 
 export interface SupervisorDashboard {
@@ -44,9 +37,12 @@ export interface SupervisorDashboard {
     totalStudents: number;
     activeStudents: number;
     completedStudents: number;
+    /** Punches, not days — each is its own decision. Active students only. */
     pendingApprovals: number;
+    /** Punches approved since Monday, by decision time. */
     approvedThisWeek: number;
     declinedCount: number;
+    /** Sessions with both punches approved, across all students. */
     totalApprovedHours: number;
   };
 }
@@ -68,7 +64,11 @@ export interface SupervisorStudent {
 export const supervisorApi = createApi({
   reducerPath: "supervisorApi",
   baseQuery: baseQueryWithAuth,
-  tagTypes: ["SupervisorAttendance", "SupervisorDashboard", "SupervisorStudent"],
+  tagTypes: [
+    "SupervisorAttendance",
+    "SupervisorDashboard",
+    "SupervisorStudent",
+  ],
   endpoints: (builder) => ({
     getSupervisorDashboard: builder.query<SupervisorDashboard, void>({
       query: () => "/supervisor/dashboard",
@@ -99,32 +99,48 @@ export const supervisorApi = createApi({
         "SupervisorDashboard",
       ],
     }),
+    /**
+     * Days at this establishment. `PENDING` narrows to days with at least one
+     * punch still awaiting a decision; omitted returns every day.
+     */
     getSupervisorAttendance: builder.query<
       SupervisorAttendance[],
       AttendanceStatus | undefined
     >({
       query: (status) =>
-        status ? `/supervisor/attendance?status=${status}` : "/supervisor/attendance",
+        status
+          ? `/supervisor/attendance?status=${status}`
+          : "/supervisor/attendance",
       providesTags: ["SupervisorAttendance"],
     }),
-    approveAttendance: builder.mutation<SupervisorAttendance, string>({
+    /** Decisions are final — the server 409s on a punch that isn't PENDING. */
+    approvePunch: builder.mutation<Punch & { attendanceId: string }, string>({
       query: (id) => ({
-        url: `/supervisor/attendance/${id}/approve`,
+        url: `/supervisor/punches/${id}/approve`,
         method: "PATCH",
       }),
-      // Approving changes the dashboard counters too.
-      invalidatesTags: ["SupervisorAttendance", "SupervisorDashboard"],
+      // The queue, the dashboard counters, and the roster's completed hours
+      // all move on an approval (the roster used to go stale here).
+      invalidatesTags: [
+        "SupervisorAttendance",
+        "SupervisorDashboard",
+        "SupervisorStudent",
+      ],
     }),
-    declineAttendance: builder.mutation<
-      SupervisorAttendance,
+    declinePunch: builder.mutation<
+      Punch & { attendanceId: string },
       { id: string; reason: string }
     >({
       query: ({ id, reason }) => ({
-        url: `/supervisor/attendance/${id}/decline`,
+        url: `/supervisor/punches/${id}/decline`,
         method: "PATCH",
         body: { reason },
       }),
-      invalidatesTags: ["SupervisorAttendance", "SupervisorDashboard"],
+      invalidatesTags: [
+        "SupervisorAttendance",
+        "SupervisorDashboard",
+        "SupervisorStudent",
+      ],
     }),
   }),
 });
@@ -134,6 +150,6 @@ export const {
   useGetSupervisorStudentsQuery,
   useSetStudentStatusMutation,
   useGetSupervisorAttendanceQuery,
-  useApproveAttendanceMutation,
-  useDeclineAttendanceMutation,
+  useApprovePunchMutation,
+  useDeclinePunchMutation,
 } = supervisorApi;
