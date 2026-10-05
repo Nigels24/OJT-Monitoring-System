@@ -167,7 +167,7 @@ class StudentDetailsDto {
 
   // The EXPECTED end of the OJT — a planning date the coordinator enters, not
   // the day it actually finished. It bounds nothing: completion is decided by
-  // hours (see StudentService.submitAttendance), so a student who hasn't met
+  // hours (see attendanceBlockedReason in StudentService), so a student who hasn't met
   // requiredHours by this date keeps logging past it.
   @IsOptional()
   @EmptyToNull()

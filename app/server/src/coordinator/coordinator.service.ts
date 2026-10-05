@@ -8,7 +8,11 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
-import { totalHours } from '../common/attendance-hours';
+import {
+  HOURS_PUNCH_SELECT,
+  hasApprovedSession,
+  totalApprovedHours,
+} from '../common/attendance-hours';
 import { MS_PER_DAY, manilaToday, startOfUtcDay } from '../common/dates';
 import {
   EVALUATION_INCLUDE,
@@ -190,12 +194,12 @@ export class CoordinatorService {
         },
         establishment: { select: { id: true, name: true } },
         attendances: {
-          where: { status: 'APPROVED' },
+          // Only APPROVED punches can form a counted session.
           select: {
-            timeInAM: true,
-            timeOutAM: true,
-            timeInPM: true,
-            timeOutPM: true,
+            punches: {
+              where: { status: 'APPROVED' },
+              select: HOURS_PUNCH_SELECT,
+            },
           },
         },
         _count: {
@@ -213,12 +217,12 @@ export class CoordinatorService {
     // response so the list payload stays small.
     return students.map(({ attendances, ...student }) => ({
       ...student,
-      completedHours: totalHours(attendances),
+      completedHours: totalApprovedHours(attendances),
     }));
   }
 
   async listSupervisors() {
-    return this.prisma.client.supervisor.findMany({
+    const supervisors = await this.prisma.client.supervisor.findMany({
       include: {
         user: {
           select: {
@@ -231,12 +235,27 @@ export class CoordinatorService {
         },
         establishment: { select: { id: true, name: true } },
         // What deleting this supervisor would take with it (evaluations) and
-        // what it would merely un-attribute (attendance approvals). The
-        // confirmation dialog states both.
-        _count: { select: { evaluations: true, attendanceApprovals: true } },
+        // what it would merely un-attribute (punches they approved — kept, so
+        // students' hours survive). The confirmation dialog states both.
+        _count: {
+          select: {
+            evaluations: true,
+            punchDecisions: { where: { status: 'APPROVED' } },
+          },
+        },
       },
       orderBy: { user: { createdAt: 'desc' } },
     });
+
+    // Renamed on the way out: the relation counts every decision, but the
+    // filter above makes this one approvals only, and the key should say so.
+    return supervisors.map(({ _count, ...supervisor }) => ({
+      ...supervisor,
+      _count: {
+        evaluations: _count.evaluations,
+        approvedPunches: _count.punchDecisions,
+      },
+    }));
   }
 
   /**
@@ -264,15 +283,18 @@ export class CoordinatorService {
       this.prisma.client.establishment.count(),
       this.prisma.client.establishment.count({ where: { status: 'ACTIVE' } }),
       this.prisma.client.attendance.findMany({
-        where: { status: 'APPROVED' },
+        where: { punches: { some: { status: 'APPROVED' } } },
         select: {
-          timeInAM: true,
-          timeOutAM: true,
-          timeInPM: true,
-          timeOutPM: true,
+          punches: {
+            where: { status: 'APPROVED' },
+            select: HOURS_PUNCH_SELECT,
+          },
         },
       }),
-      this.prisma.client.attendance.count({ where: { status: 'PENDING' } }),
+      // Punches, not days: each is its own decision a supervisor owes.
+      this.prisma.client.attendancePunch.count({
+        where: { status: 'PENDING' },
+      }),
       // Distinct students who logged anything for today, not raw record count —
       // the unique constraint makes these equal today, but the intent is
       // "how many students turned up".
@@ -299,21 +321,21 @@ export class CoordinatorService {
           user: { select: { name: true, createdAt: true } },
           establishment: { select: { name: true } },
           attendances: {
-            where: { status: 'APPROVED' },
             select: {
-              timeInAM: true,
-              timeOutAM: true,
-              timeInPM: true,
-              timeOutPM: true,
+              punches: {
+                where: { status: 'APPROVED' },
+                select: HOURS_PUNCH_SELECT,
+              },
             },
           },
         },
         orderBy: { user: { createdAt: 'desc' } },
         take: 5,
       }),
-      this.prisma.client.attendance.findMany({
-        where: { date: { gte: trendStart } },
-        select: { date: true, status: true },
+      // Punches by status, bucketed by the day they belong to.
+      this.prisma.client.attendancePunch.findMany({
+        where: { attendance: { date: { gte: trendStart } } },
+        select: { status: true, attendance: { select: { date: true } } },
       }),
       // The denominator the average is meaningful against: the currently
       // published sheet's item count. Not a constant any more — the sheet is a
@@ -393,7 +415,7 @@ export class CoordinatorService {
         activeEstablishments,
         presentToday: presentToday.length,
         pendingApprovals: pendingCount,
-        totalHoursLogged: totalHours(approvedAttendance),
+        totalHoursLogged: totalApprovedHours(approvedAttendance),
         // null rather than 0 when nothing has been evaluated — a real average
         // of zero and "no data yet" are different things.
         averageRating:
@@ -402,9 +424,12 @@ export class CoordinatorService {
         totalEvaluations: evaluationCount,
       },
       // The prototype charted present/late/absent. Those states do not exist —
-      // attendance is PENDING/APPROVED/DECLINED — so the real statuses are
-      // charted instead of inventing the other three.
-      attendanceTrend: buildWeeklyTrend(trendRows, weeksBack),
+      // punches are PENDING/APPROVED/DECLINED — so the real statuses are
+      // charted (one count per punch) instead of inventing the other three.
+      attendanceTrend: buildWeeklyTrend(
+        trendRows.map((p) => ({ date: p.attendance.date, status: p.status })),
+        weeksBack,
+      ),
       topEstablishments: topEstablishments.map((e) => ({
         id: e.id,
         name: e.name,
@@ -419,7 +444,7 @@ export class CoordinatorService {
           establishment: establishment?.name ?? null,
           startDate: student.startDate,
           requiredHours: student.requiredHours,
-          completedHours: totalHours(attendances),
+          completedHours: totalApprovedHours(attendances),
           status: student.status,
         }),
       ),
@@ -434,7 +459,8 @@ export class CoordinatorService {
    *
    * "Attendance percentage" exists nowhere else in this codebase (every other
    * view reports completedHours/requiredHours), so it is defined here:
-   * APPROVED days logged, over calendar days elapsed since the student started.
+   * present days — days with at least one session whose In and Out punches
+   * are both APPROVED — over calendar days elapsed since the student started.
    * Calendar days, not school days — the schema has no school-calendar concept,
    * so students with different start dates or weekend-heavy periods are only
    * roughly comparable.
@@ -445,9 +471,9 @@ export class CoordinatorService {
     const todayEnd = new Date(todayStart.getTime() + MS_PER_DAY);
 
     // Both bounds matter. The upper one (`lt: todayEnd`, i.e. date <= today)
-    // now agrees with `submitAttendance`, which rejects a future date against
-    // Manila's calendar day; it stays as a second line of defence for rows
-    // written before that check existed. The lower one is each student's own
+    // agrees with `StudentService.punch`, which only ever writes Manila's
+    // today; it stays as a second line of defence for rows written before
+    // punches existed. The lower one is each student's own
     // startDate, applied per student below: a day approved *before* a student
     // started is outside the window totalDays measures, and counting it would
     // push the percentage past 100%.
@@ -465,13 +491,26 @@ export class CoordinatorService {
         orderBy: { user: { createdAt: 'desc' } },
       }),
       this.prisma.client.attendance.findMany({
-        where: { status: 'APPROVED', date: { lt: todayEnd } },
-        select: { studentId: true, date: true },
+        where: {
+          date: { lt: todayEnd },
+          punches: { some: { status: 'APPROVED' } },
+        },
+        select: {
+          studentId: true,
+          date: true,
+          punches: {
+            where: { status: 'APPROVED' },
+            select: HOURS_PUNCH_SELECT,
+          },
+        },
       }),
     ]);
 
+    // A day with an approved punch is not yet a present day: it needs a whole
+    // session (In and Out) approved.
     const approvedByStudent = new Map<string, Date[]>();
     for (const row of approvedRows) {
+      if (!hasApprovedSession(row.punches)) continue;
       const dates = approvedByStudent.get(row.studentId) ?? [];
       dates.push(row.date);
       approvedByStudent.set(row.studentId, dates);

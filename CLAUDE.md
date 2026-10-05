@@ -250,12 +250,12 @@ no idea whose data is being touched. Every service re-derives ownership per requ
 1. `getSupervisorByUserId(userId)` / `getStudentByUserId(userId)` translate the JWT's
    `userId` into the caller's own domain profile row.
 2. Every mutation verifies the target belongs to that profile's establishment
-   (`verifyAttendanceBelongsToSupervisor`, or the inline check in `createEvaluation`),
+   (`verifyPunchBelongsToSupervisor`, or the inline check in `createEvaluation`),
    else `ForbiddenException`.
 
 **Never trust an id from the request body to imply ownership.** An endpoint that skips
 check 2 is a cross-tenant data leak — e.g. a supervisor approving another
-establishment's attendance just by knowing its id.
+establishment's attendance punch just by knowing its id.
 
 ### Password recovery — no email step
 
@@ -329,9 +329,17 @@ and makes required create fields optional.
 
 ### Shared modules — single sources of truth
 
-- **`src/common/attendance-hours.ts`** (`hoursForAttendance`, `totalHours`) — the only
-  place that turns the four AM/PM clock columns into hours. Reuse it. Completed hours
-  count **APPROVED attendance only**.
+- **`src/common/attendance-hours.ts`** — the only place that turns a day's
+  `AttendancePunch` rows into anything a person reads: `summarizeDay` (punches keyed by
+  kind, `dayStatus`, `approvedHours`, `pendingHours`), `totalApprovedHours`/
+  `totalPendingHours`, `hasApprovedSession`, `punchAvailability` (the punch rules) and the
+  shared `PUNCH_SELECT`/`DAY_SELECT`/`HOURS_PUNCH_SELECT`. **A session (AM or PM) counts
+  toward hours only when both its In and Out punches are APPROVED** — nothing else ever
+  does. `pendingHours` = both punches present, neither DECLINED, not both APPROVED.
+  `dayStatus` is derived, never stored, in this precedence: PENDING (any punch pending) ·
+  PARTIAL (something declined, ≥1 session approved) · DECLINED (something declined, no
+  session approved) · APPROVED (all approved, ≥1 complete session) · INCOMPLETE (no
+  complete session yet, e.g. an In with no Out). Reuse it.
 - **`src/common/evaluation-scoring.ts`** — **how the sheet adds up, not what is on
   it.** The form itself is data: a versioned `EvaluationTemplate` the coordinator
   owns (§6, §7). This file keeps `MIN_SCORE`/`MAX_SCORE` (1-5), `SCORE_LABELS`
@@ -421,8 +429,9 @@ aggregate.
   two independent caches: `["Establishment"]`, `["Student"]` (coordinator's view),
   `["MyDashboard", "MyAttendance"]` (student's own), `["SupervisorAttendance",
   "SupervisorDashboard", "SupervisorStudent"]`. A mutation invalidates **every** tag its
-  write could stale — `submitAttendance` invalidates `["MyAttendance", "MyDashboard"]`,
-  approve/decline invalidates `["SupervisorAttendance", "SupervisorDashboard"]`. Copy
+  write could stale — a punch invalidates `["MyAttendance", "MyDashboard"]`,
+  approve/decline invalidates `["SupervisorAttendance", "SupervisorDashboard",
+  "SupervisorStudent"]` (the roster's hours move too). Copy
   that habit: a new write that leaves a dashboard tile stale is the most common bug in
   this stack.
 - Every slice shares `lib/api/baseQuery.ts` → `NEXT_PUBLIC_API_URL`, bearer token from
@@ -477,8 +486,9 @@ order:
    went through this exact step for its review columns, since removed again; the three
    messaging models needed no migration at all — every column their module used was
    already there. See §6.)
-   **When naming a reviewer column, don't copy `Attendance.approvedById`** — it is set on
-   decline too, so it means "who actioned this". Name a column for what it means.
+   **Name a reviewer column for what it means.** The old `Attendance.approvedById` was set
+   on decline too, so it meant "who actioned this" — which is why its replacement is
+   `AttendancePunch.decidedById`.
 2. `app/server/src/<module>/<module>.service.ts` — ownership re-derived from
    `req.user.userId`, never from a body id.
 3. `app/server/src/<module>/<module>.controller.ts` — inline `class-validator` DTOs at the
@@ -548,7 +558,7 @@ table; never derive one from the other.
 | DELETE | `/coordinator/supervisors/:id` | COORDINATOR | delete is guarded, see §6 |
 | PATCH | `/coordinator/students/:id/password` · `/coordinator/supervisors/:id/password` | COORDINATOR | |
 | GET | `/coordinator/dashboard` | COORDINATOR | real aggregates |
-| GET | `/coordinator/attendance` | COORDINATOR | cross-establishment oversight |
+| GET | `/coordinator/attendance` | COORDINATOR | cross-establishment oversight: `[{ id, studentIdNumber, name, establishmentName, presentDays, totalDays, attendancePercentage }]`. A present day = ≥1 session with both punches APPROVED |
 | GET | `/coordinator/evaluations` | COORDINATOR | read-only, all establishments |
 | GET | `/coordinator/evaluations/:id/pdf` | COORDINATOR | the filled-in sheet as a PDF, `Content-Disposition: attachment`. 404 if the evaluation is gone. Rendered from **that evaluation's own template version**, never the published one |
 | GET | `/coordinator/evaluation-template` | COORDINATOR | `{ published, draft }`, each a sheet or `null` |
@@ -558,15 +568,19 @@ table; never derive one from the other.
 | GET | `/coordinator/documents` | COORDINATOR | the checklist: one row per student, **including students with nothing submitted** — `{ id, name, studentIdNumber, establishment: { id, name } \| null, submittedCount, documents: { <DocumentType>: { id, uploadedAt, fileName } \| null } }`. No signed URLs |
 | GET | `/coordinator/documents/:id/download` | COORDINATOR | one file as an attachment (`Content-Type` from storage, RFC 5987 `Content-Disposition`). 404 unknown id, 503 if storage can't return it |
 | GET | `/coordinator/students/:studentId/documents/zip` | COORDINATOR | `?ids=a,b,c` for a selection, none for all. Every id must belong to that student (else 400); 404 unknown student or nothing submitted. Entries `<Type Label> - <Student Name>.<ext>`, archive `<Student Name> - OJT Documents.zip` |
-| GET | `/student/dashboard` · `/student/attendance` · `/student/profile` · `/student/documents` | STUDENT | own data only. Documents: `[{ id, type, fileName, uploadedAt, fileUrl }]`, `fileUrl` signed or `null` |
-| POST | `/student/attendance` | STUDENT | one row per calendar day |
+| GET | `/student/dashboard` · `/student/profile` · `/student/documents` | STUDENT | own data only. Documents: `[{ id, type, fileName, uploadedAt, fileUrl }]`, `fileUrl` signed or `null` |
+| GET | `/student/attendance` | STUDENT | history, newest first: `[{ id, date, remarks, createdAt, punches: { TIME_IN_AM: Punch \| null, TIME_OUT_AM, TIME_IN_PM, TIME_OUT_PM }, dayStatus, approvedHours, pendingHours }]`, `Punch = { id, kind, time, status, declineReason, decidedAt, decidedBy: { id, user: { name } } \| null }` |
+| GET | `/student/attendance/today` | STUDENT | the punch card: `{ date, attendanceId \| null, remarks, punches, dayStatus \| null (null = nothing logged today), approvedHours, pendingHours, allowed: { <PunchKind>: true \| "<reason>" }, blockedReason \| null }`. The client renders from `allowed` and holds no punch rules |
+| POST | `/student/attendance/punch` | STUDENT | `{ kind }` only — **no date or time**; the server stamps now on Manila's today, and a sent `time`/`date` is a 400 (`forbidNonWhitelisted`). Returns the `/today` shape. 409 if that kind already stands today; 400 for an ordering rule or a block (§6) |
+| PATCH | `/student/attendance/today/remarks` | STUDENT | `{ remarks }`, ≤500, `""`/`null` clears. Any time on the day; same blocks as punching. Returns the `/today` shape |
 | PATCH | `/student/profile` | STUDENT | `{ contactNumber?, address? }` — the only two fields a student may self-edit |
 | POST | `/student/documents` | STUDENT | multipart; `type` field (a `DocumentType`) + `file` part (PDF/PNG/JPEG, 10MB max). **Upsert** on `(studentId, type)`: a second upload of a type replaces the file. Returns the same shape as the list |
 | DELETE | `/student/documents/:id` | STUDENT | own document; no status guard (there is no status) |
-| GET | `/supervisor/dashboard` · `/supervisor/students` · `/supervisor/attendance` | SUPERVISOR | scoped to own establishment |
+| GET | `/supervisor/dashboard` · `/supervisor/students` | SUPERVISOR | scoped to own establishment. Dashboard counts **punches** (`pendingApprovals`, `declinedCount`, `approvedThisWeek` by `decidedAt`); `totalApprovedHours`/roster `completedHours` from approved sessions |
+| GET | `/supervisor/attendance` | SUPERVISOR | `?status=&includeCompleted=` — **days** with nested punches (the history shape plus `student`), own establishment, COMPLETED students hidden by default. `status=PENDING` = days with at least one PENDING punch |
 | PATCH | `/supervisor/students/:id/status` | SUPERVISOR | |
-| PATCH | `/supervisor/attendance/:id/approve` | SUPERVISOR | clears any `declineReason` |
-| PATCH | `/supervisor/attendance/:id/decline` | SUPERVISOR | `{ reason }`, 3–500 chars, required |
+| PATCH | `/supervisor/punches/:id/approve` | SUPERVISOR | one punch. Sets `decidedById`/`decidedAt`. **Decisions are final: 409 unless PENDING.** 404 unknown, 403 another establishment's. Returns the punch + `attendanceId` |
+| PATCH | `/supervisor/punches/:id/decline` | SUPERVISOR | `{ reason }`, 3–500 chars, required; same rules as approve. There is deliberately **no bulk approve** — each punch is its own approval |
 | GET | `/supervisor/evaluations/form` | SUPERVISOR | the **currently PUBLISHED template**: `templateId`, `version`, `title`, sections with item keys, printed letters and wording, the 1–5 legend and `maxTotalRating` — plus `evaluator` and `employedAt`, the header/footer blanks as they will be stamped for this supervisor. **409 if the school has published no sheet.** The client renders the whole form from this one endpoint instead of keeping its own copy of the form text or reading the dashboard |
 | GET/POST | `/supervisor/evaluations` | SUPERVISOR | POST takes `scores` as **one nested object** keyed by the template's item keys (`{ scores: { courtesy: 5, … } }`), not top-level fields — see §8 item 23. Written against the published version; repeatable — a student is evaluated more than once |
 | PATCH | `/supervisor/evaluations/:id` | SUPERVISOR | the whole sheet again, not a partial (every item is required on the form); same nested `scores`, validated against **that evaluation's own template version**, not the published one; recomputes `totalRating`. 403 unless the caller **wrote** it |
@@ -586,7 +600,7 @@ table; never derive one from the other.
 PostgreSQL via Supabase. `DATABASE_URL` pooled, `DIRECT_URL` direct.
 
 **Models:** `User`, `Establishment`, `Supervisor`, `Coordinator`, `Student`,
-`Attendance`, `Document`, `Evaluation`, `EvaluationScore`,
+`Attendance`, `AttendancePunch`, `Document`, `Evaluation`, `EvaluationScore`,
 `EvaluationTemplate`, `EvaluationTemplateSection`, `EvaluationTemplateItem`,
 `Conversation`, `ConversationParticipant`, `Message`.
 
@@ -596,7 +610,7 @@ websockets** — `socket.io` / `@nestjs/websockets` / `@nestjs/platform-socket.i
 removed from `app/server/package.json`; see §7 for the reasoning.
 
 **Enums:** `Role` (STUDENT · SUPERVISOR · COORDINATOR) · `StudentStatus` (ACTIVE ·
-PENDING · COMPLETED · INACTIVE) · `AttendanceStatus` (PENDING · APPROVED · DECLINED) ·
+PENDING · COMPLETED · INACTIVE) · `AttendanceStatus` (PENDING · APPROVED · DECLINED — a punch's status) · `PunchKind` (TIME_IN_AM · TIME_OUT_AM · TIME_IN_PM · TIME_OUT_PM) ·
 `EstablishmentStatus` (ACTIVE · INACTIVE) · `DocumentType` (APPLICATION_LETTER ·
 ENDORSEMENT_LETTER · RESUME · MOA · PARENTS_CONSENT · WAIVER).
 
@@ -704,16 +718,54 @@ therefore never desync a numeral from what is printed.
 - Deleting an evaluation means deleting its `EvaluationScore` rows **first** — there is no
   cascade. `removeEvaluation`, `deleteStudentCascade` and `deleteSupervisorCascade` all do.
 
-`Attendance` splits AM/PM into four nullable `DateTime`s (`timeInAM`, `timeOutAM`,
-`timeInPM`, `timeOutPM`) and carries `@@unique([studentId, date])`. `submitAttendance`
-normalises `date` to UTC midnight on write, so one student gets at most one row per
-calendar day; a repeat submission against a PENDING or APPROVED row is a readable
-`ConflictException` (409, message distinguishes the two) rather than a raw constraint
-error. A repeat submission against a **DECLINED** row instead overwrites it in place —
-see §8 item 14. A submission must contain at least one complete session (AM or PM), and
-every *supplied* session's time out must be strictly later than its time in, checked
-per-session rather than on the combined total (an inverted PM pair no longer hides behind
-a valid AM session), else 400. It always lands `PENDING`.
+### Attendance is a day plus four separately approved punches
+
+```prisma
+model Attendance {           // the day
+  id, studentId, date        // date = UTC midnight of the Manila day
+  remarks   String?          // the student's note — never a decline reason
+  createdAt                  // = the day's first punch (or remark)
+  punches   AttendancePunch[]
+  @@unique([studentId, date])
+}
+model AttendancePunch {
+  id, attendanceId, kind PunchKind
+  time          DateTime     // stamped by the SERVER, never sent by the client
+  status        AttendanceStatus @default(PENDING)
+  decidedById   String?      // who approved OR declined; SET NULL on supervisor delete
+  decidedAt     DateTime?    // null on punches migrated from the per-day model
+  declineReason String?
+  @@unique([attendanceId, kind])  @@index([status])
+}
+```
+
+The professor's requirement: Time In AM, Time Out AM, Time In PM and Time Out PM each get
+their own supervisor approval. Hours: §4 `attendance-hours.ts`.
+
+**The punch rules** (`punchAvailability`, enforced in `StudentService.punch`, and served
+as `allowed` so the client holds no copy):
+
+- **Blocks** (every kind, also for remarks): `status: COMPLETED`; no establishment (§8
+  item 21); Manila today before `startDate`. A passed `endDate` never blocks (§8 item 12).
+- Only **Manila today** — the day row is `manilaToday()`, created by `upsert` on
+  `(studentId, date)` at the first punch or remark; a concurrent first punch that loses
+  the insert race (P2002) re-reads instead of 500ing.
+- **Out needs its In**, and that In must not be DECLINED.
+- **PM In is blocked while the AM session is open** (an AM In that isn't declined, with
+  no Out that isn't declined). Once a PM In that isn't declined exists, morning punches
+  are closed. PM In with no AM at all (half day) is fine.
+- **No clock windows.** Order alone keeps In < Out and AM < PM, since the server stamps.
+- A PENDING or APPROVED punch is final for the day: a second punch of that kind is a 409
+  (also enforced by `@@unique([attendanceId, kind])` against a double tap).
+- **A DECLINED punch may be punched again the same day, overwriting it** — new server time,
+  back to PENDING, `decidedById`/`decidedAt`/`declineReason` cleared (a compare-and-set on
+  `status: 'DECLINED'`). Unless that breaks the order: an In can't be redone once its Out
+  stands. The decline's history is overwritten — accepted trade-off.
+- The student may punch the next kind while the previous is still PENDING; approval is
+  asynchronous.
+- **Supervisor decisions are final**: approve/decline is an `updateMany` filtered on
+  `status: 'PENDING'`, so a decided punch (or one decided a moment ago by someone else) is
+  a 409 and is never overwritten.
 
 **Deletes cascade in the service layer, not the schema.** There is deliberately **no**
 `onDelete: Cascade` anywhere in `schema.prisma` and no migration behind this — the order
@@ -727,8 +779,8 @@ The three callers, and what each one spares:
 
 | Caller | Deletes | Deliberately keeps |
 |---|---|---|
-| `CoordinatorService.removeStudent` | attendance, documents, evaluations, own messages, participant rows, then `Student` + `User` | — |
-| `CoordinatorService.removeSupervisor` | evaluations, own messages, participant rows, then `Supervisor` + `User` | **attendance they approved** — rows stay, `approvedById` is nulled. A student's approved hours must survive their supervisor leaving |
+| `CoordinatorService.removeStudent` | attendance punches, then attendance days (punch → day is RESTRICT), documents, evaluations, own messages, participant rows, then `Student` + `User` | — |
+| `CoordinatorService.removeSupervisor` | evaluations, own messages, participant rows, then `Supervisor` + `User` | **punches they decided** — rows stay, `decidedById` is nulled. A student's approved hours must survive their supervisor leaving |
 | `EstablishmentService.remove` | every supervisor at it, via `deleteSupervisorCascade` | **its students** — `establishmentId` is nulled so they can be reassigned. That column is nullable for exactly this |
 
 A 1:1 conversation is deleted only once it has **zero** participants; one whose other
@@ -758,6 +810,7 @@ recoverable, a half-deleted database is not.
 | `20260905163310_official_evaluation_sheet` | **Rewrote `Evaluation` for the school's official form.** Dropped the 9 criteria, `overallRating`, `performanceLevel` and `periodStart`/`periodEnd`; added the 19 item columns, `totalRating`, `trainingStartedAt`/`trainingEndedAt`/`trainingEmployedAt`, `evaluatorName`/`evaluatorPosition` and `updatedAt`. Destructive — **the table was empty (verified: 0 rows)**, which is also why the new `NOT NULL` item columns could be added without defaults. Generated with `migrate diff` + `migrate deploy`, since `migrate dev` prompts on column drops. Touches no other table |
 | `20260914142544_evaluation_sheet_template` | **Moved the sheet into the database.** Added `EvaluationTemplate`, `EvaluationTemplateSection`, `EvaluationTemplateItem`, `EvaluationScore`; seeded template **version 1** PUBLISHED with the nineteen items' exact wording, keyed by the nineteen column names; added `Evaluation.templateId`/`maxTotalRating` backfilled to version 1 / 95; copied the nineteen columns into `EvaluationScore`; **then** dropped them. Hand-written in that order so it is one transaction and no signed sheet loses its scores — structural statements generated with `migrate diff --from-schema-datamodel <previous> --to-schema-datamodel <current> --script` (which never touches the DB), data steps added by hand |
 | `20261005011611_documents_typed_checklist` | **Documents became a typed checklist; Credentials folded in.** Added enum `DocumentType`, `Document.type` and `originalFileName`; deleted the two pre-existing free-text Document rows (test data, no type mapping); copied the two `Credential` rows into `Document` (same id and path, `createdAt` → `uploadedAt`); a `DO $$` guard aborts if any row is untyped; dedup keeps the newest per `(studentId, type)`; then `type` NOT NULL, `@@unique([studentId, type])`, and dropped `name`, `status`, `reviewedById`/FK, `reviewNote`, `reviewedAt` and the `Credential` table. Hand-ordered like the one above; applied with `migrate deploy`. `migrate dev --create-only` refuses to run non-interactively when it would warn about data loss, so `migrate diff` between schema files was used |
+| `20261005015145_attendance_punches` | **Four separately approved punches per day.** Added enum `PunchKind` and table `AttendancePunch` (FK to `Attendance` RESTRICT, to `Supervisor` SET NULL, `@@unique([attendanceId, kind])`, index on `status`); copied each non-null `timeInAM`/`timeOutAM`/`timeInPM`/`timeOutPM` into a punch carrying the day's `status`, `approvedById` → `decidedById` and `declineReason`, `decidedAt` NULL (never recorded), ids from `gen_random_uuid()`; a `DO $$` guard aborts unless punches = non-null times (8 = 8 live: 2 APPROVED days); **then** dropped those four columns, `status`, `declineReason`, `approvedById` and its FK. Explicit `BEGIN`/`COMMIT`. Structural SQL from `migrate diff` between schema files, reordered so the drops come last (the diff emits them first); applied with `migrate deploy` after a `pg_dump` |
 
 **Policy: one migration per module, and only when the module actually needs new columns.**
 
@@ -796,7 +849,12 @@ recoverable, a half-deleted database is not.
   `GET`/`PATCH /student/profile` (self-edit limited to `contactNumber` and `address`; every
   other field, including `gender` and `endDate`, is read-only from this endpoint). The rest
   of the student portal is unbuilt; see "Partially built" below.
-- **Supervisor** — dashboard + attendance approval with required decline reasons.
+- **Supervisor** — dashboard + per-punch attendance approval with required decline reasons.
+- **Attendance punches (server)** — §6 "Attendance is a day plus four separately approved
+  punches": live punch endpoints (server-stamped, Manila today), today/history with
+  `dayStatus` and approved/pending hours, per-punch final approve/decline, dashboards and
+  oversight recomputed from approved sessions, cascades updated. The **client** still
+  targets the old per-day API — see "Partially built".
 - **Supervisor Management (Coordinator)** — create, list, password reset, and delete
   (guarded — see §6). No edit yet (§8 item 10). Table columns: name, username, email,
   establishment, position.
@@ -952,6 +1010,14 @@ start date and confirm the oversight page shows a real percentage.
 
 ### Partially built
 
+**Attendance punches client (Step 4c).** Server done; the client still posts the old
+day form and approves whole days. Student: replace `AttendanceForm` + the correction flow
+with a punch card (four buttons from `/today`'s `allowed`, a `ConfirmDialog` per punch,
+remarks), history from the new shape. Supervisor: per-punch Approve/Decline on
+`/supervisor/punches/:id/…`, invalidating `SupervisorStudent` too. Coordinator: supervisor
+delete copy reads `_count.approvedPunches` (was `attendanceApprovals`); dashboard trend and
+pending counts are punches.
+
 `stats.averageRating` on the coordinator dashboard is an average out of
 `stats.maxTotalRating`, which is now the **published template's** maximum and may be
 `null` (§8 item 23).
@@ -969,7 +1035,7 @@ would only make the contact picker match the prototype's panel exactly.
 
 `pdfkit`, `archiver` and their `@types` are installed (`package.json`); on a fresh clone
 `npm install` provides them. **`archiver` is pinned to 7.x** — 8.x is ESM-only and this
-server compiles to CommonJS. Migration `20261005011611_documents_typed_checklist` is the
+server compiles to CommonJS. Migration `20261005015145_attendance_punches` is the
 latest.
 
 ### File storage — the decided design
@@ -1022,24 +1088,30 @@ Ordered roughly by how likely each is to bite.
    `npm run test:e2e` is the only thing actually exercising the app.
 3. **Filtering and pagination are client-side** over a full `findMany()`. Fine at current
    scale, won't hold.
-4. **`getAttendanceOversight` fetches every `APPROVED` attendance row programme-wide per
-   request** — scales with programme-years, not student count. Prioritise this first if
+4. **`getAttendanceOversight` fetches every day with an `APPROVED` punch (and those punches)
+   programme-wide per request** — scales with programme-years, not student count. Prioritise this first if
    pagination work starts (item 3).
 5. **Attendance-oversight percentage math has a subtlety already fixed once.**
    `presentDays` must be bounded by the student's own `startDate` on *both* ends, not
-   just `date <= today` — an `APPROVED` row dated before `startDate` (backfilled data, an
+   just `date <= today` — an approved day dated before `startDate` (backfilled data, an
    early orientation log) can otherwise push the percentage past 100%. Fixed with a flat
    query + JS `Map<studentId, Date[]>` bucketing in `coordinator.service.ts`, because a
    Prisma filtered-relation count can't express a per-row correlated bound. **Keep that
-   bound if you touch this code.**
+   bound if you touch this code.** Since the punch migration a day is present only if
+   `hasApprovedSession` (In and Out of one session both APPROVED) — one approved punch is
+   not attendance.
 6. The `(studentId, date)` uniqueness that percentage math leans on only strictly holds
    for rows written after migration `20260811085904`. No pre-migration rows exist today
-   (verified) — worth knowing if this DB is ever backfilled from an older source.
+   (verified) — worth knowing if this DB is ever backfilled from an older source. It still
+   holds under punches: the day row is unique, its punches hang off it.
 7. Password change doesn't invalidate already-issued JWTs — matters if a reset is
    because of a leak.
-8. `Attendance.approvedById` is set when **declining** too. It means "who actioned this",
-   not "who approved this" — and it is nulled outright when that supervisor is deleted, so
-   a row reading `APPROVED` with `approvedById: null` is normal, not corruption.
+8. `AttendancePunch.decidedById` is set on approve **and** decline ("who actioned this"),
+   and is nulled outright when that supervisor is deleted — so an APPROVED punch with
+   `decidedById: null` is normal, not corruption. `decidedAt` is null on the punches the
+   migration created from per-day rows (the old model never recorded *when*), so they never
+   count toward the supervisor's `approvedThisWeek`. (This replaced
+   `Attendance.approvedById`, which had the same "actioned, not approved" meaning.)
 9. **Fixed: evaluations are editable, deletable and repeatable.** `PATCH`/`DELETE
    /supervisor/evaluations/:id` exist and are guarded by authorship (§5). There is still no
    uniqueness constraint on `(studentId, supervisorId)` and there should not be — multiple
@@ -1052,7 +1124,7 @@ Ordered roughly by how likely each is to bite.
 12. `Student.endDate` is the **expected** end of the OJT — a coordinator-entered planning
     date, labelled "Expected End Date" everywhere it is shown — never the actual completion
     date, and it bounds nothing: completion is by hours, only `status: COMPLETED` closes
-    attendance (`StudentService.submitAttendance`; the student attendance page merely shows a
+    attendance (`attendanceBlockedReason` in `student.service.ts`; the student attendance page merely shows a
     non-blocking notice once the date has passed). Both it and `Student.gender`
     (`Male`/`Female`/`Other`, the establishment form's list) are set only from the
     coordinator's student form (`StudentDetailsDto`); the student's own `PATCH
@@ -1064,19 +1136,15 @@ Ordered roughly by how likely each is to bite.
     coordinator's checklist deliberately mints none) (`Promise.all(rows.map(withSignedUrl))`) — an extra Supabase round trip per
     row, same scaling shape as item 4. Fine at current volume; revisit alongside item 3 if
     pagination work starts.
-14. **A PENDING or DECLINED attendance row is corrected by resubmitting the same date, not
-    by a separate edit endpoint.** `submitAttendance` treats an existing row differently by
-    its status: only APPROVED 409s ("already been approved and cannot be resubmitted") —
-    approved hours must never change after the fact. PENDING and DECLINED are both updated
-    in place — times overwritten, `status` reset to PENDING, `declineReason`/`approvedById`
-    cleared to `null`. There is still no PATCH/DELETE on student attendance; this is the
-    only correction path. Client: `features/student-portal/hooks/use-attendance-log.ts`'s
-    `startCorrection`/`cancelCorrection` load a row into the Log Attendance form (date
-    locked, times/remarks prefilled, an amber banner naming the fix as a replacement — same
-    treatment as the evaluation edit banner), offered from `AttendanceTable`'s "Correct this
-    log" action on every non-APPROVED row. The DECLINED reason is shown inline in Attendance
-    History, never behind a hover or dialog. If a real edit endpoint is ever added, keep
-    this resubmit-to-correct behavior rather than removing it.
+14. **Resubmit-to-correct is gone; it is replaced by re-punch after decline.** The old
+    `POST /student/attendance` (and the day form, `startCorrection`/`cancelCorrection` and
+    "Correct this log") overwrote a PENDING or DECLINED day in place. With server-stamped
+    punches there is nothing to correct by hand: a DECLINED punch is re-punched the same
+    day (new time, back to PENDING, decision cleared), within the ordering rules in §6.
+    PENDING and APPROVED punches are final; there is no PATCH/DELETE on punches, and no
+    way to punch a past day. The old item's instruction to "keep resubmit-to-correct if an
+    edit endpoint is ever added" is **void** — the professor's live-punch requirement
+    superseded it.
 15. **`Button`'s `fullWidth` prop defaults to `true`**, so all pre-existing call sites keep
     stretching to fill their container; only the two page-header buttons (coordinator
     Students, coordinator Establishments) were set `fullWidth={false}` when this was added.
@@ -1126,11 +1194,11 @@ Ordered roughly by how likely each is to bite.
     `components/ui/FileLink.tsx` renders those rows as "Unavailable".
 21. **A student with no establishment is a real state, not an edge case.** The
     establishment cascade nulls `Student.establishmentId`, and the coordinator's form can
-    now clear it deliberately. What handles it: `submitAttendance` rejects with 400 (the
+    now clear it deliberately. What handles it: punching (and remarks) reject with 400 (the
     supervisor's queue is establishment-scoped, so anything logged could never be
     approved) and the client mirrors that as a disabled form; `getEvaluations` returns
     authored-by-me UNION placed-with-me so a supervisor keeps their own sheets;
-    `MessagesService.getContacts` already guarded it (item 17). **Attendance rows written
+    `MessagesService.getContacts` already guarded it (item 17). **Attendance days written
     while the student was assigned stay invisible to every supervisor until the student is
     reassigned** — verified that reassigning restores them, which is the recovery path.
     Any new query that starts from a student's `establishmentId` needs the same thought.
@@ -1143,7 +1211,7 @@ Ordered roughly by how likely each is to bite.
     coordinator-facing slice their specific cascade could stale, read from each slice's own
     `tagTypes` rather than guessed — student delete also touches `messagesApi`
     (`Conversations`/`Contacts`); supervisor delete does not touch `attendanceOversightApi`
-    or `documentApi` (the cascade keeps their attendance rows, only un-attributing them);
+    or `documentApi` (the cascade keeps their punches, only un-attributing them);
     establishment delete touches the full set plus `studentApi` and
     `supervisorManagementApi`. Only affects slices a coordinator's own session can reach —
     `supervisorApi` and `studentPortalApi` belong to a different login entirely, so

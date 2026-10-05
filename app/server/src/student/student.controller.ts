@@ -14,7 +14,6 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
-  IsDateString,
   IsEnum,
   IsOptional,
   IsString,
@@ -22,35 +21,27 @@ import {
   MaxLength,
 } from 'class-validator';
 import { StudentService, MAX_DOCUMENT_SIZE_BYTES } from './student.service';
-import { DocumentType } from '../../generated/prisma/client';
+import { DocumentType, PunchKind } from '../../generated/prisma/client';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { AuthedRequest } from '../auth/authed-request';
 import { EmptyToNull } from '../common/transforms';
 
-class SubmitAttendanceDto {
-  @IsDateString()
-  date!: string;
+// A live punch carries only which punch it is. No date and no time: the
+// server stamps both (Manila today, the current instant), and because nothing
+// else is declared, forbidNonWhitelisted turns a client-sent `time` or `date`
+// into a 400 rather than letting it through unread.
+class PunchDto {
+  @IsEnum(PunchKind)
+  kind!: PunchKind;
+}
 
+class UpdateRemarksDto {
+  // EmptyToNull: clearing the box erases the remark. Absent leaves it alone.
   @IsOptional()
-  @IsDateString()
-  timeInAM?: string;
-
-  @IsOptional()
-  @IsDateString()
-  timeOutAM?: string;
-
-  @IsOptional()
-  @IsDateString()
-  timeInPM?: string;
-
-  @IsOptional()
-  @IsDateString()
-  timeOutPM?: string;
-
-  @IsOptional()
+  @EmptyToNull()
   @IsString()
   @MaxLength(500)
-  remarks?: string;
+  remarks?: string | null;
 }
 
 // Students may only ever touch these two fields on their own record — every
@@ -105,12 +96,19 @@ export class StudentController {
     return this.studentService.getDashboard(req.user.userId);
   }
 
-  @Post('attendance')
-  submitAttendance(
-    @Req() req: AuthedRequest,
-    @Body() dto: SubmitAttendanceDto,
-  ) {
-    return this.studentService.submitAttendance(req.user.userId, dto);
+  @Get('attendance/today')
+  getTodayAttendance(@Req() req: AuthedRequest) {
+    return this.studentService.getToday(req.user.userId);
+  }
+
+  @Post('attendance/punch')
+  punch(@Req() req: AuthedRequest, @Body() dto: PunchDto) {
+    return this.studentService.punch(req.user.userId, dto.kind);
+  }
+
+  @Patch('attendance/today/remarks')
+  updateTodayRemarks(@Req() req: AuthedRequest, @Body() dto: UpdateRemarksDto) {
+    return this.studentService.updateTodayRemarks(req.user.userId, dto.remarks);
   }
 
   @Get('attendance')

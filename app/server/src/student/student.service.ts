@@ -7,13 +7,18 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { hoursForAttendance, totalHours } from '../common/attendance-hours';
 import {
-  formatDateOnly,
-  manilaToday,
-  startOfUtcDay,
-  toUtcDateOnly,
-} from '../common/dates';
+  DAY_SELECT,
+  HOURS_PUNCH_SELECT,
+  PUNCH_LABEL,
+  PunchLike,
+  punchAvailability,
+  roundHours,
+  summarizeDay,
+  totalApprovedHours,
+  totalPendingHours,
+} from '../common/attendance-hours';
+import { formatDateOnly, manilaToday, toUtcDateOnly } from '../common/dates';
 import {
   buildObjectPath,
   deleteFile,
@@ -21,16 +26,7 @@ import {
   uploadFile,
 } from '../common/storage';
 import { documentFileName } from '../common/document-types';
-import { DocumentType } from '../../generated/prisma/client';
-
-interface SubmitAttendanceInput {
-  date: string;
-  timeInAM?: string;
-  timeOutAM?: string;
-  timeInPM?: string;
-  timeOutPM?: string;
-  remarks?: string;
-}
+import { DocumentType, Prisma, PunchKind } from '../../generated/prisma/client';
 
 interface UpdateProfileInput {
   /** `null` = explicitly cleared; `undefined` = not supplied, leave unchanged. */
@@ -121,7 +117,7 @@ export class StudentService {
             coordinatorEmail: true,
           },
         },
-        attendances: { orderBy: { date: 'desc' } },
+        attendances: { orderBy: { date: 'desc' }, select: DAY_SELECT },
         _count: { select: { documents: true } },
       },
     });
@@ -130,175 +126,200 @@ export class StudentService {
     }
 
     const { attendances, ...profile } = student;
-    const approved = attendances.filter((a) => a.status === 'APPROVED');
+    const completedHours = totalApprovedHours(attendances);
+    // Counts are of punches, not days: each punch is approved on its own, so
+    // "3 pending" means three decisions still owed.
+    const punches = attendances.flatMap((a) => a.punches);
+    const countOf = (status: 'PENDING' | 'APPROVED' | 'DECLINED') =>
+      punches.filter((p) => p.status === status).length;
 
     return {
       ...profile,
       stats: {
-        // Only approved attendance counts toward the requirement, which is
-        // why this can be lower than the sum of everything submitted.
-        completedHours: totalHours(approved),
-        pendingHours: totalHours(
-          attendances.filter((a) => a.status === 'PENDING'),
-        ),
+        // Only sessions with both punches approved count toward the
+        // requirement, which is why this can trail what was punched.
+        completedHours,
+        pendingHours: totalPendingHours(attendances),
         requiredHours: student.requiredHours,
         remainingHours: Math.max(
           0,
-          Math.round((student.requiredHours - totalHours(approved)) * 100) /
-            100,
+          roundHours(student.requiredHours - completedHours),
         ),
+        /** Days with at least one punch (or a remark). */
         totalLogs: attendances.length,
-        approvedCount: approved.length,
-        pendingCount: attendances.filter((a) => a.status === 'PENDING').length,
-        declinedCount: attendances.filter((a) => a.status === 'DECLINED')
-          .length,
+        approvedCount: countOf('APPROVED'),
+        pendingCount: countOf('PENDING'),
+        declinedCount: countOf('DECLINED'),
       },
-      recentAttendance: attendances.slice(0, 5).map(withHours),
+      recentAttendance: attendances.slice(0, 5).map(toDay),
     };
   }
 
-  async submitAttendance(userId: string, data: SubmitAttendanceInput) {
+  /**
+   * Today's punch card: the four punches, whether each may be punched now
+   * (`true` or the reason not), and the derived status and hours. The client
+   * renders the card from this alone and keeps no copy of the rules.
+   */
+  async getToday(userId: string) {
     const student = await this.getStudentByUserId(userId);
+    return this.buildToday(student);
+  }
 
-    const date = startOfUtcDay(data.date);
-    if (Number.isNaN(date.getTime())) {
-      throw new BadRequestException('date is not a valid date');
-    }
-
-    // Completion is determined by hours, not the calendar — a student who
-    // hasn't met requiredHours by their scheduled endDate keeps logging past
-    // it, so endDate is NOT a bound here. Only status COMPLETED closes
-    // logging.
-    if (student.status === 'COMPLETED') {
-      throw new BadRequestException(
-        'Your OJT is complete. Attendance can no longer be logged.',
-      );
-    }
-
-    // No establishment means no supervisor can see the row: the approval queue
-    // is scoped to an establishment, so an unassigned student's submissions
-    // would sit PENDING forever as unbankable hours. `establishmentId` is
-    // nullable and the establishment cascade nulls it (CLAUDE.md §6), so this
-    // is a reachable state, not a theoretical one.
-    if (!student.establishmentId) {
-      throw new BadRequestException(
-        'You are not assigned to an establishment yet. Contact your coordinator.',
-      );
-    }
-
-    // The submitted date must not be before the student's OJT start, and
-    // never in the future — compared as calendar dates, never timestamps,
-    // against Manila's calendar day rather than the server's (the server may
-    // run in UTC, where an early-morning Manila (UTC+8) submission can
-    // already be "tomorrow" while the server still reads "today").
-    //
-    // Two independent checks, not one combined range: startDate and "today"
-    // can legitimately be inconsistent with each other (e.g. an OJT period
-    // that hasn't started yet has startDate > today), so a single
-    // "between X and Y" message can render as an inverted, nonsensical range.
-    // Each bound gets its own message instead.
+  /**
+   * Records one punch at the server's current time, on Manila's today.
+   *
+   * Neither a date nor a time is accepted from the request — the DTO declares
+   * only `kind`, so `forbidNonWhitelisted` rejects either. That is the whole
+   * point of a live punch: the student can't backdate or round a time.
+   *
+   * A DECLINED punch of the same kind is overwritten (new time, back to
+   * PENDING, decision cleared) — the punch rules decide when that's allowed.
+   */
+  async punch(userId: string, kind: PunchKind) {
+    const student = await this.getStudentByUserId(userId);
     const today = manilaToday();
-    const lowerBound = student.startDate
-      ? toUtcDateOnly(student.startDate)
-      : null;
 
-    if (lowerBound && date.getTime() < lowerBound.getTime()) {
-      throw new BadRequestException(
-        `Your OJT period starts on ${formatDateOnly(lowerBound)}. You cannot log attendance before then.`,
-      );
-    }
-    if (date.getTime() > today.getTime()) {
-      throw new BadRequestException(
-        'Attendance cannot be logged for a future date.',
-      );
-    }
+    const blocked = attendanceBlockedReason(student, today);
+    if (blocked) throw new BadRequestException(blocked);
 
-    const times = {
-      timeInAM: parseTime(data.timeInAM),
-      timeOutAM: parseTime(data.timeOutAM),
-      timeInPM: parseTime(data.timeInPM),
-      timeOutPM: parseTime(data.timeOutPM),
-    };
-
-    // A log with no complete session is meaningless — it would contribute zero
-    // hours and just sit in the supervisor's approval queue.
-    const hasAmSession = !!times.timeInAM && !!times.timeOutAM;
-    const hasPmSession = !!times.timeInPM && !!times.timeOutPM;
-    if (!hasAmSession && !hasPmSession) {
-      throw new BadRequestException(
-        'Provide a complete AM or PM session (both a time in and a time out)',
-      );
-    }
-
-    // hoursForAttendance's total-only check would let an inverted session
-    // (timeOut before timeIn) through silently scored as 0 as long as the
-    // other session is positive — validate each supplied session on its own.
-    if (
-      hasAmSession &&
-      times.timeOutAM!.getTime() <= times.timeInAM!.getTime()
-    ) {
-      throw new BadRequestException(
-        'Morning time out must be later than time in',
-      );
-    }
-    if (
-      hasPmSession &&
-      times.timeOutPM!.getTime() <= times.timeInPM!.getTime()
-    ) {
-      throw new BadRequestException(
-        'Afternoon time out must be later than time in',
-      );
-    }
-
-    const existing = await this.prisma.client.attendance.findUnique({
-      where: { studentId_date: { studentId: student.id, date } },
+    const day = await this.getOrCreateDay(student.id, today);
+    const punches = await this.prisma.client.attendancePunch.findMany({
+      where: { attendanceId: day.id },
+      select: { id: true, ...HOURS_PUNCH_SELECT },
     });
-    // APPROVED is the only status that blocks a resubmission — approved hours
-    // must never change after the fact. PENDING is allowed through as well as
-    // DECLINED: the supervisor hasn't acted on it yet, so a typo the student
-    // notices before review should still be fixable.
-    if (existing && existing.status === 'APPROVED') {
-      throw new ConflictException(
-        'This date has already been approved and cannot be resubmitted',
-      );
+    const existing = punches.find((p) => p.kind === kind) ?? null;
+
+    const verdict = punchAvailability(punches, null)[kind];
+    if (verdict !== true) {
+      // A punch that already stands is a conflict with existing state; every
+      // other refusal is an ordering rule the request broke.
+      if (existing && existing.status !== 'DECLINED') {
+        throw new ConflictException(verdict);
+      }
+      throw new BadRequestException(verdict);
     }
 
-    // A PENDING or DECLINED row is corrected in place rather than blocked —
-    // otherwise the student would permanently lose those hours with no way to
-    // fix the log.
-    const record = existing
-      ? await this.prisma.client.attendance.update({
-          where: { id: existing.id },
-          data: {
-            ...times,
-            remarks: data.remarks,
-            status: 'PENDING',
-            declineReason: null,
-            approvedById: null,
-          },
-        })
-      : await this.prisma.client.attendance.create({
-          data: {
-            studentId: student.id,
-            date,
-            ...times,
-            remarks: data.remarks,
-            status: 'PENDING',
-          },
+    const now = new Date();
+    if (existing) {
+      // `status: 'DECLINED'` in the filter makes this a compare-and-set: if the
+      // row changed since it was read, nothing is overwritten.
+      const { count } = await this.prisma.client.attendancePunch.updateMany({
+        where: { id: existing.id, status: 'DECLINED' },
+        data: {
+          time: now,
+          status: 'PENDING',
+          decidedById: null,
+          decidedAt: null,
+          declineReason: null,
+        },
+      });
+      if (count === 0) {
+        throw new ConflictException(
+          `${PUNCH_LABEL[kind]} changed while you were punching. Refresh and try again.`,
+        );
+      }
+    } else {
+      try {
+        await this.prisma.client.attendancePunch.create({
+          data: { attendanceId: day.id, kind, time: now },
         });
+      } catch (err) {
+        // A double tap: both requests passed the check above, and
+        // @@unique([attendanceId, kind]) stopped the second insert.
+        if (isUniqueViolation(err)) {
+          throw new ConflictException(
+            `${PUNCH_LABEL[kind]} is already recorded for today.`,
+          );
+        }
+        throw err;
+      }
+    }
 
-    return withHours(record);
+    return this.buildToday(student);
+  }
+
+  /**
+   * Sets today's remark — the student's own note, never a decline reason.
+   * Editable at any time on the day; `null` clears it, absent leaves it.
+   * Held to the same blocks as punching: a day row for a student who can't
+   * punch would be an orphan nobody can approve.
+   */
+  async updateTodayRemarks(userId: string, remarks: string | null | undefined) {
+    const student = await this.getStudentByUserId(userId);
+    const today = manilaToday();
+
+    const blocked = attendanceBlockedReason(student, today);
+    if (blocked) throw new BadRequestException(blocked);
+
+    if (remarks !== undefined) {
+      const day = await this.getOrCreateDay(student.id, today);
+      await this.prisma.client.attendance.update({
+        where: { id: day.id },
+        data: { remarks },
+      });
+    }
+    return this.buildToday(student);
   }
 
   async getAttendanceHistory(userId: string) {
     const student = await this.getStudentByUserId(userId);
 
-    const attendances = await this.prisma.client.attendance.findMany({
+    const days = await this.prisma.client.attendance.findMany({
       where: { studentId: student.id },
       orderBy: { date: 'desc' },
+      select: DAY_SELECT,
     });
 
-    return attendances.map(withHours);
+    return days.map(toDay);
+  }
+
+  private async buildToday(student: StudentRow) {
+    const today = manilaToday();
+    const blockedReason = attendanceBlockedReason(student, today);
+    const day = await this.prisma.client.attendance.findUnique({
+      where: { studentId_date: { studentId: student.id, date: today } },
+      select: DAY_SELECT,
+    });
+    const punches = day?.punches ?? [];
+    const summary = summarizeDay(punches);
+
+    return {
+      date: today,
+      attendanceId: day?.id ?? null,
+      remarks: day?.remarks ?? null,
+      punches: summary.punches,
+      // null, not INCOMPLETE, when nothing has been logged today at all.
+      dayStatus: day ? summary.dayStatus : null,
+      approvedHours: summary.approvedHours,
+      pendingHours: summary.pendingHours,
+      allowed: punchAvailability(punches, blockedReason),
+      blockedReason,
+    };
+  }
+
+  /**
+   * The day row for (student, date), created on first use.
+   *
+   * `upsert` alone isn't race-proof: two first punches at the same instant
+   * can both find no row and both INSERT, and the unique index rejects one.
+   * The row exists by then, so the loser just reads it.
+   */
+  private async getOrCreateDay(studentId: string, date: Date) {
+    const where = { studentId_date: { studentId, date } };
+    try {
+      return await this.prisma.client.attendance.upsert({
+        where,
+        create: { studentId, date },
+        update: {},
+        select: { id: true },
+      });
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+      return this.prisma.client.attendance.findUniqueOrThrow({
+        where,
+        select: { id: true },
+      });
+    }
   }
 
   async getProfile(userId: string) {
@@ -479,21 +500,48 @@ function assertValidDocumentFile(
   }
 }
 
-/** Adds the derived hours so the client never recomputes them. */
-function withHours<T extends Parameters<typeof hoursForAttendance>[0]>(
-  record: T,
-) {
-  return {
-    ...record,
-    hours: Math.round(hoursForAttendance(record) * 100) / 100,
-  };
+/** A day as every attendance reader returns it. */
+function toDay<D extends { punches: PunchLike[] }>({ punches, ...day }: D) {
+  return { ...day, ...summarizeDay(punches) };
 }
 
-function parseTime(value?: string): Date | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new BadRequestException(`"${value}" is not a valid time`);
+interface StudentRow {
+  id: string;
+  status: string;
+  establishmentId: string | null;
+  startDate: Date | null;
+}
+
+/**
+ * Why this student can't log attendance today, or null if they can. The same
+ * three blocks the old submit form enforced:
+ * - COMPLETED closes logging. Completion is by hours, so a passed `endDate`
+ *   never does.
+ * - No establishment: the approval queue is establishment-scoped, so a punch
+ *   would sit PENDING forever (CLAUDE.md §8 item 21).
+ * - Nothing before `startDate`, compared as Manila calendar days.
+ */
+function attendanceBlockedReason(
+  student: StudentRow,
+  today: Date,
+): string | null {
+  if (student.status === 'COMPLETED') {
+    return 'Your OJT is complete. Attendance can no longer be logged.';
   }
-  return parsed;
+  if (!student.establishmentId) {
+    return 'You are not assigned to an establishment yet. Contact your coordinator.';
+  }
+  if (student.startDate) {
+    const start = toUtcDateOnly(student.startDate);
+    if (today.getTime() < start.getTime()) {
+      return `Your OJT period starts on ${formatDateOnly(start)}. You cannot log attendance before then.`;
+    }
+  }
+  return null;
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
+  );
 }

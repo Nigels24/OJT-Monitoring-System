@@ -48,7 +48,7 @@ class SetStudentStatusDto {
 }
 
 class DeclineAttendanceDto {
-  // Required: a declined log with no explanation gives the student nothing to
+  // Required: a declined punch with no explanation gives the student nothing to
   // act on. The prototype enforces this in the UI; enforce it on the server too.
   @IsString()
   @IsNotEmpty()
@@ -155,22 +155,18 @@ export class SupervisorController {
     );
   }
 
-  @Patch('attendance/:id/approve')
-  approveAttendance(@Req() req: AuthedRequest, @Param('id') id: string) {
-    return this.supervisorService.approveAttendance(req.user.userId, id);
+  @Patch('punches/:id/approve')
+  approvePunch(@Req() req: AuthedRequest, @Param('id') id: string) {
+    return this.supervisorService.approvePunch(req.user.userId, id);
   }
 
-  @Patch('attendance/:id/decline')
-  declineAttendance(
+  @Patch('punches/:id/decline')
+  declinePunch(
     @Req() req: AuthedRequest,
     @Param('id') id: string,
     @Body() dto: DeclineAttendanceDto,
   ) {
-    return this.supervisorService.declineAttendance(
-      req.user.userId,
-      id,
-      dto.reason,
-    );
+    return this.supervisorService.declinePunch(req.user.userId, id, dto.reason);
   }
 
   /**

@@ -102,8 +102,10 @@ model Supervisor {
   establishment   Establishment @relation(fields: [establishmentId], references: [id])
   position        String?
 
-  attendanceApprovals Attendance[] @relation("ApprovedBy")
-  evaluations         Evaluation[]
+  // Punches this supervisor approved or declined — "who actioned it", not
+  // only approvals. Nulled (not deleted) when the supervisor is deleted.
+  punchDecisions AttendancePunch[] @relation("PunchDecisions")
+  evaluations    Evaluation[]
 }
 
 model Coordinator {
@@ -146,32 +148,59 @@ model Student {
 }
 
 model Attendance {
-  id        String           @id @default(cuid())
+  // The day. Each of its four clock events is an AttendancePunch, approved or
+  // declined on its own — see AttendancePunch.
+  id        String   @id @default(cuid())
   studentId String
-  student   Student          @relation(fields: [studentId], references: [id])
+  student   Student  @relation(fields: [studentId], references: [id])
   date      DateTime
-  timeInAM  DateTime?
-  timeOutAM DateTime?
-  timeInPM  DateTime?
-  timeOutPM DateTime?
+  // The student's own note for the day. Never holds a decline reason — those
+  // live on each punch.
   remarks   String?
-  status    AttendanceStatus @default(PENDING)
+  createdAt DateTime @default(now())
 
-  // Why a supervisor declined. Kept separate from `remarks`, which belongs to
-  // the student — the prototype overwrote the student's note with the decline
-  // reason, losing what they had written.
+  punches AttendancePunch[]
+
+  // One row per student per day. `date` is UTC midnight of the Manila day
+  // (manilaToday() in common/dates.ts), which is what makes the constraint
+  // meaningful.
+  @@unique([studentId, date])
+}
+
+enum PunchKind {
+  TIME_IN_AM
+  TIME_OUT_AM
+  TIME_IN_PM
+  TIME_OUT_PM
+}
+
+/// One clock event, stamped by the server and decided by a supervisor on its
+/// own. A session (AM or PM) counts toward hours only when both its In and
+/// Out punches are APPROVED.
+model AttendancePunch {
+  id           String           @id @default(cuid())
+  attendanceId String
+  attendance   Attendance       @relation(fields: [attendanceId], references: [id])
+  kind         PunchKind
+  // A real instant, stamped by the server — never sent by the client.
+  time         DateTime
+  status       AttendanceStatus @default(PENDING)
+
+  // Who approved OR declined it — named for what it means, unlike the old
+  // Attendance.approvedById, which was set on decline too.
+  decidedById   String?
+  decidedBy     Supervisor? @relation("PunchDecisions", fields: [decidedById], references: [id])
+  // null for decisions migrated from the per-day model, which never recorded
+  // when a day was approved.
+  decidedAt     DateTime?
   declineReason String?
-
-  approvedById String?
-  approvedBy   Supervisor? @relation("ApprovedBy", fields: [approvedById], references: [id])
 
   createdAt DateTime @default(now())
 
-  // One log per student per day. Without this a student can submit the same
-  // day repeatedly and every hours total counts it more than once.
-  // `date` is normalised to UTC midnight on write (see StudentService), which
-  // is what makes the constraint meaningful.
-  @@unique([studentId, date])
+  // At most one punch of each kind per day. A re-punch after a decline
+  // overwrites this row rather than adding a second.
+  @@unique([attendanceId, kind])
+  @@index([status])
 }
 
 model Document {

@@ -8,7 +8,7 @@
  * while the school is in Asia/Manila (UTC+8), and the UTC day only rolls over
  * at 08:00 Manila.
  *
- * `submitAttendance` used to be the only caller that got this right; the
+ * The old `submitAttendance` used to be the only caller that got this right; the
  * coordinator's dashboard and oversight read the *server's* UTC day, so
  * between 00:00 and 07:59 Manila they disagreed with the write path by a day
  * and "Present Today" read 0 while students had already logged.

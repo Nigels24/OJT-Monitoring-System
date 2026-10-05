@@ -74,6 +74,8 @@ export async function deleteStudentCascade(
     select: { fileUrl: true },
   });
 
+  // Punches first: AttendancePunch -> Attendance is RESTRICT, not a cascade.
+  await tx.attendancePunch.deleteMany({ where: { attendance: { studentId } } });
   await tx.attendance.deleteMany({ where: { studentId } });
   await tx.document.deleteMany({ where: { studentId } });
   // Scores before evaluations: there is no onDelete: Cascade anywhere in this
@@ -96,10 +98,10 @@ export async function deleteStudentCascade(
 /**
  * Deletes a supervisor, their evaluations, and their login.
  *
- * Attendance they actioned is **kept** and merely loses its approver: a
+ * Punches they decided are **kept** and merely lose their decider: a
  * student's approved hours are their own record and must survive their
- * supervisor leaving the establishment. `Attendance.approvedById` is nullable
- * precisely so this is possible.
+ * supervisor leaving the establishment. `AttendancePunch.decidedById` is
+ * nullable precisely so this is possible.
  */
 export async function deleteSupervisorCascade(
   tx: Tx,
@@ -110,9 +112,9 @@ export async function deleteSupervisorCascade(
     where: { evaluation: { supervisorId } },
   });
   await tx.evaluation.deleteMany({ where: { supervisorId } });
-  await tx.attendance.updateMany({
-    where: { approvedById: supervisorId },
-    data: { approvedById: null },
+  await tx.attendancePunch.updateMany({
+    where: { decidedById: supervisorId },
+    data: { decidedById: null },
   });
 
   await deleteMessagingFootprint(tx, userId);

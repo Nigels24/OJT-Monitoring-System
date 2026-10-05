@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   Injectable,
   NotFoundException,
   ForbiddenException,
@@ -6,7 +7,14 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { hoursForAttendance, totalHours } from '../common/attendance-hours';
+import {
+  DAY_SELECT,
+  HOURS_PUNCH_SELECT,
+  PUNCH_LABEL,
+  PUNCH_SELECT,
+  summarizeDay,
+  totalApprovedHours,
+} from '../common/attendance-hours';
 import {
   SheetTemplate,
   buildSections,
@@ -64,13 +72,8 @@ export class SupervisorService {
       this.prisma.client.attendance.findMany({
         where: { student: { establishmentId: supervisor.establishmentId } },
         select: {
-          status: true,
-          timeInAM: true,
-          timeOutAM: true,
-          timeInPM: true,
-          timeOutPM: true,
-          createdAt: true,
           student: { select: { status: true } },
+          punches: { select: { ...HOURS_PUNCH_SELECT, decidedAt: true } },
         },
       }),
     ] as const);
@@ -93,13 +96,14 @@ export class SupervisorService {
       );
     }
 
-    const approved = attendances.filter((a) => a.status === 'APPROVED');
     const weekStart = startOfWeek();
-    // A finished batch should not keep showing up as work to do, but its
-    // approved hours still count toward the establishment's running total.
-    const activeQueue = attendances.filter(
-      (a) => a.student.status !== 'COMPLETED',
-    );
+    // Counted in punches, not days — each is its own decision. A finished
+    // batch should not keep showing up as work to do, but its approved hours
+    // still count toward the establishment's running total.
+    const allPunches = attendances.flatMap((a) => a.punches);
+    const activePunches = attendances
+      .filter((a) => a.student.status !== 'COMPLETED')
+      .flatMap((a) => a.punches);
 
     return {
       /** Sections whose data could not be loaded; the client offers a retry. */
@@ -116,24 +120,31 @@ export class SupervisorService {
         activeStudents: students.filter((s) => s.status === 'ACTIVE').length,
         completedStudents: students.filter((s) => s.status === 'COMPLETED')
           .length,
-        pendingApprovals: activeQueue.filter((a) => a.status === 'PENDING')
+        pendingApprovals: activePunches.filter((p) => p.status === 'PENDING')
           .length,
-        approvedThisWeek: approved.filter((a) => a.createdAt >= weekStart)
+        // By when the decision was made — the old per-day version used the
+        // row's createdAt. Punches migrated from the per-day model have a null
+        // decidedAt (never recorded) and so never count as "this week".
+        approvedThisWeek: allPunches.filter(
+          (p) =>
+            p.status === 'APPROVED' && p.decidedAt && p.decidedAt >= weekStart,
+        ).length,
+        declinedCount: activePunches.filter((p) => p.status === 'DECLINED')
           .length,
-        declinedCount: activeQueue.filter((a) => a.status === 'DECLINED')
-          .length,
-        // Hours this establishment has signed off across all its students.
-        totalApprovedHours: totalHours(approved),
+        // Hours this establishment has signed off across all its students:
+        // sessions with both punches approved.
+        totalApprovedHours: totalApprovedHours(attendances),
       },
     };
   }
 
   /**
-   * Attendance for every student at this supervisor's establishment.
+   * Attendance days for every student at this supervisor's establishment, each
+   * with its punches nested, so In and Out are read side by side.
    *
-   * `status` narrows the list; omitting it returns all of them. (This method
-   * was previously called getPendingAttendance but never filtered, so the
-   * approval screen showed already-actioned rows with no way to tell.)
+   * `status` narrows to days with at least one punch in that status — so
+   * `PENDING` is the queue of days still owing a decision. Omitting it returns
+   * all of them.
    */
   async getAttendance(
     userId: string,
@@ -142,7 +153,7 @@ export class SupervisorService {
   ) {
     const supervisor = await this.getSupervisorByUserId(userId);
 
-    const records = await this.prisma.client.attendance.findMany({
+    const days = await this.prisma.client.attendance.findMany({
       where: {
         student: {
           establishmentId: supervisor.establishmentId,
@@ -151,9 +162,10 @@ export class SupervisorService {
           // working queue so the next intake starts with a clean board.
           ...(includeCompleted ? {} : { status: { not: 'COMPLETED' } }),
         },
-        ...(status ? { status } : {}),
+        ...(status ? { punches: { some: { status } } } : {}),
       },
-      include: {
+      select: {
+        ...DAY_SELECT,
         student: {
           select: {
             id: true,
@@ -163,16 +175,13 @@ export class SupervisorService {
             user: { select: { name: true, email: true } },
           },
         },
-        approvedBy: {
-          select: { id: true, user: { select: { name: true } } },
-        },
       },
       orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
     });
 
-    return records.map((record) => ({
-      ...record,
-      hours: Math.round(hoursForAttendance(record) * 100) / 100,
+    return days.map(({ punches, ...day }) => ({
+      ...day,
+      ...summarizeDay(punches),
     }));
   }
 
@@ -184,13 +193,14 @@ export class SupervisorService {
       where: { establishmentId: supervisor.establishmentId },
       include: {
         user: { select: { id: true, email: true, name: true } },
+        // Only APPROVED punches can ever form a counted session, so the rest
+        // are not fetched.
         attendances: {
-          where: { status: 'APPROVED' },
           select: {
-            timeInAM: true,
-            timeOutAM: true,
-            timeInPM: true,
-            timeOutPM: true,
+            punches: {
+              where: { status: 'APPROVED' },
+              select: HOURS_PUNCH_SELECT,
+            },
           },
         },
       },
@@ -199,7 +209,7 @@ export class SupervisorService {
 
     return students.map(({ attendances, ...student }) => ({
       ...student,
-      completedHours: totalHours(attendances),
+      completedHours: totalApprovedHours(attendances),
     }));
   }
 
@@ -237,62 +247,94 @@ export class SupervisorService {
     });
   }
 
-  async approveAttendance(userId: string, attendanceId: string) {
-    const supervisor = await this.getSupervisorByUserId(userId);
-    await this.verifyAttendanceBelongsToSupervisor(
-      attendanceId,
-      supervisor.establishmentId,
-    );
-
-    return this.prisma.client.attendance.update({
-      where: { id: attendanceId },
-      data: {
-        status: 'APPROVED',
-        approvedById: supervisor.id,
-        // Clear any earlier decline reason so an approved record does not
-        // still carry the explanation for why it was once rejected.
-        declineReason: null,
-      },
+  /** Approves one PENDING punch. Decisions are final: anything else is a 409. */
+  async approvePunch(userId: string, punchId: string) {
+    return this.decidePunch(userId, punchId, {
+      status: 'APPROVED',
+      declineReason: null,
     });
   }
 
-  async declineAttendance(
+  /** Declines one PENDING punch, with the reason the student will see. */
+  async declinePunch(userId: string, punchId: string, reason: string) {
+    return this.decidePunch(userId, punchId, {
+      status: 'DECLINED',
+      declineReason: reason,
+    });
+  }
+
+  private async decidePunch(
     userId: string,
-    attendanceId: string,
-    reason: string,
+    punchId: string,
+    decision: {
+      status: 'APPROVED' | 'DECLINED';
+      declineReason: string | null;
+    },
   ) {
     const supervisor = await this.getSupervisorByUserId(userId);
-    await this.verifyAttendanceBelongsToSupervisor(
-      attendanceId,
+    const punch = await this.verifyPunchBelongsToSupervisor(
+      punchId,
       supervisor.establishmentId,
     );
 
-    return this.prisma.client.attendance.update({
-      where: { id: attendanceId },
+    // `status: 'PENDING'` in the filter is the finality rule and a
+    // compare-and-set at once: a punch already decided — or decided by
+    // someone else a moment ago — matches nothing and is left untouched.
+    const { count } = await this.prisma.client.attendancePunch.updateMany({
+      where: { id: punchId, status: 'PENDING' },
       data: {
-        status: 'DECLINED',
-        approvedById: supervisor.id,
-        declineReason: reason,
+        ...decision,
+        decidedById: supervisor.id,
+        decidedAt: new Date(),
       },
     });
-  }
-
-  private async verifyAttendanceBelongsToSupervisor(
-    attendanceId: string,
-    establishmentId: string,
-  ) {
-    const attendance = await this.prisma.client.attendance.findUnique({
-      where: { id: attendanceId },
-      include: { student: true },
-    });
-    if (!attendance) {
-      throw new NotFoundException('Attendance record not found');
-    }
-    if (attendance.student.establishmentId !== establishmentId) {
-      throw new ForbiddenException(
-        'This attendance record belongs to a different establishment',
+    if (count === 0) {
+      // Re-read: the status fetched above may predate a decision made by
+      // someone else in between.
+      const current = await this.prisma.client.attendancePunch.findUnique({
+        where: { id: punchId },
+        select: { status: true },
+      });
+      throw new ConflictException(
+        `This ${PUNCH_LABEL[punch.kind]} punch has already been ${
+          current?.status === 'DECLINED' ? 'declined' : 'approved'
+        }. Decisions are final.`,
       );
     }
+
+    return this.prisma.client.attendancePunch.findUniqueOrThrow({
+      where: { id: punchId },
+      select: { ...PUNCH_SELECT, attendanceId: true },
+    });
+  }
+
+  /**
+   * Ownership check, walked punch -> day -> student -> establishment. The
+   * punch id comes from the URL; it implies nothing about whose it is.
+   */
+  private async verifyPunchBelongsToSupervisor(
+    punchId: string,
+    establishmentId: string,
+  ) {
+    const punch = await this.prisma.client.attendancePunch.findUnique({
+      where: { id: punchId },
+      select: {
+        kind: true,
+        status: true,
+        attendance: {
+          select: { student: { select: { establishmentId: true } } },
+        },
+      },
+    });
+    if (!punch) {
+      throw new NotFoundException('Punch not found');
+    }
+    if (punch.attendance.student.establishmentId !== establishmentId) {
+      throw new ForbiddenException(
+        'This punch belongs to a different establishment',
+      );
+    }
+    return punch;
   }
 
   /**

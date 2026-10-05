@@ -84,46 +84,49 @@ in CLAUDE.md §4, "Client conventions".)
 ## 4. Attendance → hours → dashboards (the data pipeline every hour figure depends on)
 
 ```
-Student submits attendance
-  POST /student/attendance { date, timeInAM?, timeOutAM?, timeInPM?, timeOutPM? }
-    date normalised to UTC midnight (startOfUtcDay) — one row per calendar day,
-    enforced by @@unique([studentId, date]) AND a pre-insert check (readable 409, not a raw constraint error)
+Student punches (four separately approved clock events per day)
+  GET  /student/attendance/today          → punches by kind + allowed{kind: true | reason}
+  POST /student/attendance/punch { kind } → NO date, NO time in the body (a sent one is a 400)
+    server stamps time = now, day = manilaToday()
+    day row: upsert on @@unique([studentId, date]); a losing concurrent insert (P2002) re-reads
 
-    OJT-PERIOD GUARD, in this order, all 400 (src/common/dates.ts does the date math):
+    BLOCKS, all 400, same for remarks (attendanceBlockedReason, student.service.ts):
       status COMPLETED                → "Your OJT is complete."
       no establishmentId              → "You are not assigned to an establishment yet."
                                          (nothing logged here could ever be approved —
                                           the supervisor's queue is establishment-scoped)
-      date < Student.startDate        → names the start date
-      date > manilaToday()            → "Attendance cannot be logged for a future date."
+      manilaToday() < startDate       → names the start date
       NOTE: endDate is deliberately NOT a bound. Completion is by hours, not the
-      calendar, so a student short of requiredHours keeps logging past their
-      scheduled end; only status COMPLETED closes logging.
+      calendar; only status COMPLETED closes logging.
 
-    must contain ≥1 complete session (AM or PM), and each supplied session's
-      time out must be strictly later than its time in (checked per session, not
-      on the combined total), else 400
-    hours computed server-side (hoursForAttendance) and stored on the row
-    always lands PENDING
-
-    A DECLINED row for the same date is UPDATED in place (status back to PENDING,
-      declineReason/approvedById cleared); PENDING or APPROVED is a 409.
+    ORDER (punchAvailability, attendance-hours.ts — no clock windows):
+      Out needs its In, not DECLINED · PM In blocked while AM is open ·
+      a standing PM In closes the morning · PENDING/APPROVED kind again → 409
+      (and @@unique([attendanceId, kind]) catches a double tap)
+      DECLINED kind → re-punch overwrites it (new time, PENDING, decision cleared),
+        unless it's an In whose Out already stands
+    every punch lands PENDING
+  PATCH /student/attendance/today/remarks { remarks } → the student's note, per day
        ↓
-Supervisor approves/declines
-  PATCH /supervisor/attendance/:id/approve   → clears any declineReason
-  PATCH /supervisor/attendance/:id/decline   → { reason } required 3–500 chars, stored in
-                                                Attendance.declineReason (separate column from
-                                                the student's own `remarks` — never overwrite one with the other)
-    ownership check: verifyAttendanceBelongsToSupervisor → 403 if another establishment's row
+Supervisor decides each punch on its own (no bulk approve)
+  GET   /supervisor/attendance?status=PENDING → days with ≥1 PENDING punch, punches nested
+  PATCH /supervisor/punches/:id/approve
+  PATCH /supervisor/punches/:id/decline  { reason } 3–500 chars → AttendancePunch.declineReason
+                                         (never Attendance.remarks, which is the student's)
+    ownership: verifyPunchBelongsToSupervisor, punch → day → student → establishment → 403
+    FINAL: updateMany where status = PENDING; a decided punch → 409, never overwritten
+    sets decidedById + decidedAt
        ↓
-Everywhere "completed hours" is shown, it is APPROVED-only, via totalHours()
-in src/common/attendance-hours.ts — the single shared function:
-    - Student dashboard:        stats.completedHours / requiredHours, progress bar
-    - Coordinator student list: completedHours per row
-    - Coordinator dashboard:    totalHoursLogged aggregate
-    - Attendance oversight:     presentDays (APPROVED rows within [startDate, today])
-                                   ÷ totalDays (calendar days since startDate)
-                                   = attendancePercentage
+A session (AM or PM) counts only when its In AND Out are both APPROVED.
+Every hour figure goes through src/common/attendance-hours.ts
+(totalApprovedHours / summarizeDay / hasApprovedSession):
+    - Student dashboard:        stats.completedHours / requiredHours; counts are punches
+    - Supervisor dashboard:     totalApprovedHours; pending/declined/approvedThisWeek are punches
+    - Supervisor roster + coordinator student list: completedHours per student
+    - Coordinator dashboard:    totalHoursLogged; pendingApprovals + weekly trend count punches
+    - Attendance oversight:     presentDays (days with an approved session, within
+                                 [startDate, today]) ÷ totalDays (calendar days since
+                                 startDate) = attendancePercentage
                                      (null if startDate is missing OR still in the
                                       future — never a fake 0%)
 ```
@@ -140,7 +143,7 @@ since those columns are stored as UTC midnight), while `createdAt`/`updatedAt`/
 
 `Student.startDate` is the newest input to this pipeline — until it is set on a student,
 their attendance-oversight percentage is `null` throughout, regardless of how much
-approved attendance they have. See CLAUDE.md §7 ("Needs live verification").
+approved sessions they have. See CLAUDE.md §7 ("Needs live verification").
 
 ## 5. Evaluation scoring flow
 
@@ -235,7 +238,7 @@ remains is the hand-verification pass listed in CLAUDE.md §7.
 | Symptom | Start here |
 |---|---|
 | Wrong/missing data for one student but not others | Ownership check in the service (§2) — is it filtering by the right profile id? |
-| Hours don't match across two pages | `src/common/attendance-hours.ts` usage — is one call site bypassing `totalHours()`? |
+| Hours don't match across two pages | `src/common/attendance-hours.ts` usage — is one call site bypassing `totalApprovedHours()`/`summarizeDay()`, or counting a session with only one punch approved? |
 | A field silently became `0` instead of blank | Missing `ToOptionalNumber()`/`EmptyToUndefined()` on that DTO field (CLAUDE.md §4, "Validation and DTOs") |
 | 400 on a request that looks right | An undeclared body property (`forbidNonWhitelisted`) — check the DTO lists every field the form sends |
 | User stuck bounced to `/login` in a loop | Cookie `Max-Age` vs JWT `expiresIn` drift, or a stale token past its 1-day expiry (§3) |

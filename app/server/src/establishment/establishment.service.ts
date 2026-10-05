@@ -81,8 +81,8 @@ export class EstablishmentService {
    * referenced the establishment. Now:
    *
    * - supervisors are deleted through the same sequence the coordinator's own
-   *   delete uses (`deleteSupervisorCascade`), so approved attendance keeps
-   *   its hours and only loses its approver;
+   *   delete uses (`deleteSupervisorCascade`), so punches they approved keep
+   *   their hours and only lose their decider;
    * - students are **not** deleted. Removing a placement doesn't remove the
    *   trainee, so `establishmentId` is nulled and they can be reassigned —
    *   which is what that column being nullable is for.
