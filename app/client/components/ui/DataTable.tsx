@@ -3,7 +3,8 @@ import { LucideIcon } from "lucide-react";
 
 export interface DataTableColumn<T> {
   key: string;
-  label: string;
+  /** Usually text; a node for a header control such as a select-all box. */
+  label: ReactNode;
   /** Header tooltip — the full name when `label` is abbreviated. */
   headerTitle?: string;
   render: (row: T) => ReactNode;

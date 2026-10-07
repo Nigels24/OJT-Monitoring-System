@@ -193,23 +193,27 @@ export default function EstablishmentForm({
             onChange={setField("zipCode")}
             placeholder="Zip code"
           />
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Status <span className="text-red-500">*</span>
-            </label>
-            <SelectField
-              value={form.status}
-              onChange={(value) =>
-                setField("status")({ target: { value } })
-              }
-              placeholder="Select Status"
-              options={[
-                { label: "Active", value: "ACTIVE" },
-                { label: "Inactive", value: "INACTIVE" },
-              ]}
-              className="w-full"
-            />
-          </div>
+          {/* Edit only: a new establishment is always ACTIVE (set by the
+              server); deactivating is an edit. */}
+          {editTarget && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Status <span className="text-red-500">*</span>
+              </label>
+              <SelectField
+                value={form.status}
+                onChange={(value) =>
+                  setField("status")({ target: { value } })
+                }
+                placeholder="Select Status"
+                options={[
+                  { label: "Active", value: "ACTIVE" },
+                  { label: "Inactive", value: "INACTIVE" },
+                ]}
+                className="w-full"
+              />
+            </div>
+          )}
         </div>
       </div>
 

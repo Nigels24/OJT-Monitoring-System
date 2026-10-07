@@ -1,4 +1,5 @@
 import { createApi } from "@reduxjs/toolkit/query/react";
+import type { ThunkDispatch, UnknownAction } from "@reduxjs/toolkit";
 import { baseQueryWithAuth } from "./baseQuery";
 import { dashboardApi } from "./dashboardApi";
 import { attendanceOversightApi } from "./attendanceOversightApi";
@@ -60,8 +61,7 @@ export interface Student {
 
 /**
  * `null` on a nullable field clears it; omitting the field leaves the stored
- * value alone. `requiredHours` and `status` are NOT NULL server-side, so they
- * are omit-only.
+ * value alone. `requiredHours` is NOT NULL server-side, so it is omit-only.
  *
  * `school` is deliberately absent — the server ignores any client-supplied
  * value and always sets it to the one permanent school name (`SCHOOL_NAME`,
@@ -82,9 +82,12 @@ export interface StudentDetailsRequest {
   startDate?: string | null;
   endDate?: string | null;
   gender?: string | null;
-  status?: StudentStatus;
 }
 
+/**
+ * No `status`: a new student is always ACTIVE, and the server rejects a
+ * create body that carries one.
+ */
 export interface CreateStudentRequest extends StudentDetailsRequest {
   email: string;
   /** Login name issued by the coordinator. No "@" allowed. */
@@ -103,7 +106,32 @@ export interface CreateStudentResponse {
   role: string;
 }
 
-export type UpdateStudentRequest = StudentDetailsRequest;
+/** Status is NOT NULL server-side, so it is omit-only like `requiredHours`. */
+export interface UpdateStudentRequest extends StudentDetailsRequest {
+  status?: StudentStatus;
+}
+
+export interface BulkDeleteStudentsResponse {
+  deleted: string[];
+  failed: { id: string; reason: string }[];
+}
+
+/**
+ * The server-side cascade (deleteStudentCascade) takes attendance, documents,
+ * evaluations and messages with a deleted student. Those live in other
+ * createApi slices whose tags a student mutation can't reach on its own, so
+ * every coordinator page that reads them would keep showing the deleted
+ * student's rows until revisited (CLAUDE.md §8 item 22).
+ */
+function invalidateStudentCascade(
+  dispatch: ThunkDispatch<unknown, unknown, UnknownAction>,
+) {
+  dispatch(dashboardApi.util.invalidateTags(["Dashboard"]));
+  dispatch(attendanceOversightApi.util.invalidateTags(["AttendanceOversight"]));
+  dispatch(documentApi.util.invalidateTags(["Document"]));
+  dispatch(evaluationApi.util.invalidateTags(["Evaluation"]));
+  dispatch(messagesApi.util.invalidateTags(["Conversations", "Contacts"]));
+}
 
 export const studentApi = createApi({
   reducerPath: "studentApi",
@@ -141,27 +169,35 @@ export const studentApi = createApi({
         method: "DELETE",
       }),
       invalidatesTags: ["Student"],
-      // The server-side cascade (deleteStudentCascade) takes attendance,
-      // documents, evaluations and messages with it. Those live
-      // in other createApi slices whose tags this mutation can't reach on its
-      // own, so every coordinator page that reads them would keep showing
-      // the deleted student's rows until revisited (CLAUDE.md §8 item 22).
       async onQueryStarted(_id, { dispatch, queryFulfilled }) {
         try {
           await queryFulfilled;
-          dispatch(dashboardApi.util.invalidateTags(["Dashboard"]));
-          dispatch(
-            attendanceOversightApi.util.invalidateTags([
-              "AttendanceOversight",
-            ]),
-          );
-          dispatch(documentApi.util.invalidateTags(["Document"]));
-          dispatch(evaluationApi.util.invalidateTags(["Evaluation"]));
-          dispatch(
-            messagesApi.util.invalidateTags(["Conversations", "Contacts"]),
-          );
+          invalidateStudentCascade(dispatch);
         } catch {
           // Delete failed — nothing else to invalidate.
+        }
+      },
+    }),
+    /**
+     * Deletes up to 100 COMPLETED students. A 400 means nothing was deleted;
+     * a 200 can still carry per-student `failed` entries.
+     */
+    bulkDeleteStudents: builder.mutation<
+      BulkDeleteStudentsResponse,
+      string[]
+    >({
+      query: (ids) => ({
+        url: "/coordinator/students/bulk-delete",
+        method: "POST",
+        body: { ids },
+      }),
+      invalidatesTags: ["Student"],
+      async onQueryStarted(_ids, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          invalidateStudentCascade(dispatch);
+        } catch {
+          // Rejected before anything was deleted — nothing to invalidate.
         }
       },
     }),
@@ -187,5 +223,6 @@ export const {
   useCreateStudentMutation,
   useUpdateStudentMutation,
   useDeleteStudentMutation,
+  useBulkDeleteStudentsMutation,
   useResetStudentPasswordMutation,
 } = studentApi;

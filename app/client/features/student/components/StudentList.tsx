@@ -9,6 +9,7 @@ import {
   Users,
   FileText,
   KeyRound,
+  CheckSquare,
 } from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import ProgressBar from "@/components/ui/ProgressBar";
@@ -31,7 +32,20 @@ interface StudentListProps {
   onEdit: (student: Student) => void;
   onDelete: (student: Student) => void;
   onResetPassword: (student: Student) => void;
+  // Bulk delete — only COMPLETED students are selectable.
+  selectedIds: Set<string>;
+  selectedCount: number;
+  selectableFilteredCount: number;
+  allFilteredSelected: boolean;
+  someFilteredSelected: boolean;
+  onToggleSelected: (student: Student) => void;
+  onToggleSelectAllFiltered: () => void;
+  onSelectAllCompleted: () => void;
+  onClearSelection: () => void;
+  onBulkDelete: () => void;
 }
+
+const NOT_SELECTABLE_HINT = "Only students who completed OJT can be bulk deleted";
 
 const STATUS_VARIANT: Record<StudentStatus, BadgeVariant> = {
   ACTIVE: "active",
@@ -62,6 +76,16 @@ export default function StudentList({
   onEdit,
   onDelete,
   onResetPassword,
+  selectedIds,
+  selectedCount,
+  selectableFilteredCount,
+  allFilteredSelected,
+  someFilteredSelected,
+  onToggleSelected,
+  onToggleSelectAllFiltered,
+  onSelectAllCompleted,
+  onClearSelection,
+  onBulkDelete,
 }: StudentListProps) {
   // Seeded once from the prop. The parent's `search` is only ever changed by
   // the debounce below, so there is nothing to sync back the other way.
@@ -79,6 +103,49 @@ export default function StudentList({
   }, [localSearch, onSearchChange, onPageChange]);
 
   const columns: DataTableColumn<Student>[] = [
+    {
+      key: "select",
+      label: (
+        // Selects every COMPLETED student matching the search and status
+        // filter, across all pages — not just the rows on this page.
+        <input
+          type="checkbox"
+          checked={allFilteredSelected}
+          ref={(el) => {
+            if (el) el.indeterminate = someFilteredSelected;
+          }}
+          onChange={onToggleSelectAllFiltered}
+          disabled={selectableFilteredCount === 0}
+          aria-label="Select all completed students matching the filters"
+          title={
+            selectableFilteredCount === 0
+              ? NOT_SELECTABLE_HINT
+              : `Select all ${selectableFilteredCount} completed students matching the filters`
+          }
+          className="h-4 w-4 accent-blue-600 disabled:opacity-40"
+        />
+      ),
+      render: (r) => {
+        const selectable = r.status === "COMPLETED";
+        // The title sits on a wrapper: a disabled input fires no mouse
+        // events, so its own tooltip would never show.
+        return (
+          <span
+            title={selectable ? undefined : NOT_SELECTABLE_HINT}
+            className="inline-flex"
+          >
+            <input
+              type="checkbox"
+              checked={selectable && selectedIds.has(r.id)}
+              onChange={() => onToggleSelected(r)}
+              disabled={!selectable}
+              aria-label={`Select ${r.user.name}`}
+              className="h-4 w-4 accent-blue-600 disabled:opacity-40 disabled:cursor-not-allowed"
+            />
+          </span>
+        );
+      },
+    },
     {
       key: "studentIdNumber",
       label: "ID",
@@ -238,6 +305,40 @@ export default function StudentList({
             className="w-full"
           />
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <button
+          type="button"
+          onClick={onSelectAllCompleted}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 border border-blue-200 rounded-lg px-3 py-1.5 hover:bg-blue-50"
+        >
+          <CheckSquare size={14} />
+          Select all completed
+        </button>
+        {selectedCount > 0 && (
+          <>
+            <span className="text-sm text-gray-700">
+              {selectedCount} selected
+            </span>
+            <button
+              type="button"
+              onClick={onClearSelection}
+              className="text-sm text-blue-600 underline hover:text-blue-800"
+            >
+              Clear
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          onClick={onBulkDelete}
+          disabled={selectedCount === 0}
+          className="sm:ml-auto inline-flex items-center gap-1.5 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Trash2 size={14} />
+          Delete selected ({selectedCount})
+        </button>
       </div>
 
       {isLoading ? (

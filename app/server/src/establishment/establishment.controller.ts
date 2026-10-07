@@ -67,10 +67,6 @@ class CreateEstablishmentDto {
   zipCode?: string;
 
   @IsOptional()
-  @IsIn(['ACTIVE', 'INACTIVE'])
-  status?: 'ACTIVE' | 'INACTIVE';
-
-  @IsOptional()
   @IsString()
   @MaxLength(120)
   coordinatorFirstName?: string;
@@ -120,7 +116,15 @@ class CreateEstablishmentDto {
 // Same fields as create, all optional. PartialType rewrites the validation
 // metadata rather than inheriting it, which plain `extends` cannot do without
 // making `name` optional on create too.
-class UpdateEstablishmentDto extends PartialType(CreateEstablishmentDto) {}
+//
+// `status` lives only here: a new establishment is always ACTIVE (the service
+// sets it), so a create body carrying one is a 400 under forbidNonWhitelisted.
+// Deactivating is an edit.
+class UpdateEstablishmentDto extends PartialType(CreateEstablishmentDto) {
+  @IsOptional()
+  @IsIn(['ACTIVE', 'INACTIVE'])
+  status?: 'ACTIVE' | 'INACTIVE';
+}
 
 @Controller('establishments')
 @UseGuards(AuthGuard('jwt'), RolesGuard)

@@ -57,7 +57,7 @@ OJT-Monitoring-System/
     ├── server/             # NestJS 11 API — port 3000
     │   ├── src/
     │   │   ├── auth/           # AuthModule, JwtStrategy, RolesGuard, authed-request.ts, jwt.constants.ts
-    │   │   ├── common/         # attendance-hours.ts, cascade-delete.ts, dates.ts, document-types.ts, evaluation-pdf.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
+    │   │   ├── common/         # attendance-hours.ts, cascade-delete.ts, courses.ts, dates.ts, document-types.ts, evaluation-pdf.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
     │   │   ├── coordinator/    # student + supervisor management, dashboard, attendance oversight
     │   │   ├── establishment/  # CRUD — open reads, COORDINATOR writes
     │   │   ├── evaluation-template/  # the versioned evaluation sheet — COORDINATOR writes, SupervisorService reads
@@ -552,10 +552,11 @@ table; never derive one from the other.
 | POST | `/auth/login` | public | `{ identifier, password }` |
 | PATCH | `/auth/password` | any signed-in | `{ currentPassword, newPassword }` |
 | GET | `/establishments` · `/establishments/:id` | any signed-in | reads are open |
-| POST/PATCH/DELETE | `/establishments` · `/establishments/:id` | COORDINATOR | |
-| POST | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | issues username + password |
+| POST/PATCH/DELETE | `/establishments` · `/establishments/:id` | COORDINATOR | POST always creates **ACTIVE** — `status` is only on the update DTO (400 on create) |
+| POST | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | issues username + password. A student is created **ACTIVE** — `status` is not on the create DTO (400 if sent); `course` must be one of `COURSES` or blank |
+| POST | `/coordinator/students/bulk-delete` | COORDINATOR | `{ ids }`, 1–100. Every id must exist and be **COMPLETED**, else 400 with `offenders: [{ id, reason }]` and nothing deleted. Then `deleteStudentCascade` per student, **one `$transaction` each** (status re-checked inside), files after each commit. Returns `{ deleted: [ids], failed: [{ id, reason }] }` |
 | GET | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | |
-| PATCH/DELETE | `/coordinator/students/:id` | COORDINATOR | delete is guarded, see §6 |
+| PATCH/DELETE | `/coordinator/students/:id` | COORDINATOR | delete is guarded, see §6. PATCH: a `course` not in `COURSES` is a 400 **unless it equals the stored value** (pre-list students keep theirs until changed) |
 | DELETE | `/coordinator/supervisors/:id` | COORDINATOR | delete is guarded, see §6 |
 | PATCH | `/coordinator/students/:id/password` · `/coordinator/supervisors/:id/password` | COORDINATOR | |
 | GET | `/coordinator/dashboard` | COORDINATOR | real aggregates |
@@ -871,6 +872,25 @@ recoverable, a half-deleted database is not.
   `SupervisorStudent` too (fixes the stale roster hours). Shared labels/variants/clock
   format: `lib/attendance.ts` (presentation only). Coordinator: supervisor delete reads
   `_count.approvedPunches`; dashboard copy says punches. Oversight unchanged.
+- **New students and establishments start ACTIVE.** Neither add form shows Status; both
+  edit forms still do. The server sets `status: 'ACTIVE'` on create and the create DTOs
+  have no `status`. `StudentStatus.PENDING` is still in the enum and the edit select but
+  nothing assigns it automatically and no dashboard counts it (the dashboard's
+  `pendingApprovals` is punches).
+- **Offered courses** — the four programmes in `COURSES` (`server/src/common/courses.ts`,
+  `client/lib/courses.ts`, deliberately duplicated like `SCHOOL_NAME`). The only course
+  list in the client; the student form reads it. Editing a student whose saved course
+  predates the list shows that value as an extra "<course> (old)" option so it isn't
+  blanked; the server accepts it only while unchanged.
+- **Bulk delete (Coordinator Students)** — checkbox column, only COMPLETED rows selectable
+  (others disabled with a tooltip); header box selects every COMPLETED row matching the
+  search + status filter across all pages; "Select all completed" switches the filter to
+  Completed and selects them; "n selected · Clear"; "Delete selected (n)" opens a danger
+  `ConfirmDialog` (now takes optional `children` and `confirmDisabled`) listing names and
+  requiring `DELETE` typed. The selection is derived against the live list, so rows that
+  vanish or leave COMPLETED drop out without an effect. Failures stay selected.
+  `bulkDeleteStudents` shares `invalidateStudentCascade` with `deleteStudent`.
+  `DataTableColumn.label` is now a `ReactNode` (for the header checkbox).
 - **Supervisor Management (Coordinator)** — create, list, password reset, and delete
   (guarded — see §6). No edit yet (§8 item 10). Table columns: name, username, email,
   establishment, position.
@@ -1018,6 +1038,10 @@ recoverable, a half-deleted database is not.
 **All three roles land on a real page after login. No role 404s.**
 
 ### Needs live verification
+
+**Revisions batch 2** (ACTIVE on create, the four courses, bulk delete). Verified
+in-process only — real controllers, global `ValidationPipe` and services against a faked
+Prisma; no live request was made (the coordinator's password is no longer `admin123`).
 
 **The attendance punch flow end to end** (student punch → supervisor approve/decline →
 re-punch → hours on every dashboard). Server reads and refusals were verified against

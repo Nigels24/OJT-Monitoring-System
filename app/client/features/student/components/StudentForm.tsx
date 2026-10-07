@@ -27,7 +27,8 @@ interface StudentFormProps {
   isUpdating: boolean;
   error: string;
   establishments: Establishment[];
-  courseOptions: string[];
+  /** The offered courses, plus an edited student's "(old)" value if any. */
+  courseOptions: { label: string; value: string }[];
   yearLevelOptions: string[];
   genderOptions: string[];
   statusOptions: StudentStatus[];
@@ -257,7 +258,7 @@ export default function StudentForm({
               value={form.course}
               onChange={setValue("course")}
               placeholder="Select Course"
-              options={courseOptions.map((c) => ({ label: c, value: c }))}
+              options={courseOptions}
               className="w-full"
             />
           </div>
@@ -317,21 +318,25 @@ export default function StudentForm({
             value={form.endDate}
             onChange={setField("endDate")}
           />
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Status
-            </label>
-            <SelectField
-              value={form.status}
-              onChange={setValue("status")}
-              placeholder="Select Status"
-              options={statusOptions.map((s) => ({
-                label: STATUS_LABEL[s],
-                value: s,
-              }))}
-              className="w-full"
-            />
-          </div>
+          {/* Edit only: a new student is always ACTIVE (set by the
+              server). COMPLETED / INACTIVE are set here later. */}
+          {editTarget && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Status
+              </label>
+              <SelectField
+                value={form.status}
+                onChange={setValue("status")}
+                placeholder="Select Status"
+                options={statusOptions.map((s) => ({
+                  label: STATUS_LABEL[s],
+                  value: s,
+                }))}
+                className="w-full"
+              />
+            </div>
+          )}
         </div>
       </section>
 

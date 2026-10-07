@@ -13,7 +13,8 @@ interface StudentEditDialogProps {
   isUpdating: boolean;
   error: string;
   establishments: Establishment[];
-  courseOptions: string[];
+  /** The offered courses, plus an edited student's "(old)" value if any. */
+  courseOptions: { label: string; value: string }[];
   yearLevelOptions: string[];
   genderOptions: string[];
   statusOptions: StudentStatus[];

@@ -14,7 +14,6 @@ interface EstablishmentInput {
   city?: string;
   province?: string;
   zipCode?: string;
-  status?: 'ACTIVE' | 'INACTIVE';
   coordinatorFirstName?: string;
   coordinatorLastName?: string;
   coordinatorMiddleInitial?: string;
@@ -26,6 +25,11 @@ interface EstablishmentInput {
   coordinatorEmail?: string;
 }
 
+/** Only an edit may change status — creation always yields ACTIVE. */
+type EstablishmentUpdate = Partial<EstablishmentInput> & {
+  status?: 'ACTIVE' | 'INACTIVE';
+};
+
 @Injectable()
 export class EstablishmentService {
   constructor(private prisma: PrismaService) {}
@@ -34,6 +38,8 @@ export class EstablishmentService {
     return this.prisma.client.establishment.create({
       data: {
         ...data,
+        // Every new establishment starts ACTIVE; the DTO has no status field.
+        status: 'ACTIVE',
         coordinatorAge:
           data.coordinatorAge != null ? Number(data.coordinatorAge) : undefined,
       },
@@ -62,7 +68,7 @@ export class EstablishmentService {
     return establishment;
   }
 
-  async update(id: string, data: Partial<EstablishmentInput>) {
+  async update(id: string, data: EstablishmentUpdate) {
     await this.findOne(id);
     return this.prisma.client.establishment.update({
       where: { id },

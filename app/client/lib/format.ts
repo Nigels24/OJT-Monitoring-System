@@ -75,6 +75,15 @@ export function deleteStudentMessage(
   );
 }
 
+/**
+ * What a bulk delete removes, per student — the same `deleteStudentCascade`
+ * the single delete runs. Messages they *received* stay with the other side.
+ */
+export const BULK_DELETE_STUDENTS_EFFECTS =
+  "their login account, every attendance record and punch, every uploaded " +
+  "document together with its stored file, every evaluation written for " +
+  "them, and every message they sent";
+
 /** Approved punches survive a supervisor's deletion — they just lose their decider. */
 export function deleteSupervisorMessage(
   name: string,

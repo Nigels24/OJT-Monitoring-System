@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { LucideIcon, HelpCircle } from "lucide-react";
 import Overlay from "./Overlay";
 
@@ -11,6 +12,10 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   icon?: LucideIcon;
   variant?: "default" | "danger";
+  /** Extra content between the message and the buttons (a list, an input). */
+  children?: ReactNode;
+  /** Holds the confirm button disabled, e.g. until a typed confirmation matches. */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -23,6 +28,8 @@ export default function ConfirmDialog({
   cancelLabel = "Cancel",
   icon: Icon = HelpCircle,
   variant = "default",
+  children,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -45,10 +52,13 @@ export default function ConfirmDialog({
         <h2 className="text-xl font-bold text-gray-800 mb-2">{title}</h2>
         <p className="text-gray-500 text-sm mb-6">{message}</p>
 
+        {children && <div className="text-left mb-6">{children}</div>}
+
         <div className="flex gap-3 justify-center">
           <button
             onClick={onConfirm}
-            className={`flex-1 h-11 rounded-lg text-white font-medium transition-colors ${confirmColor}`}
+            disabled={confirmDisabled}
+            className={`flex-1 h-11 rounded-lg text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${confirmColor}`}
           >
             {confirmLabel}
           </button>

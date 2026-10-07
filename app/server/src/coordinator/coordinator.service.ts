@@ -38,6 +38,7 @@ import {
 } from '../common/document-types';
 import { DocumentType } from '../../generated/prisma/client';
 import { SCHOOL_NAME } from '../common/school';
+import { isOfferedCourse } from '../common/courses';
 
 /** Fields the coordinator can set on a student, shared by create and update. */
 /**
@@ -167,6 +168,9 @@ export class CoordinatorService {
           studentIdNumber: data.studentIdNumber,
           school: SCHOOL_NAME,
           ...studentProfileData(data),
+          // A new student is always ACTIVE — the create DTO has no status
+          // field, and this line holds even if a caller passes one.
+          status: 'ACTIVE',
         },
       });
 
@@ -606,6 +610,19 @@ export class CoordinatorService {
       throw new NotFoundException('Student not found');
     }
 
+    // A course must be one the school offers — except that a student saved
+    // before the list existed may keep their old value, as long as this edit
+    // leaves it unchanged. Changing it means picking from the list.
+    if (
+      data.course != null &&
+      !isOfferedCourse(data.course) &&
+      data.course !== student.course
+    ) {
+      throw new BadRequestException(
+        `"${data.course}" is not an offered course`,
+      );
+    }
+
     // Name lives on User, everything else on Student.
     const fullName = buildFullName(data, null);
     if (fullName) {
@@ -851,13 +868,90 @@ export class CoordinatorService {
       (tx) => deleteStudentCascade(tx, studentId, student.userId),
       CASCADE_TRANSACTION_OPTIONS,
     );
+    await this.deleteStudentFiles(studentId, orphanedFiles);
 
-    // Supabase Storage is not part of the transaction, so the objects go only
-    // after the commit. A leftover file is recoverable; a half-deleted
-    // database is not — so a storage failure is logged and the delete still
-    // reports success.
+    return { id: studentId, deleted: true };
+  }
+
+  /**
+   * Deletes several students who have finished their OJT.
+   *
+   * Validation is all-or-nothing: every id must exist and be COMPLETED, or the
+   * whole request is a 400 naming the offenders and nothing is deleted. Past
+   * that, each student is the same `deleteStudentCascade` the single delete
+   * runs, in **its own** transaction — so one failure rolls back only that
+   * student and is reported in `failed`, rather than undoing the rest.
+   * Sequential, not `Promise.all`: each transaction is a pooled connection,
+   * and a hundred of them at once would exhaust the pool.
+   */
+  async bulkRemoveStudents(rawIds: string[]) {
+    const ids = [...new Set(rawIds)];
+    const students = await this.prisma.client.student.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, userId: true, status: true },
+    });
+    const byId = new Map(students.map((s) => [s.id, s]));
+
+    const offenders = ids.flatMap((id) => {
+      const student = byId.get(id);
+      if (!student) return [{ id, reason: 'Student not found' }];
+      if (student.status !== 'COMPLETED') {
+        return [{ id, reason: `Status is ${student.status}, not COMPLETED` }];
+      }
+      return [];
+    });
+    if (offenders.length > 0) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        message:
+          'Only students who completed OJT can be bulk deleted. Nothing was deleted. ' +
+          offenders.map((o) => `${o.id}: ${o.reason}`).join('; '),
+        offenders,
+      });
+    }
+
+    const deleted: string[] = [];
+    const failed: { id: string; reason: string }[] = [];
+    for (const id of ids) {
+      const { userId } = byId.get(id)!;
+      try {
+        const orphanedFiles = await this.prisma.client.$transaction(
+          async (tx) => {
+            // Re-checked inside the transaction: the status could have been
+            // edited between the validation above and this student's turn.
+            const current = await tx.student.findUnique({
+              where: { id },
+              select: { status: true },
+            });
+            if (current?.status !== 'COMPLETED') {
+              throw new Error('No longer COMPLETED');
+            }
+            return deleteStudentCascade(tx, id, userId);
+          },
+          CASCADE_TRANSACTION_OPTIONS,
+        );
+        deleted.push(id);
+        await this.deleteStudentFiles(id, orphanedFiles);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Bulk delete of student ${id} failed: ${reason}`);
+        failed.push({ id, reason });
+      }
+    }
+
+    return { deleted, failed };
+  }
+
+  /**
+   * Supabase Storage is not part of the transaction, so a deleted student's
+   * objects go only after the commit. A leftover file is recoverable; a
+   * half-deleted database is not — so a storage failure is logged and the
+   * delete still reports success. Never throws.
+   */
+  private async deleteStudentFiles(studentId: string, paths: string[]) {
     await Promise.all(
-      orphanedFiles.map(async (path) => {
+      paths.map(async (path) => {
         try {
           await deleteFile(path);
         } catch (err) {
@@ -868,8 +962,6 @@ export class CoordinatorService {
         }
       }),
     );
-
-    return { id: studentId, deleted: true };
   }
 
   /**

@@ -15,6 +15,9 @@ import archiver from 'archiver';
 import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
 import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  IsArray,
   IsDateString,
   IsEmail,
   IsIn,
@@ -37,6 +40,7 @@ import {
   ToOptionalNumber,
 } from '../common/transforms';
 import { attachmentDisposition } from '../common/document-types';
+import { COURSES } from '../common/courses';
 
 // Usernames must not contain "@" so they can never shadow an email address
 // when AuthService.login matches an identifier against both columns.
@@ -78,8 +82,9 @@ class StudentDetailsDto {
   // The nullable columns below use EmptyToNull, not EmptyToUndefined: on an
   // edit, emptying a box has to persist as cleared rather than silently keep
   // the old value. Absent from the body still means "leave unchanged".
-  // `requiredHours` and `status` stay on the undefined-based transforms — they
-  // are NOT NULL, so null there is a write error, not a clear.
+  // `requiredHours` (and `status`, on UpdateStudentDto) stay on the
+  // undefined-based transforms — they are NOT NULL, so null there is a write
+  // error, not a clear.
   @IsOptional()
   @EmptyToNull()
   @IsString()
@@ -130,11 +135,8 @@ class StudentDetailsDto {
   @MaxLength(255)
   address?: string | null;
 
-  @IsOptional()
-  @EmptyToNull()
-  @IsString()
-  @MaxLength(120)
-  course?: string | null;
+  // `course` is declared on CreateStudentDto and UpdateStudentDto, not here:
+  // the two validate it differently.
 
   @IsOptional()
   @EmptyToNull()
@@ -180,13 +182,18 @@ class StudentDetailsDto {
   @EmptyToNull()
   @IsIn(['Male', 'Female', 'Other'])
   gender?: string | null;
-
-  @IsOptional()
-  @IsIn(['ACTIVE', 'PENDING', 'COMPLETED', 'INACTIVE'])
-  status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
 }
 
+// No `status`: a new student is always ACTIVE (the service sets it), so a
+// create body carrying one is a 400 under forbidNonWhitelisted. COMPLETED and
+// INACTIVE are set later, by an edit.
 class CreateStudentDto extends StudentDetailsDto {
+  // A new student's course must be one the school offers. Blank is allowed.
+  @IsOptional()
+  @EmptyToNull()
+  @IsIn(COURSES, { message: `course must be one of: ${COURSES.join('; ')}` })
+  course?: string | null;
+
   @IsEmail()
   email!: string;
 
@@ -213,7 +220,29 @@ class CreateStudentDto extends StudentDetailsDto {
   studentIdNumber!: string;
 }
 
-class UpdateStudentDto extends StudentDetailsDto {}
+class UpdateStudentDto extends StudentDetailsDto {
+  // Only a string check: a student saved before the offered list existed may
+  // keep their old course, which CoordinatorService.updateStudent allows only
+  // while it is unchanged — any new value must be on the list.
+  @IsOptional()
+  @EmptyToNull()
+  @IsString()
+  @MaxLength(120)
+  course?: string | null;
+
+  @IsOptional()
+  @IsIn(['ACTIVE', 'PENDING', 'COMPLETED', 'INACTIVE'])
+  status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
+}
+
+class BulkDeleteStudentsDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  ids!: string[];
+}
 
 class ResetPasswordDto {
   @IsString()
@@ -361,6 +390,16 @@ export class CoordinatorController {
   @Delete('students/:id')
   removeStudent(@Param('id') id: string) {
     return this.coordinatorService.removeStudent(id);
+  }
+
+  /**
+   * Deletes students who finished their OJT, in one request. All-or-nothing
+   * on validation (every id must exist and be COMPLETED, else 400 and nothing
+   * is deleted); each student then goes in its own transaction.
+   */
+  @Post('students/bulk-delete')
+  bulkRemoveStudents(@Body() dto: BulkDeleteStudentsDto) {
+    return this.coordinatorService.bulkRemoveStudents(dto.ids);
   }
 
   // Recovery for a forgotten password. No current password required — see

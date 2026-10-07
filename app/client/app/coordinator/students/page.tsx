@@ -8,6 +8,7 @@ import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Button from "@/components/ui/Button";
+import TextField from "@/components/ui/TextField";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import {
   Users,
@@ -16,13 +17,19 @@ import {
   Clock,
   UserCheck,
 } from "lucide-react";
-import { useStudents } from "@/features/student/hooks/use-students";
+import {
+  useStudents,
+  BULK_DELETE_CONFIRM_WORD,
+} from "@/features/student/hooks/use-students";
 import type { Student } from "@/lib/api/studentApi";
 import StudentList from "@/features/student/components/StudentList";
 import StudentViewDialog from "@/features/student/components/StudentViewDialog";
 import StudentEditDialog from "@/features/student/components/StudentEditDialog";
 import ResetPasswordDialog from "@/features/student/components/ResetPasswordDialog";
-import { deleteStudentMessage } from "@/lib/format";
+import {
+  BULK_DELETE_STUDENTS_EFFECTS,
+  deleteStudentMessage,
+} from "@/lib/format";
 
 
 export default function StudentManagementPage() {
@@ -45,7 +52,7 @@ export default function StudentManagementPage() {
     paged,
     totalPages,
     stats,
-    COURSE_OPTIONS,
+    courseOptions,
     YEAR_LEVEL_OPTIONS,
     GENDER_OPTIONS,
     STATUS_OPTIONS,
@@ -61,6 +68,22 @@ export default function StudentManagementPage() {
     handleEdit,
     handleOpenAddDialog,
     closeDialog,
+    selectedIds,
+    selectedStudents,
+    selectableFilteredCount,
+    allFilteredSelected,
+    someFilteredSelected,
+    isBulkDeleteOpen,
+    isBulkDeleting,
+    bulkConfirmText,
+    setBulkConfirmText,
+    toggleSelected,
+    toggleSelectAllFiltered,
+    selectAllCompleted,
+    clearSelection,
+    openBulkDelete,
+    closeBulkDelete,
+    handleBulkDeleteConfirm,
   } = useStudents();
 
   return (
@@ -136,6 +159,16 @@ export default function StudentManagementPage() {
             onResetPassword={(student) => {
               setResetTarget(student);
             }}
+            selectedIds={selectedIds}
+            selectedCount={selectedStudents.length}
+            selectableFilteredCount={selectableFilteredCount}
+            allFilteredSelected={allFilteredSelected}
+            someFilteredSelected={someFilteredSelected}
+            onToggleSelected={toggleSelected}
+            onToggleSelectAllFiltered={toggleSelectAllFiltered}
+            onSelectAllCompleted={selectAllCompleted}
+            onClearSelection={clearSelection}
+            onBulkDelete={openBulkDelete}
           />
         </Card>
       </main>
@@ -160,6 +193,41 @@ export default function StudentManagementPage() {
         }}
       />
 
+      <ConfirmDialog
+        open={isBulkDeleteOpen}
+        title={`Delete ${selectedStudents.length} ${
+          selectedStudents.length === 1 ? "student" : "students"
+        }?`}
+        message={`This permanently removes, for each student below, ${BULK_DELETE_STUDENTS_EFFECTS}. This cannot be undone.`}
+        confirmLabel={isBulkDeleting ? "Deleting..." : "Delete permanently"}
+        variant="danger"
+        confirmDisabled={
+          isBulkDeleting || bulkConfirmText !== BULK_DELETE_CONFIRM_WORD
+        }
+        onConfirm={handleBulkDeleteConfirm}
+        onCancel={closeBulkDelete}
+      >
+        <ul className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100 text-sm text-gray-700 mb-4">
+          {selectedStudents.map((s) => (
+            <li key={s.id} className="px-3 py-1.5">
+              <span className="font-medium">{s.user.name}</span>{" "}
+              <span className="text-xs text-gray-500 font-mono">
+                {s.studentIdNumber}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <TextField
+          label={`Type ${BULK_DELETE_CONFIRM_WORD} to confirm`}
+          value={bulkConfirmText}
+          onChange={(e) => {
+            setBulkConfirmText(e.target.value);
+          }}
+          placeholder={BULK_DELETE_CONFIRM_WORD}
+          autoComplete="off"
+        />
+      </ConfirmDialog>
+
       <StudentViewDialog
         open={!!viewTarget}
         student={viewTarget}
@@ -176,7 +244,7 @@ export default function StudentManagementPage() {
         isUpdating={isUpdating}
         error={error}
         establishments={establishments || []}
-        courseOptions={COURSE_OPTIONS}
+        courseOptions={courseOptions}
         yearLevelOptions={YEAR_LEVEL_OPTIONS}
         genderOptions={GENDER_OPTIONS}
         statusOptions={STATUS_OPTIONS}

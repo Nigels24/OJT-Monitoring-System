@@ -44,7 +44,6 @@ export interface CreateEstablishmentRequest {
   city?: string;
   province?: string;
   zipCode?: string;
-  status?: "ACTIVE" | "INACTIVE";
   coordinatorFirstName?: string;
   coordinatorLastName?: string;
   coordinatorMiddleInitial?: string;
@@ -56,7 +55,13 @@ export interface CreateEstablishmentRequest {
   coordinatorEmail?: string;
 }
 
-export type UpdateEstablishmentRequest = Partial<CreateEstablishmentRequest>;
+/**
+ * Status is edit-only: a new establishment is always ACTIVE, and the server
+ * rejects a create body that carries one.
+ */
+export type UpdateEstablishmentRequest = Partial<CreateEstablishmentRequest> & {
+  status?: "ACTIVE" | "INACTIVE";
+};
 
 export const establishmentApi = createApi({
   reducerPath: "establishmentApi",

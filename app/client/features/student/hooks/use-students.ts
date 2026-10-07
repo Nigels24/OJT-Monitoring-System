@@ -4,21 +4,16 @@ import {
   useCreateStudentMutation,
   useUpdateStudentMutation,
   useDeleteStudentMutation,
+  useBulkDeleteStudentsMutation,
   Student,
   StudentStatus,
 } from "@/lib/api/studentApi";
 import { useGetEstablishmentsQuery } from "@/lib/api/establishmentApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
+import { COURSES, isOfferedCourse } from "@/lib/courses";
 
-export const COURSE_OPTIONS = [
-  "BS Information Technology",
-  "BS Computer Science",
-  "BS Accountancy",
-  "BS Business Administration",
-  "BS Hospitality Management",
-  "BS Tourism Management",
-  "Associate in Computer Science",
-];
+/** The word the coordinator types to arm the bulk-delete button. */
+export const BULK_DELETE_CONFIRM_WORD = "DELETE";
 
 export const YEAR_LEVEL_OPTIONS = [
   "1st Year",
@@ -56,6 +51,7 @@ const EMPTY_FORM = {
   requiredHours: "",
   startDate: "",
   endDate: "",
+  // Only sent on an edit — a new student is always ACTIVE server-side.
   status: "ACTIVE" as StudentStatus,
 };
 
@@ -73,6 +69,9 @@ export function useStudents() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StudentStatus | "">("");
   const [page, setPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
+  const [bulkConfirmText, setBulkConfirmText] = useState("");
 
   const { showSuccess, showError } = useSnackbar();
 
@@ -81,6 +80,8 @@ export function useStudents() {
   const [createStudent, { isLoading: isCreating }] = useCreateStudentMutation();
   const [updateStudent, { isLoading: isUpdating }] = useUpdateStudentMutation();
   const [deleteStudent] = useDeleteStudentMutation();
+  const [bulkDeleteStudents, { isLoading: isBulkDeleting }] =
+    useBulkDeleteStudentsMutation();
 
   const setField =
     (key: keyof StudentForm) =>
@@ -113,7 +114,6 @@ export function useStudents() {
     requiredHours: form.requiredHours ? Number(form.requiredHours) : undefined,
     startDate: form.startDate ? new Date(form.startDate).toISOString() : null,
     endDate: form.endDate ? new Date(form.endDate).toISOString() : null,
-    status: form.status,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -125,6 +125,7 @@ export function useStudents() {
         await updateStudent({
           id: editTarget.id,
           ...detailsPayload(),
+          status: form.status,
         }).unwrap();
         showSuccess(`"${form.firstName} ${form.lastName}" has been updated.`);
       } else {
@@ -211,10 +212,11 @@ export function useStudents() {
     setError("");
   };
 
-  const filtered = useMemo(() => {
+  // Search alone, before the status filter — "Select all completed" picks
+  // from this, so it works whichever status the filter currently shows.
+  const searchMatches = useMemo(() => {
     const term = search.toLowerCase();
     return (students ?? []).filter((s) => {
-      const matchesStatus = !statusFilter || s.status === statusFilter;
       const haystack = [
         s.studentIdNumber,
         s.user.name,
@@ -225,9 +227,131 @@ export function useStudents() {
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
-      return matchesStatus && haystack.includes(term);
+      return haystack.includes(term);
     });
-  }, [students, search, statusFilter]);
+  }, [students, search]);
+
+  const filtered = useMemo(
+    () =>
+      searchMatches.filter((s) => !statusFilter || s.status === statusFilter),
+    [searchMatches, statusFilter],
+  );
+
+  /**
+   * The edit form's course options: the offered list, plus — only when the
+   * student being edited still carries a course from before the list existed
+   * — that old value marked "(old)", so opening the dialog doesn't silently
+   * blank it. The server accepts the old value only while it is unchanged.
+   */
+  const courseOptions = useMemo(() => {
+    const options: { label: string; value: string }[] = COURSES.map((c) => ({
+      label: c,
+      value: c,
+    }));
+    const saved = editTarget?.course;
+    if (saved && !isOfferedCourse(saved)) {
+      options.push({ label: `${saved} (old)`, value: saved });
+    }
+    return options;
+  }, [editTarget]);
+
+  // ── Bulk delete ────────────────────────────────────────────────────────
+  // Only COMPLETED students are selectable. The selection is derived against
+  // the live list on every render, so a student deleted elsewhere, or edited
+  // away from COMPLETED, simply drops out of it — no effect to prune it.
+  const selectedStudents = useMemo(
+    () =>
+      (students ?? []).filter(
+        (s) => selectedIds.has(s.id) && s.status === "COMPLETED",
+      ),
+    [students, selectedIds],
+  );
+  const selectableFiltered = useMemo(
+    () => filtered.filter((s) => s.status === "COMPLETED"),
+    [filtered],
+  );
+  const allFilteredSelected =
+    selectableFiltered.length > 0 &&
+    selectableFiltered.every((s) => selectedIds.has(s.id));
+  const someFilteredSelected =
+    !allFilteredSelected && selectableFiltered.some((s) => selectedIds.has(s.id));
+
+  const toggleSelected = (student: Student) => {
+    if (student.status !== "COMPLETED") return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(student.id)) next.delete(student.id);
+      else next.add(student.id);
+      return next;
+    });
+  };
+
+  /** Header checkbox: every selectable row matching the filters, all pages. */
+  const toggleSelectAllFiltered = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        selectableFiltered.forEach((s) => next.delete(s.id));
+      } else {
+        selectableFiltered.forEach((s) => next.add(s.id));
+      }
+      return next;
+    });
+  };
+
+  const selectAllCompleted = () => {
+    setStatusFilter("COMPLETED");
+    setPage(1);
+    setSelectedIds(
+      new Set(
+        searchMatches.filter((s) => s.status === "COMPLETED").map((s) => s.id),
+      ),
+    );
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+  };
+
+  const openBulkDelete = () => {
+    if (selectedStudents.length === 0) return;
+    setBulkConfirmText("");
+    setIsBulkDeleteOpen(true);
+  };
+
+  const closeBulkDelete = () => {
+    setIsBulkDeleteOpen(false);
+    setBulkConfirmText("");
+  };
+
+  const handleBulkDeleteConfirm = async () => {
+    if (bulkConfirmText !== BULK_DELETE_CONFIRM_WORD) return;
+    const ids = selectedStudents.map((s) => s.id);
+    if (ids.length === 0) return;
+    try {
+      const result = await bulkDeleteStudents(ids).unwrap();
+      const n = result.deleted.length;
+      if (n > 0) {
+        showSuccess(`${n} ${n === 1 ? "student" : "students"} deleted`);
+      }
+      if (result.failed.length > 0) {
+        const names = result.failed
+          .map(
+            (f) =>
+              (students ?? []).find((s) => s.id === f.id)?.user.name ?? f.id,
+          )
+          .join(", ");
+        showError(
+          `${result.failed.length} could not be deleted: ${names}. They are still selected.`,
+        );
+      }
+      // Keep only the failures selected, so a retry is one click away.
+      setSelectedIds(new Set(result.failed.map((f) => f.id)));
+      closeBulkDelete();
+    } catch (err: unknown) {
+      showError(readError(err, "Failed to delete the selected students."));
+    }
+  };
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -263,8 +387,25 @@ export function useStudents() {
     totalPages,
     filtered,
     stats,
+    courseOptions,
 
-    COURSE_OPTIONS,
+    selectedIds,
+    selectedStudents,
+    selectableFilteredCount: selectableFiltered.length,
+    allFilteredSelected,
+    someFilteredSelected,
+    isBulkDeleteOpen,
+    isBulkDeleting,
+    bulkConfirmText,
+    setBulkConfirmText,
+    toggleSelected,
+    toggleSelectAllFiltered,
+    selectAllCompleted,
+    clearSelection,
+    openBulkDelete,
+    closeBulkDelete,
+    handleBulkDeleteConfirm,
+
     YEAR_LEVEL_OPTIONS,
     GENDER_OPTIONS,
     STATUS_OPTIONS,

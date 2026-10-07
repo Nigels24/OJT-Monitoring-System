@@ -190,7 +190,7 @@ export function useEstablishment() {
           city: form.city || undefined,
           province: form.province || undefined,
           zipCode: form.zipCode || undefined,
-          status: form.status,
+          // No status: a new establishment is always ACTIVE server-side.
           coordinatorFirstName: form.coordinatorFirstName || undefined,
           coordinatorLastName: form.coordinatorLastName || undefined,
           coordinatorMiddleInitial: form.coordinatorMiddleInitial || undefined,
