@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { getStoredUser, type StoredUser } from "@/lib/auth";
+import { SESSION_EVENT, getStoredUser, type StoredUser } from "@/lib/auth";
 
 /**
  * The signed-in user, read from localStorage.
@@ -28,10 +28,13 @@ function getServerSnapshot(): StoredUser | null {
 }
 
 function subscribe(onChange: () => void) {
-  // Fires when another tab logs in or out, so the sidebar name stays honest.
+  // `storage` fires when another tab logs in or out, so the sidebar name stays
+  // honest; SESSION_EVENT covers writes made by this tab (lib/auth.ts).
   window.addEventListener("storage", onChange);
+  window.addEventListener(SESSION_EVENT, onChange);
   return () => {
     window.removeEventListener("storage", onChange);
+    window.removeEventListener(SESSION_EVENT, onChange);
   };
 }
 

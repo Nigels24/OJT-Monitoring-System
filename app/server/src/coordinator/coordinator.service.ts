@@ -39,6 +39,12 @@ import {
 import { DocumentType } from '../../generated/prisma/client';
 import { SCHOOL_NAME } from '../common/school';
 import { deriveFromCourse } from '../common/courses';
+import {
+  createWithGeneratedUsername,
+  generatePassword,
+  usernameBase,
+} from '../common/credentials';
+import { findTakenUsernames, isUsernameClash } from '../common/accounts';
 
 /** Fields the coordinator can set on a student, shared by create and update. */
 /**
@@ -65,63 +71,96 @@ interface StudentDetails {
   status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
 }
 
+/** The login fields "Resend login" needs — never `password`. */
+const ACCOUNT_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  username: true,
+} as const;
+
 @Injectable()
 export class CoordinatorService {
   private readonly logger = new Logger(CoordinatorService.name);
 
   constructor(private prisma: PrismaService) {}
 
-  /** Rejects an email or username already claimed by another account. */
-  private async assertCredentialsAvailable(email: string, username: string) {
-    const clash = await this.prisma.client.user.findFirst({
-      where: { OR: [{ email }, { username }] },
-      select: { email: true, username: true },
+  /** Rejects an email already claimed by another account. */
+  private async assertEmailAvailable(email: string) {
+    const clash = await this.prisma.client.user.findUnique({
+      where: { email },
+      select: { id: true },
     });
-    if (!clash) return;
-    throw new ConflictException(
-      clash.email === email ? 'Email already in use' : 'Username already taken',
+    if (clash) {
+      throw new ConflictException('Email already in use');
+    }
+  }
+
+  /**
+   * Creates a login with a generated username and temporary password.
+   *
+   * `create` receives the chosen username and the password *hash*; the
+   * plaintext never reaches Prisma, so no Prisma error (which can echo its
+   * arguments) can carry it. It leaves here only inside `credentials`, which
+   * the controller returns as the one response that ever shows it.
+   */
+  private async issueNewAccount<T extends { username: string | null }>(
+    firstName: string,
+    lastName: string,
+    create: (username: string, passwordHash: string) => Promise<T>,
+  ) {
+    const tempPassword = generatePassword();
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const user = await createWithGeneratedUsername(
+      usernameBase(firstName, lastName),
+      (base) => findTakenUsernames(this.prisma.client, base),
+      (username) => create(username, passwordHash),
+      isUsernameClash,
     );
+    return { user, credentials: { username: user.username, tempPassword } };
   }
 
   async createSupervisor(data: {
     email: string;
-    username: string;
-    password: string;
-    name: string;
+    firstName: string;
+    middleInitial?: string;
+    lastName: string;
     establishmentId: string;
     position?: string;
   }) {
-    await this.assertCredentialsAvailable(data.email, data.username);
+    await this.assertEmailAvailable(data.email);
 
-    const hashedPassword = await bcrypt.hash(data.password, 10);
-
-    const user = await this.prisma.client.user.create({
-      data: {
-        email: data.email,
-        username: data.username,
-        password: hashedPassword,
-        name: data.name,
-        role: 'SUPERVISOR',
-        supervisorProfile: {
-          create: {
-            establishmentId: data.establishmentId,
-            position: data.position,
+    const { user, credentials } = await this.issueNewAccount(
+      data.firstName,
+      data.lastName,
+      (username, passwordHash) =>
+        this.prisma.client.user.create({
+          data: {
+            email: data.email,
+            username,
+            password: passwordHash,
+            mustChangePassword: true,
+            name: buildFullName(data) ?? data.lastName,
+            role: 'SUPERVISOR',
+            supervisorProfile: {
+              create: {
+                establishmentId: data.establishmentId,
+                position: data.position,
+              },
+            },
           },
-        },
-      },
-      include: { supervisorProfile: true },
-    });
+          include: { supervisorProfile: true },
+        }),
+    );
 
     const { password, ...result } = user;
-    return result;
+    return { ...result, credentials };
   }
 
   async createStudent(
     data: StudentDetails & {
       course: string;
       email: string;
-      username: string;
-      password: string;
       studentIdNumber: string;
     },
   ) {
@@ -135,7 +174,15 @@ export class CoordinatorService {
       );
     }
 
-    await this.assertCredentialsAvailable(data.email, data.username);
+    // Required here rather than in the DTO, which the edit form shares: the
+    // generated username is built from these two.
+    const firstName = data.firstName?.trim();
+    const lastName = data.lastName?.trim();
+    if (!firstName || !lastName) {
+      throw new BadRequestException('firstName and lastName are required');
+    }
+
+    await this.assertEmailAvailable(data.email);
 
     const idTaken = await this.prisma.client.student.findUnique({
       where: { studentIdNumber: data.studentIdNumber },
@@ -146,51 +193,51 @@ export class CoordinatorService {
       );
     }
 
-    const fullName = buildFullName(data);
-    if (!fullName) {
-      throw new BadRequestException(
-        'Provide either firstName and lastName, or name',
-      );
-    }
+    const fullName = buildFullName(data) as string;
 
-    const hashedPassword = await bcrypt.hash(data.password, 10);
+    const { user, credentials } = await this.issueNewAccount(
+      firstName,
+      lastName,
+      // User and Student are separate rows. Without a transaction a failure on
+      // the second write would leave a login with no profile, which every
+      // /student/* endpoint then rejects with "Student profile not found". A
+      // username race (P2002) rolls the whole transaction back and is retried.
+      (username, passwordHash) =>
+        this.prisma.client.$transaction(async (tx) => {
+          const created = await tx.user.create({
+            data: {
+              email: data.email,
+              username,
+              password: passwordHash,
+              mustChangePassword: true,
+              name: fullName,
+              role: 'STUDENT',
+            },
+          });
 
-    // User and Student are separate rows. Without a transaction a failure on
-    // the second write would leave a login with no profile, which every
-    // /student/* endpoint then rejects with "Student profile not found".
-    const user = await this.prisma.client.$transaction(async (tx) => {
-      const created = await tx.user.create({
-        data: {
-          email: data.email,
-          username: data.username,
-          password: hashedPassword,
-          name: fullName,
-          role: 'STUDENT',
-        },
-      });
+          await tx.student.create({
+            data: {
+              userId: created.id,
+              studentIdNumber: data.studentIdNumber,
+              school: SCHOOL_NAME,
+              ...studentProfileData(data),
+              yearLevel: derived.yearLevel,
+              requiredHours: derived.requiredHours,
+              // A new student is always ACTIVE — the create DTO has no status
+              // field, and this line holds even if a caller passes one.
+              status: 'ACTIVE',
+            },
+          });
 
-      await tx.student.create({
-        data: {
-          userId: created.id,
-          studentIdNumber: data.studentIdNumber,
-          school: SCHOOL_NAME,
-          ...studentProfileData(data),
-          yearLevel: derived.yearLevel,
-          requiredHours: derived.requiredHours,
-          // A new student is always ACTIVE — the create DTO has no status
-          // field, and this line holds even if a caller passes one.
-          status: 'ACTIVE',
-        },
-      });
-
-      return tx.user.findUniqueOrThrow({
-        where: { id: created.id },
-        include: { studentProfile: true },
-      });
-    });
+          return tx.user.findUniqueOrThrow({
+            where: { id: created.id },
+            include: { studentProfile: true },
+          });
+        }),
+    );
 
     const { password, ...result } = user;
-    return result;
+    return { ...result, credentials };
   }
 
   async listStudents() {
@@ -659,59 +706,62 @@ export class CoordinatorService {
   }
 
   /**
-   * Issues a new password for a student or supervisor.
+   * "Resend login" for a student or supervisor: a new generated password,
+   * shown once in the response, and a forced change at next sign-in.
    *
-   * This is the recovery path: there is no email infrastructure, so a user who
-   * forgets their password asks the coordinator, who sets a new one and passes
-   * it on — the same way the account was issued in the first place.
+   * This is the recovery path for a forgotten password. It replaced the old
+   * reset, where the coordinator typed the new password: generating it keeps
+   * the coordinator from choosing (and so knowing) a password the user keeps,
+   * since the flag makes the user replace it on first use. It stops at
+   * COORDINATOR accounts, which only the CLI can reset.
    *
-   * Deliberately does NOT require the old password: the whole point is that it
-   * is unknown. That means a coordinator can set any student's or supervisor's
-   * password and sign in as them; that authority is inherent to a system where
-   * the coordinator issues every credential, and it stops at COORDINATOR
-   * accounts, which only the CLI can reset.
+   * The username is never regenerated. An account from before usernames
+   * existed (`username: null`) keeps signing in with its email, which the
+   * response includes for that case.
    */
-  async resetStudentPassword(studentId: string, password: string) {
+  async resendStudentCredentials(studentId: string) {
     const student = await this.prisma.client.student.findUnique({
       where: { id: studentId },
-      include: { user: { select: { id: true, name: true, username: true } } },
+      select: { id: true, user: { select: ACCOUNT_SELECT } },
     });
     if (!student) {
       throw new NotFoundException('Student not found');
     }
-
-    await this.prisma.client.user.update({
-      where: { id: student.userId },
-      data: { password: await bcrypt.hash(password, 10) },
-    });
-
-    return {
-      id: student.id,
-      name: student.user.name,
-      username: student.user.username,
-      passwordReset: true,
-    };
+    return { id: student.id, ...(await this.reissuePassword(student.user)) };
   }
 
-  async resetSupervisorPassword(supervisorId: string, password: string) {
+  async resendSupervisorCredentials(supervisorId: string) {
     const supervisor = await this.prisma.client.supervisor.findUnique({
       where: { id: supervisorId },
-      include: { user: { select: { id: true, name: true, username: true } } },
+      select: { id: true, user: { select: ACCOUNT_SELECT } },
     });
     if (!supervisor) {
       throw new NotFoundException('Supervisor not found');
     }
-
-    await this.prisma.client.user.update({
-      where: { id: supervisor.userId },
-      data: { password: await bcrypt.hash(password, 10) },
-    });
-
     return {
       id: supervisor.id,
-      name: supervisor.user.name,
-      username: supervisor.user.username,
-      passwordReset: true,
+      ...(await this.reissuePassword(supervisor.user)),
+    };
+  }
+
+  private async reissuePassword(user: {
+    id: string;
+    name: string;
+    email: string;
+    username: string | null;
+  }) {
+    const tempPassword = generatePassword();
+    await this.prisma.client.user.update({
+      where: { id: user.id },
+      data: {
+        password: await bcrypt.hash(tempPassword, 10),
+        mustChangePassword: true,
+      },
+    });
+    return {
+      name: user.name,
+      email: user.email,
+      credentials: { username: user.username, tempPassword },
     };
   }
 

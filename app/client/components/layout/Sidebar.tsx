@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { clearSession } from "@/lib/auth";
+import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import ChangePasswordDialog from "@/features/account/ChangePasswordDialog";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { Z_LAYERS } from "@/components/ui/Overlay";
@@ -45,6 +46,10 @@ export default function Sidebar({
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const { conversationCount } = useUnreadCount();
+  // A system-generated password must be replaced before anything else. Every
+  // role page renders this Sidebar, so mounting the forced dialog here covers
+  // all of them; the server refuses every other request meanwhile.
+  const mustChangePassword = !!useCurrentUser()?.mustChangePassword;
 
   const handleLogout = () => {
     // Always clear first. `proxy.ts` trusts the role cookie for routing, so a
@@ -154,7 +159,9 @@ export default function Sidebar({
       </div>
 
       <ChangePasswordDialog
-        open={passwordDialogOpen}
+        open={passwordDialogOpen || mustChangePassword}
+        forced={mustChangePassword}
+        onLogout={handleLogout}
         onClose={() => {
           setPasswordDialogOpen(false);
         }}

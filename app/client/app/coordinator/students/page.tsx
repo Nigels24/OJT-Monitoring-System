@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import Sidebar from "@/components/layout/Sidebar";
 import { COORDINATOR_NAV } from "@/features/coordinator/nav";
 import PageHeader from "@/components/ui/PageHeader";
@@ -16,16 +15,16 @@ import {
   CheckCircle2,
   Clock,
   UserCheck,
+  KeyRound,
 } from "lucide-react";
 import {
   useStudents,
   BULK_DELETE_CONFIRM_WORD,
 } from "@/features/student/hooks/use-students";
-import type { Student } from "@/lib/api/studentApi";
 import StudentList from "@/features/student/components/StudentList";
 import StudentViewDialog from "@/features/student/components/StudentViewDialog";
 import StudentEditDialog from "@/features/student/components/StudentEditDialog";
-import ResetPasswordDialog from "@/features/student/components/ResetPasswordDialog";
+import CredentialsDialog from "@/features/account/CredentialsDialog";
 import {
   BULK_DELETE_STUDENTS_EFFECTS,
   deleteStudentMessage,
@@ -34,7 +33,6 @@ import {
 
 export default function StudentManagementPage() {
   const currentUser = useCurrentUser();
-  const [resetTarget, setResetTarget] = useState<Student | null>(null);
   const {
     form,
     error,
@@ -55,6 +53,12 @@ export default function StudentManagementPage() {
     courseOptions,
     placement,
     STATUS_OPTIONS,
+    resendTarget,
+    setResendTarget,
+    isResending,
+    handleResendConfirm,
+    issuedCredentials,
+    closeIssuedCredentials,
     setField,
     setSearch,
     setStatusFilter,
@@ -155,8 +159,8 @@ export default function StudentManagementPage() {
             onDelete={(student) => {
               setDeleteTarget(student);
             }}
-            onResetPassword={(student) => {
-              setResetTarget(student);
+            onResendLogin={(student) => {
+              setResendTarget(student);
             }}
             selectedIds={selectedIds}
             selectedCount={selectedStudents.length}
@@ -251,11 +255,26 @@ export default function StudentManagementPage() {
         onClose={closeDialog}
       />
 
-      <ResetPasswordDialog
-        student={resetTarget}
-        onClose={() => {
-          setResetTarget(null);
+      <ConfirmDialog
+        open={!!resendTarget}
+        title="Resend login?"
+        message={
+          resendTarget
+            ? `This generates a new temporary password for ${resendTarget.user.name} and stops their current password from working. They must choose a new one when they next sign in.`
+            : ""
+        }
+        confirmLabel={isResending ? "Generating..." : "Yes, issue a new login"}
+        confirmDisabled={isResending}
+        icon={KeyRound}
+        onConfirm={handleResendConfirm}
+        onCancel={() => {
+          setResendTarget(null);
         }}
+      />
+
+      <CredentialsDialog
+        credentials={issuedCredentials}
+        onDone={closeIssuedCredentials}
       />
     </div>
   );

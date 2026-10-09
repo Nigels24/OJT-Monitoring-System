@@ -6,6 +6,26 @@ export interface StoredUser {
   username: string | null;
   name: string;
   role: UserRole;
+  /**
+   * The password was system-generated (new account, or "Resend login") and
+   * must be changed before anything else: the Sidebar then shows the
+   * change-password dialog in forced mode. Optional because a session stored
+   * before the flag existed has no such key — that reads as false.
+   */
+  mustChangePassword?: boolean;
+}
+
+/**
+ * Fired on `window` whenever this tab changes the stored session.
+ *
+ * The browser's own `storage` event only fires in *other* tabs, so without
+ * this a same-tab write — the forced flag being set by `baseQuery`, or cleared
+ * after the change — would never reach `useCurrentUser`.
+ */
+export const SESSION_EVENT = "ojt-session";
+
+function notifySessionChange() {
+  window.dispatchEvent(new Event(SESSION_EVENT));
 }
 
 /**
@@ -53,12 +73,29 @@ export function persistSession(token: string, user: StoredUser) {
   localStorage.setItem("token", token);
   localStorage.setItem("user", JSON.stringify(user));
   document.cookie = `${ROLE_COOKIE}=${user.role}; path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}; SameSite=Lax`;
+  notifySessionChange();
 }
 
 export function clearSession() {
   localStorage.removeItem("token");
   localStorage.removeItem("user");
   document.cookie = `${ROLE_COOKIE}=; path=/; Max-Age=0; SameSite=Lax`;
+  notifySessionChange();
+}
+
+/**
+ * Marks the stored session as needing a password change, e.g. when the server
+ * answers 403 PASSWORD_CHANGE_REQUIRED to a session stored before the flag
+ * was known. A no-op if already set, so a burst of 403s notifies once.
+ */
+export function markPasswordChangeRequired() {
+  const user = getStoredUser();
+  if (!user || user.mustChangePassword) return;
+  localStorage.setItem(
+    "user",
+    JSON.stringify({ ...user, mustChangePassword: true }),
+  );
+  notifySessionChange();
 }
 
 /** Reads the stored user, tolerating absent or corrupt JSON. */

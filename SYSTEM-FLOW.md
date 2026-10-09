@@ -38,14 +38,19 @@ Login
   POST /auth/login { identifier, password }
     → AuthService.login: User.findFirst({ email: identifier OR username: identifier })
     → bcrypt.compare
-    → jwt.sign({ sub, email, role })
+    → jwt.sign({ sub, email, role, mcp?: true })   mcp only when User.mustChangePassword
   ← client stores token (localStorage) + persistSession() sets ojt_role cookie (role only)
+    and the stored user carries mustChangePassword
 
 Every subsequent request
-  Bearer token → JwtStrategy.validate → req.user = { userId, email, role }
-    → RolesGuard: does @Roles(...) on this handler/class allow req.user.role?
-        NO  → 403, request dies here. This is the ONLY thing RolesGuard checks.
+  Bearer token → JwtStrategy.validate → req.user = { userId, email, role, mustChangePassword }
+    → RolesGuard, step 1: req.user.mustChangePassword?
+        YES → 403 { code: PASSWORD_CHANGE_REQUIRED } — even on routes with no @Roles
+    → RolesGuard, step 2: does @Roles(...) on this handler/class allow req.user.role?
+        NO  → 403, request dies here. These two are the ONLY things RolesGuard checks.
         YES → continue into the service
+    (PATCH /auth/password has AuthGuard('jwt') only — never reaches RolesGuard, so a
+     must-change session can always reach it)
     → Service: re-derive the caller's OWN profile row from req.user.userId
         (getStudentByUserId / getSupervisorByUserId)
       → does the row being read/written belong to THIS profile's establishment?
@@ -55,7 +60,30 @@ Every subsequent request
 
 The *why* behind both checks, and the forgeable-cookie caveat on `proxy.ts`, are in
 CLAUDE.md §4. What matters here is the ordering above: the guard runs first and can only
-reject on role; ownership is a second, separate rejection thrown from inside the service.
+reject on role (or the must-change flag); ownership is a second, separate rejection
+thrown from inside the service.
+
+### Generated credentials → forced change
+
+```
+Coordinator: POST /coordinator/students | /coordinator/supervisors   (no username/password in body)
+         or  POST /coordinator/{students,supervisors}/:id/resend-credentials
+  → generatePassword() → bcrypt.hash → user row (username via usernameBase +
+    nextFreeUsername, retried on a P2002 race), mustChangePassword = true
+  ← { …, credentials: { username, tempPassword } }  — the only time the plaintext exists
+  → CredentialsDialog shows it once; closing drops it
+
+User signs in with it → token has mcp → stored user mustChangePassword: true
+  → Sidebar (every role page) opens ChangePasswordDialog in forced mode
+  → every other request meanwhile: 403 PASSWORD_CHANGE_REQUIRED
+      (baseQuery raises the stored flag if it wasn't already set; no logout)
+  → PATCH /auth/password { currentPassword: <temporary>, newPassword }
+      → flag cleared ← { changed, accessToken (no mcp), user }
+  → persistSession(fresh token) → page reload → everything refetches normally
+```
+
+`proxy.ts` is not involved: it only sees the role cookie, so it routes a must-change
+session like any other. The server is what refuses it.
 
 ## 3. Login → landing page flow
 

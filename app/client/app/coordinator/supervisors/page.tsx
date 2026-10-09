@@ -8,11 +8,11 @@ import StatCard from "@/components/ui/StatCard";
 import Button from "@/components/ui/Button";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
-import { UserCog, Plus, Building2, UserX } from "lucide-react";
+import { UserCog, Plus, Building2, UserX, KeyRound } from "lucide-react";
 import { useSupervisorManagement } from "@/features/supervisor-management/hooks/use-supervisor-management";
 import SupervisorList from "@/features/supervisor-management/components/SupervisorList";
 import SupervisorFormDialog from "@/features/supervisor-management/components/SupervisorFormDialog";
-import ResetSupervisorPasswordDialog from "@/features/supervisor-management/components/ResetSupervisorPasswordDialog";
+import CredentialsDialog from "@/features/account/CredentialsDialog";
 import { deleteSupervisorMessage } from "@/lib/format";
 
 export default function SupervisorManagementPage() {
@@ -23,7 +23,9 @@ export default function SupervisorManagementPage() {
     establishments,
     isLoading,
     isCreating,
-    resetTarget,
+    resendTarget,
+    isResending,
+    issuedCredentials,
     deleteTarget,
     isDialogOpen,
     search,
@@ -34,10 +36,12 @@ export default function SupervisorManagementPage() {
     setField,
     setSearch,
     setPage,
-    setResetTarget,
+    setResendTarget,
     setDeleteTarget,
     handleSubmit,
     handleDeleteConfirm,
+    handleResendConfirm,
+    closeIssuedCredentials,
     handleOpenAddDialog,
     closeDialog,
   } = useSupervisorManagement();
@@ -98,8 +102,8 @@ export default function SupervisorManagementPage() {
             paged={paged}
             onSearchChange={setSearch}
             onPageChange={setPage}
-            onResetPassword={(supervisor) => {
-              setResetTarget(supervisor);
+            onResendLogin={(supervisor) => {
+              setResendTarget(supervisor);
             }}
             onDelete={(supervisor) => {
               setDeleteTarget(supervisor);
@@ -138,11 +142,26 @@ export default function SupervisorManagementPage() {
         onClose={closeDialog}
       />
 
-      <ResetSupervisorPasswordDialog
-        supervisor={resetTarget}
-        onClose={() => {
-          setResetTarget(null);
+      <ConfirmDialog
+        open={!!resendTarget}
+        title="Resend login?"
+        message={
+          resendTarget
+            ? `This generates a new temporary password for ${resendTarget.user.name} and stops their current password from working. They must choose a new one when they next sign in.`
+            : ""
+        }
+        confirmLabel={isResending ? "Generating..." : "Yes, issue a new login"}
+        confirmDisabled={isResending}
+        icon={KeyRound}
+        onConfirm={handleResendConfirm}
+        onCancel={() => {
+          setResendTarget(null);
         }}
+      />
+
+      <CredentialsDialog
+        credentials={issuedCredentials}
+        onDone={closeIssuedCredentials}
       />
     </div>
   );

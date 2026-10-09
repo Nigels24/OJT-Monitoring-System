@@ -4,7 +4,10 @@ import type {
   FetchArgs,
   FetchBaseQueryError,
 } from "@reduxjs/toolkit/query/react";
-import { clearSession } from "@/lib/auth";
+import { clearSession, markPasswordChangeRequired } from "@/lib/auth";
+
+/** The server's 403 `code` for a session that must change its password first. */
+export const PASSWORD_CHANGE_REQUIRED = "PASSWORD_CHANGE_REQUIRED";
 
 /**
  * API base URL. Set NEXT_PUBLIC_API_URL to point at a non-local server; the
@@ -63,6 +66,21 @@ export const baseQueryWithAuth: BaseQueryFn<
     // every cached RTK Query result for the old session is dropped.
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.href = "/login";
+  }
+
+  // A must-change session (RolesGuard refuses everything but the password
+  // change). Not a logout: the token is valid, it just has one job left. Raise
+  // the flag so the Sidebar opens the forced change-password dialog. Login
+  // already stores the flag; this covers a stale session whose token carries
+  // the claim but whose stored user doesn't say so (signed in on a client
+  // build from before the flag, or storage edited by hand).
+  if (
+    result.error?.status === 403 &&
+    (result.error.data as { code?: string } | undefined)?.code ===
+      PASSWORD_CHANGE_REQUIRED &&
+    typeof window !== "undefined"
+  ) {
+    markPasswordChangeRequired();
   }
 
   return result;

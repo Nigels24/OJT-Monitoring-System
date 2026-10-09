@@ -3,16 +3,21 @@ import {
   useGetSupervisorsQuery,
   useCreateSupervisorMutation,
   useDeleteSupervisorMutation,
+  useResendSupervisorCredentialsMutation,
   CoordinatorSupervisor,
 } from "@/lib/api/supervisorManagementApi";
+import type { IssuedCredentials } from "@/features/account/CredentialsDialog";
 import { useGetEstablishmentsQuery } from "@/lib/api/establishmentApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
 
+// No username or password: the server generates both and returns them once.
+// The name is in parts because the username is built from the first initial
+// and the last name.
 const EMPTY_FORM = {
   email: "",
-  username: "",
-  password: "",
-  name: "",
+  firstName: "",
+  middleInitial: "",
+  lastName: "",
   establishmentId: "",
   position: "",
 };
@@ -24,9 +29,15 @@ const PAGE_SIZE = 5;
 export function useSupervisorManagement() {
   const [form, setForm] = useState<SupervisorForm>(EMPTY_FORM);
   const [error, setError] = useState("");
-  const [resetTarget, setResetTarget] = useState<CoordinatorSupervisor | null>(
-    null,
-  );
+  /** The supervisor whose Resend login is awaiting confirmation. */
+  const [resendTarget, setResendTarget] =
+    useState<CoordinatorSupervisor | null>(null);
+  /**
+   * Login details just generated (create or resend), shown once. Cleared on
+   * close and kept nowhere else, so nothing can reopen it.
+   */
+  const [issuedCredentials, setIssuedCredentials] =
+    useState<IssuedCredentials | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CoordinatorSupervisor | null>(
     null,
   );
@@ -41,6 +52,8 @@ export function useSupervisorManagement() {
   const [createSupervisor, { isLoading: isCreating }] =
     useCreateSupervisorMutation();
   const [deleteSupervisor] = useDeleteSupervisorMutation();
+  const [resendCredentials, { isLoading: isResending }] =
+    useResendSupervisorCredentialsMutation();
 
   const setField =
     (key: keyof SupervisorForm) =>
@@ -52,20 +65,31 @@ export function useSupervisorManagement() {
     e.preventDefault();
     setError("");
 
+    // SelectField has no native `required`.
+    if (!form.establishmentId) {
+      setError("Select an establishment.");
+      return;
+    }
+
     try {
       const result = await createSupervisor({
         email: form.email,
-        username: form.username,
-        password: form.password,
-        name: form.name,
+        firstName: form.firstName,
+        middleInitial: form.middleInitial || undefined,
+        lastName: form.lastName,
         establishmentId: form.establishmentId,
         position: form.position || undefined,
       }).unwrap();
 
-      showSuccess(
-        `"${result.name}" has been added. Give them the username and password you set.`,
-      );
       closeDialog();
+      // The generated username and temporary password, shown once.
+      setIssuedCredentials({
+        name: result.name,
+        email: result.email,
+        username: result.credentials.username,
+        tempPassword: result.credentials.tempPassword,
+        reason: "created",
+      });
     } catch (err: unknown) {
       const message = readError(err, "Failed to add supervisor.");
       setError(message);
@@ -82,6 +106,24 @@ export function useSupervisorManagement() {
     } catch (err: unknown) {
       const message = readError(err, "Failed to remove supervisor.");
       showError(message);
+    }
+  };
+
+  /** Resend login: a new generated password, after the coordinator confirms. */
+  const handleResendConfirm = async () => {
+    if (!resendTarget) return;
+    try {
+      const result = await resendCredentials(resendTarget.id).unwrap();
+      setResendTarget(null);
+      setIssuedCredentials({
+        name: result.name,
+        email: result.email,
+        username: result.credentials.username,
+        tempPassword: result.credentials.tempPassword,
+        reason: "resent",
+      });
+    } catch (err: unknown) {
+      showError(readError(err, "Failed to issue a new login."));
     }
   };
 
@@ -132,7 +174,9 @@ export function useSupervisorManagement() {
     establishments,
     isLoading,
     isCreating,
-    resetTarget,
+    resendTarget,
+    isResending,
+    issuedCredentials,
     deleteTarget,
     isDialogOpen,
     search,
@@ -144,11 +188,15 @@ export function useSupervisorManagement() {
     setField,
     setSearch,
     setPage,
-    setResetTarget,
+    setResendTarget,
     setDeleteTarget,
 
     handleSubmit,
     handleDeleteConfirm,
+    handleResendConfirm,
+    closeIssuedCredentials: () => {
+      setIssuedCredentials(null);
+    },
     handleOpenAddDialog,
     closeDialog,
   };

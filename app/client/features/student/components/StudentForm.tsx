@@ -7,7 +7,6 @@ import {
   GraduationCap,
   Clock,
   CalendarDays,
-  KeyRound,
   Pencil,
   UserPlus,
 } from "lucide-react";
@@ -101,42 +100,24 @@ export default function StudentForm({
             placeholder="student@wphi.edu"
             disabled={!!editTarget}
           />
-          <TextField
-            label="Username"
-            labelIcon={User}
-            fieldIcon={User}
-            required={!editTarget}
-            value={form.username}
-            onChange={setField("username")}
-            placeholder="e.g., juan.delacruz"
-            pattern="[a-zA-Z0-9._\-]{4,30}"
-            title="4-30 characters: letters, numbers, dot, underscore or hyphen. No @ sign."
-            autoComplete="off"
-            disabled={!!editTarget}
-          />
-          <TextField
-            label="Password"
-            labelIcon={KeyRound}
-            fieldIcon={KeyRound}
-            type="text"
-            required={!editTarget}
-            value={form.password}
-            onChange={setField("password")}
-            placeholder="At least 8 characters"
-            minLength={8}
-            autoComplete="off"
-            disabled={!!editTarget}
-          />
+          {editTarget && (
+            <ReadOnlyField
+              label="Username"
+              icon={User}
+              value={editTarget.user.username ?? "None — signs in with email"}
+            />
+          )}
         </div>
         {!editTarget ? (
           <p className="text-xs text-gray-500 mt-2">
-            You choose the student&apos;s username and password, then pass them
-            on. The password is shown as plain text here so you can read it back
-            to them — it is stored hashed and cannot be retrieved later.
+            A username and a temporary password are generated when you add the
+            student, and shown to you once. The student must choose their own
+            password the first time they sign in.
           </p>
         ) : (
           <p className="text-xs text-gray-500 mt-2">
-            Login details can&apos;t be changed from this form.
+            Login details can&apos;t be changed from this form. Use Resend
+            login in the list to issue a new temporary password.
           </p>
         )}
       </section>

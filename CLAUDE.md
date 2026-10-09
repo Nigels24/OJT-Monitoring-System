@@ -57,7 +57,7 @@ OJT-Monitoring-System/
     ├── server/             # NestJS 11 API — port 3000
     │   ├── src/
     │   │   ├── auth/           # AuthModule, JwtStrategy, RolesGuard, authed-request.ts, jwt.constants.ts
-    │   │   ├── common/         # attendance-hours.ts, cascade-delete.ts, courses.ts, dates.ts, document-types.ts, evaluation-pdf.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
+    │   │   ├── common/         # accounts.ts, attendance-hours.ts, cascade-delete.ts, courses.ts, credentials.ts, dates.ts, document-types.ts, evaluation-pdf.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
     │   │   ├── coordinator/    # student + supervisor management, dashboard, attendance oversight
     │   │   ├── establishment/  # CRUD — open reads, COORDINATOR writes
     │   │   ├── evaluation-template/  # the versioned evaluation sheet — COORDINATOR writes, SupervisorService reads
@@ -68,7 +68,7 @@ OJT-Monitoring-System/
     │   ├── prisma/
     │   │   ├── schema.prisma
     │   │   ├── seed.ts             # bootstraps ONLY the coordinator
-    │   │   └── migrations/         # 15 migrations, listed in §6
+    │   │   └── migrations/         # 17 migrations, listed in §6
     │   ├── scripts/reset-coordinator.ts
     │   ├── test/                   # e2e only
     │   └── generated/prisma/       # gitignored — run `npx prisma generate`
@@ -123,17 +123,17 @@ every page, locks body scroll behind a **module-level reference count** (a `Conf
 over a `FormDialog` is two locks; only the outermost close unlocks), moves focus into the
 dialog and back to the trigger on close, and keeps Tab inside — for the topmost overlay
 only, tracked in a module-level stack, so Escape closes the dialog on top rather than all
-of them. `ConfirmDialog`, `ViewDialog`, `FormDialog`, the eight feature dialogs
-(`ChangePasswordDialog`, `StudentEditDialog`, `ResetPasswordDialog`,
-`SupervisorFormDialog`, `ResetSupervisorPasswordDialog`, `EstablishmentEditDialog`,
+of them. `ConfirmDialog`, `ViewDialog`, `FormDialog`, the seven feature dialogs
+(`ChangePasswordDialog`, `CredentialsDialog`, `StudentEditDialog`,
+`SupervisorFormDialog`, `EstablishmentEditDialog`,
 `StudentDocumentsDialog`, `DeclineDialog`) and the login page's recovery panel all render through
 it. Its `Z_LAYERS` export (sidebar 20 · stickyHeader 30 · dropdown 40 · dialog 50 ·
 snackbar 60 — the snackbar above dialogs so a save error is readable over an open form) is
 the **only** place a z-index is chosen: `Sidebar`, `SelectField` and `Snackbar` read from
 it, and **no component may write a bare `z-*` class or a literal `zIndex`** (§8 item 26). `TextField` auto-adds a show/hide eye toggle whenever
-`type="password"` — don't build a second one at the call site; a field that should stay
-plain text (the coordinator's issued-password fields, so it can be read back) uses
-`type="text"` instead, deliberately. **A modal holding unsaved work uses `FormDialog`,
+`type="password"` — don't build a second one at the call site; a value that must stay
+readable (a generated temporary password) is shown as text in `CredentialsDialog`, not in
+an input. **A modal holding unsaved work uses `FormDialog`,
 not `ViewDialog`** — `ViewDialog` closes on a backdrop click, which is right for read-only
 content and destroys a part-filled form; `FormDialog` closes only on Escape or its X,
 locks the page's scroll, keeps its header pinned, and scrolls the form inside the panel.
@@ -206,7 +206,9 @@ Overridable via `SEED_COORDINATOR_{EMAIL,USERNAME,NAME,PASSWORD}`. Idempotent; n
 overwrites a password, never deletes anything.
 
 **Everything else is created through the app.** The coordinator signs in and creates
-establishments, supervisors and students by hand, issuing username + password directly.
+establishments, supervisors and students by hand; each account's username and temporary
+password are **generated** by the server and shown to the coordinator once (§4 "Generated
+credentials").
 There is no self-registration. **Never add sample students or supervisors to the seed** —
 the prototype's three demo logins are a mock-up device, not the real account model.
 
@@ -218,12 +220,14 @@ the prototype's three demo logins are a mock-up device, not the real account mod
 
 Login is by **username or email**. `POST /auth/login` takes `{ identifier, password }`;
 `AuthService.login` matches `identifier` against `User.email` OR `User.username`
-(`findFirst` with `OR`), verifies bcrypt, and signs `{ sub, email, role }`.
-`User.username` is nullable (accounts predating it sign in with email), unique, and
-**barred from containing `"@"`** — that is what stops a username colliding with an email
-in that lookup.
+(`findFirst` with `OR`, exact case), verifies bcrypt, and signs `{ sub, email, role }`
+plus **`mcp: true` only when `User.mustChangePassword`** is set. `User.username` is
+nullable (accounts predating it sign in with email), unique, and never contains `"@"`
+(generated ones are letters and digits only; the old typed ones were barred from it) —
+that is what stops a username colliding with an email in that lookup.
 
-`JwtStrategy.validate` returns `{ userId, email, role }` onto `req.user`. **Handlers read
+`JwtStrategy.validate` returns `{ userId, email, role, mustChangePassword }` onto
+`req.user` (`mustChangePassword` = the token's `mcp`, false when absent). **Handlers read
 `req.user.userId`, not `.id`.** Type it with `AuthedRequest` from
 `src/auth/authed-request.ts` — never `@Req() req: any`.
 
@@ -245,6 +249,17 @@ to any signed-in user, `@Roles('COORDINATOR')` on each write handler.
 > ignores class-level decorators and leaves whole controllers unrestricted. It has
 > happened once already.
 
+**Check 1b — forced password change, also in `RolesGuard`.** When `req.user.mustChangePassword`
+is true the guard throws **403 `{ code: "PASSWORD_CHANGE_REQUIRED" }`** — and it does so
+*before* the "no `@Roles` = any signed-in user" early return, or `GET /establishments` and
+all of `/messages` would let a must-change session through. Every protected controller
+attaches `RolesGuard`, which is what makes this complete; `PATCH /auth/password` attaches
+**only** `AuthGuard('jwt')`, which is what keeps it reachable. **A new controller must
+attach `RolesGuard` even if it declares no `@Roles`**, or a must-change session reaches
+it. There is no `/auth/me`; the client renders the forced dialog from the stored user,
+so nothing else needs to stay reachable. `proxy.ts` knows nothing of this — it remains
+navigation only.
+
 **Check 2 — ownership, in the service.** The guard only ever sees a role string; it has
 no idea whose data is being touched. Every service re-derives ownership per request:
 
@@ -258,20 +273,41 @@ no idea whose data is being touched. Every service re-derives ownership per requ
 check 2 is a cross-tenant data leak — e.g. a supervisor approving another
 establishment's attendance punch just by knowing its id.
 
-### Password recovery — no email step
+### Generated credentials and recovery — no email step yet
 
-No mail library, no SMTP; `@supabase/supabase-js` is installed but unused. Recovery
-mirrors how accounts are issued: by hand, by the coordinator.
+No mail library, no SMTP yet (a later step); `@supabase/supabase-js` is installed but
+unused. Students and supervisors never choose their first password.
+
+- **`src/common/credentials.ts`** (no Nest/Prisma imports, so it tests in isolation):
+  `usernameBase(first, last)` = first initial + last name, lowercase, accents stripped
+  (NFD), letters only, `"user"` if empty — "Juan Dela Cruz" → `jdelacruz`; **no length
+  rule**. `nextFreeUsername(base, taken)` appends 2, 3, … (case-insensitive compare).
+  `createWithGeneratedUsername(base, findTaken, create, isUsernameClash)` does one read of
+  taken names, creates, and on a lost race (P2002 on `username`) re-reads and retries, 3
+  attempts. `generatePassword()` = 8 chars from `crypto.randomInt`, no `0 O 1 l I`, at least
+  one letter and one digit, shuffled.
+- **`src/common/accounts.ts`** — the Prisma callbacks: `findTakenUsernames` (one
+  `startsWith`, `mode: 'insensitive'` query) and `isUsernameClash`.
+- The create/resend response carries **`credentials: { username, tempPassword }`** — the
+  **only** place the plaintext exists. It is hashed (`bcrypt`, 10) before Prisma sees it,
+  never logged, never stored; the client shows it once in `CredentialsDialog` (closes only
+  on Done, held in transient hook state, cannot be reopened from the list).
+- Every generated or resent password sets **`User.mustChangePassword = true`** → `mcp` in
+  the next login's token → Check 1b above. The seeded coordinator is never flagged.
+- `User.credentialsSentAt` / `credentialsEmailError` exist (same migration) but are
+  **unused until the email step**.
 
 | Route / command | Who | Notes |
 |---|---|---|
-| `PATCH /auth/password` | any signed-in user | `{ currentPassword, newPassword }` — the current password is required even with a valid JWT, since the token proves the session, not the person at the keyboard |
-| `PATCH /coordinator/students/:id/password` | COORDINATOR | `{ password }`, no old password needed |
-| `PATCH /coordinator/supervisors/:id/password` | COORDINATOR | same — endpoint exists, **no UI button yet** |
-| `npm run reset-coordinator` | CLI, needs `.env` | **the only way to reset a coordinator.** There is deliberately no web route — don't add one |
+| `PATCH /auth/password` | any signed-in user, **including a must-change session** | `{ currentPassword, newPassword }` (≥ 8) — the current password is required even with a valid JWT (in forced mode it is the temporary one). Clears `mustChangePassword` and returns a **fresh session** `{ changed, accessToken, user }`, since the caller's token may carry `mcp` |
+| `POST /coordinator/students/:id/resend-credentials` | COORDINATOR | "Resend login": new generated password, flag set, `{ id, name, email, credentials }`. Username never regenerated (`null` for a pre-username account → sign in by email) |
+| `POST /coordinator/supervisors/:id/resend-credentials` | COORDINATOR | same |
+| `npm run reset-coordinator` | CLI, needs `.env` | **the only way to reset a coordinator.** Also clears `mustChangePassword`. There is deliberately no web route — don't add one |
 
-Changing a password does **not** invalidate already-issued JWTs (no refresh flow, no
-blocklist) — an old token stays valid to its 1-day expiry.
+The old `PATCH /coordinator/{students,supervisors}/:id/password` (coordinator types the
+password) are **removed**. Changing or resending a password does **not** invalidate
+already-issued JWTs (no refresh flow, no blocklist) — an old token stays valid to its
+1-day expiry, so a resend does not sign the user out of a session they already hold.
 
 ### Validation and DTOs
 
@@ -557,15 +593,15 @@ table; never derive one from the other.
 | Method | Route | Role | Notes |
 |---|---|---|---|
 | POST | `/auth/login` | public | `{ identifier, password }` |
-| PATCH | `/auth/password` | any signed-in | `{ currentPassword, newPassword }` |
+| PATCH | `/auth/password` | any signed-in (also must-change) | `{ currentPassword, newPassword }` → `{ changed, accessToken, user }`, clears `mustChangePassword` |
 | GET | `/establishments` · `/establishments/:id` | any signed-in | reads are open |
 | POST/PATCH/DELETE | `/establishments` · `/establishments/:id` | COORDINATOR | POST always creates **ACTIVE** — `status` is only on the update DTO (400 on create) |
-| POST | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | issues username + password. A student is created **ACTIVE** — `status` is not on the create DTO (400 if sent). `course` is **required** and must be an offered course; the server sets `yearLevel`/`requiredHours` from it. `yearLevel`, `requiredHours`, `age`, `dateOfBirth`, `gender`, `endDate` in the body are a 400 |
+| POST | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | **generates** username + temporary password, returned once as `credentials` (§4); `username`/`password` in the body are a 400; `mustChangePassword` set. Student: `firstName`/`lastName` required (service check). Supervisor: `firstName`, `middleInitial?`, `lastName` replace `name`. A student is created **ACTIVE** — `status` is not on the create DTO (400 if sent). `course` is **required** and must be an offered course; the server sets `yearLevel`/`requiredHours` from it. `yearLevel`, `requiredHours`, `age`, `dateOfBirth`, `gender`, `endDate` in the body are a 400 |
 | POST | `/coordinator/students/bulk-delete` | COORDINATOR | `{ ids }`, 1–100. Every id must exist and be **COMPLETED**, else 400 with `offenders: [{ id, reason }]` and nothing deleted. Then `deleteStudentCascade` per student, **one `$transaction` each** (status re-checked inside), files after each commit. Returns `{ deleted: [ids], failed: [{ id, reason }] }` |
 | GET | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | |
 | PATCH/DELETE | `/coordinator/students/:id` | COORDINATOR | delete is guarded, see §6. PATCH: same six fields rejected. A `course` that **differs from the stored one** must be offered (clearing it is a 400) and recomputes `yearLevel`/`requiredHours`; an unchanged or absent course leaves all three alone, so legacy students keep their values until the course changes |
 | DELETE | `/coordinator/supervisors/:id` | COORDINATOR | delete is guarded, see §6 |
-| PATCH | `/coordinator/students/:id/password` · `/coordinator/supervisors/:id/password` | COORDINATOR | |
+| POST | `/coordinator/students/:id/resend-credentials` · `/coordinator/supervisors/:id/resend-credentials` | COORDINATOR | no body; new temporary password, `{ id, name, email, credentials }`; 404 unknown id. Replaced `PATCH …/:id/password` |
 | GET | `/coordinator/dashboard` | COORDINATOR | real aggregates |
 | GET | `/coordinator/attendance` | COORDINATOR | cross-establishment oversight: `[{ id, studentIdNumber, name, establishmentName, presentDays, totalDays, attendancePercentage }]`. A present day = ≥1 session with both punches APPROVED |
 | GET | `/coordinator/evaluations` | COORDINATOR | read-only, all establishments |
@@ -819,6 +855,7 @@ recoverable, a half-deleted database is not.
 | `20260905163310_official_evaluation_sheet` | **Rewrote `Evaluation` for the school's official form.** Dropped the 9 criteria, `overallRating`, `performanceLevel` and `periodStart`/`periodEnd`; added the 19 item columns, `totalRating`, `trainingStartedAt`/`trainingEndedAt`/`trainingEmployedAt`, `evaluatorName`/`evaluatorPosition` and `updatedAt`. Destructive — **the table was empty (verified: 0 rows)**, which is also why the new `NOT NULL` item columns could be added without defaults. Generated with `migrate diff` + `migrate deploy`, since `migrate dev` prompts on column drops. Touches no other table |
 | `20260914142544_evaluation_sheet_template` | **Moved the sheet into the database.** Added `EvaluationTemplate`, `EvaluationTemplateSection`, `EvaluationTemplateItem`, `EvaluationScore`; seeded template **version 1** PUBLISHED with the nineteen items' exact wording, keyed by the nineteen column names; added `Evaluation.templateId`/`maxTotalRating` backfilled to version 1 / 95; copied the nineteen columns into `EvaluationScore`; **then** dropped them. Hand-written in that order so it is one transaction and no signed sheet loses its scores — structural statements generated with `migrate diff --from-schema-datamodel <previous> --to-schema-datamodel <current> --script` (which never touches the DB), data steps added by hand |
 | `20261005011611_documents_typed_checklist` | **Documents became a typed checklist; Credentials folded in.** Added enum `DocumentType`, `Document.type` and `originalFileName`; deleted the two pre-existing free-text Document rows (test data, no type mapping); copied the two `Credential` rows into `Document` (same id and path, `createdAt` → `uploadedAt`); a `DO $$` guard aborts if any row is untyped; dedup keeps the newest per `(studentId, type)`; then `type` NOT NULL, `@@unique([studentId, type])`, and dropped `name`, `status`, `reviewedById`/FK, `reviewNote`, `reviewedAt` and the `Credential` table. Hand-ordered like the one above; applied with `migrate deploy`. `migrate dev --create-only` refuses to run non-interactively when it would warn about data loss, so `migrate diff` between schema files was used |
+| `20261010090000_user_credential_flags` | **Written, NOT yet applied** (apply with `migrate deploy` after a `pg_dump`). `User`: `mustChangePassword BOOLEAN NOT NULL DEFAULT false`, `credentialsSentAt TIMESTAMP(3)`, `credentialsEmailError TEXT`. Additive; every existing user gets `false`. Hand-written, three `ALTER TABLE` statements; matches `migrate diff` between the schema files |
 | `20261005015145_attendance_punches` | **Four separately approved punches per day.** Added enum `PunchKind` and table `AttendancePunch` (FK to `Attendance` RESTRICT, to `Supervisor` SET NULL, `@@unique([attendanceId, kind])`, index on `status`); copied each non-null `timeInAM`/`timeOutAM`/`timeInPM`/`timeOutPM` into a punch carrying the day's `status`, `approvedById` → `decidedById` and `declineReason`, `decidedAt` NULL (never recorded), ids from `gen_random_uuid()`; a `DO $$` guard aborts unless punches = non-null times (8 = 8 live: 2 APPROVED days); **then** dropped those four columns, `status`, `declineReason`, `approvedById` and its FK. Explicit `BEGIN`/`COMMIT`. Structural SQL from `migrate diff` between schema files, reordered so the drops come last (the diff emits them first); applied with `migrate deploy` after a `pg_dump` |
 
 **Policy: one migration per module, and only when the module actually needs new columns.**
@@ -915,7 +952,7 @@ recoverable, a half-deleted database is not.
   vanish or leave COMPLETED drop out without an effect. Failures stay selected.
   `bulkDeleteStudents` shares `invalidateStudentCascade` with `deleteStudent`.
   `DataTableColumn.label` is now a `ReactNode` (for the header checkbox).
-- **Supervisor Management (Coordinator)** — create, list, password reset, and delete
+- **Supervisor Management (Coordinator)** — create (generated login), list, Resend login, and delete
   (guarded — see §6). No edit yet (§8 item 10). Table columns: name, username, email,
   establishment, position.
 - **The evaluation sheet is the school's to change**, end to end. `EvaluationTemplate`
@@ -979,8 +1016,22 @@ recoverable, a half-deleted database is not.
   use-evaluation-download.ts` — object URL, temporary anchor, revoke; the row being
   generated spins its own button. `EvaluationList` renders the download icon only when an
   `onDownload` prop is supplied, which is the coordinator's page and not the supervisor's.
-- **Password recovery** — self-service change for everyone, coordinator-issued reset for
-  students and supervisors, CLI for the coordinator.
+- **Password recovery** — self-service change for everyone, coordinator "Resend login"
+  for students and supervisors (generated, shown once, forced change), CLI for the
+  coordinator.
+- **Generated credentials and forced password change (final-defense F3)** — §4
+  "Generated credentials and recovery". Client: `features/account/CredentialsDialog.tsx`
+  (one-time username + temporary password, copy buttons, closes only on Done; used by
+  student create, supervisor create and both Resend logins, each behind a
+  `ConfirmDialog`). `ChangePasswordDialog` has a **forced** mode (no X, no Cancel,
+  Escape/backdrop inert, Log out as the only other way out) that `Sidebar` opens whenever
+  the stored user has `mustChangePassword`; on success it stores the fresh session and
+  reloads the page, so every query refused meanwhile refetches with the new token.
+  `StoredUser.mustChangePassword`; `lib/auth.ts` fires a same-tab `SESSION_EVENT` on every
+  session write (the browser's `storage` event only reaches other tabs), which
+  `useCurrentUser` subscribes to; `baseQuery` raises the flag on a 403
+  `PASSWORD_CHANGE_REQUIRED` without logging out. `ResetPasswordDialog` and
+  `ResetSupervisorPasswordDialog` are deleted.
 - **Cascading deletes** — student, supervisor and establishment delete for real, each in a
   single `$transaction`, service-layer only (no `onDelete: Cascade`, no migration). The
   old "cannot delete, set to INACTIVE instead" 409 guards are gone. Ordering, what each
@@ -1062,6 +1113,14 @@ recoverable, a half-deleted database is not.
 **All three roles land on a real page after login. No role 404s.**
 
 ### Needs live verification
+
+**Final-defense step F3** (generated credentials, Resend login, forced password change).
+**Blocked on migration `20261010090000_user_credential_flags`**, which is written but not
+applied. Verified in-process only — real `AppModule`, `ValidationPipe`, `RolesGuard`,
+`JwtStrategy` and services against a faked Prisma: generators (5,000 passwords),
+race retry, create/resend responses and hashes, 403 on role-gated *and* no-`@Roles`
+routes, the change-password escape and fresh token, login's `mcp` claim, and no log line
+carrying a temporary password.
 
 **Final-defense step F1** (course table, derived year level/hours, retired student
 fields). Verified in-process only — real `AppModule`, the global `ValidationPipe` and the
@@ -1171,8 +1230,10 @@ Ordered roughly by how likely each is to bite.
    for rows written after migration `20260811085904`. No pre-migration rows exist today
    (verified) — worth knowing if this DB is ever backfilled from an older source. It still
    holds under punches: the day row is unique, its punches hang off it.
-7. Password change doesn't invalidate already-issued JWTs — matters if a reset is
-   because of a leak.
+7. Password change and Resend login don't invalidate already-issued JWTs — matters if a
+   reset is because of a leak. Corollary: `mcp` lives in the **token**, so flagging a user
+   (Resend login) only bites at their next sign-in; a session they already hold carries
+   on unflagged until it expires.
 8. `AttendancePunch.decidedById` is set on approve **and** decline ("who actioned this"),
    and is nulled outright when that supervisor is deleted — so an APPROVED punch with
    `decidedById: null` is normal, not corruption. `decidedAt` is null on the punches the
@@ -1183,7 +1244,7 @@ Ordered roughly by how likely each is to bite.
    /supervisor/evaluations/:id` exist and are guarded by authorship (§5). There is still no
    uniqueness constraint on `(studentId, supervisorId)` and there should not be — multiple
    sheets per student is the requirement, not an oversight.
-10. **Supervisor Management (Coordinator) has no edit.** Create, list, password reset, and
+10. **Supervisor Management (Coordinator) has no edit.** Create, list, Resend login, and
     delete all exist; there is still no endpoint or UI for editing a supervisor's
     details/establishment. Don't build it speculatively — add it when asked.
 11. The coordinator dashboard's attendance trend has no server-side date range; it is

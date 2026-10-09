@@ -9,6 +9,12 @@ export interface JwtUser {
   userId: string;
   email: string;
   role: string;
+  /**
+   * The token's `mcp` claim: this session's password was system-generated and
+   * must be changed before anything else. RolesGuard refuses every route but
+   * PATCH /auth/password while it is true.
+   */
+  mustChangePassword: boolean;
 }
 
 /**

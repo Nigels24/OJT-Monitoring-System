@@ -1,4 +1,4 @@
-import { User, Mail, KeyRound, Briefcase, UserPlus } from "lucide-react";
+import { User, Mail, Briefcase, UserPlus } from "lucide-react";
 import TextField from "@/components/ui/TextField";
 import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
@@ -34,13 +34,31 @@ export default function SupervisorForm({
     <form onSubmit={onSubmit} className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
         <TextField
-          label="Full Name"
+          label="First Name"
           labelIcon={User}
           fieldIcon={User}
           required
-          value={form.name}
-          onChange={setField("name")}
-          placeholder="John Smith"
+          value={form.firstName}
+          onChange={setField("firstName")}
+          placeholder="Juan"
+        />
+        <TextField
+          label="Last Name"
+          labelIcon={User}
+          fieldIcon={User}
+          required
+          value={form.lastName}
+          onChange={setField("lastName")}
+          placeholder="Dela Cruz"
+        />
+        <TextField
+          label="Middle Initial"
+          labelIcon={User}
+          fieldIcon={User}
+          value={form.middleInitial}
+          onChange={setField("middleInitial")}
+          placeholder="P"
+          maxLength={10}
         />
         <TextField
           label="Email Address"
@@ -51,30 +69,6 @@ export default function SupervisorForm({
           value={form.email}
           onChange={setField("email")}
           placeholder="supervisor@company.com"
-        />
-        <TextField
-          label="Username"
-          labelIcon={User}
-          fieldIcon={User}
-          required
-          value={form.username}
-          onChange={setField("username")}
-          placeholder="e.g., john.smith"
-          pattern="[a-zA-Z0-9._\-]{4,30}"
-          title="4-30 characters: letters, numbers, dot, underscore or hyphen. No @ sign."
-          autoComplete="off"
-        />
-        <TextField
-          label="Password"
-          labelIcon={KeyRound}
-          fieldIcon={KeyRound}
-          type="text"
-          required
-          value={form.password}
-          onChange={setField("password")}
-          placeholder="At least 8 characters"
-          minLength={8}
-          autoComplete="off"
         />
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -101,9 +95,9 @@ export default function SupervisorForm({
         />
       </div>
       <p className="text-xs text-gray-500">
-        You choose the supervisor&apos;s username and password, then pass them
-        on. The password is shown as plain text here so you can read it back
-        to them — it is stored hashed and cannot be retrieved later.
+        A username and a temporary password are generated when you add the
+        supervisor, and shown to you once. The supervisor must choose their own
+        password the first time they sign in.
       </p>
 
       {error && (

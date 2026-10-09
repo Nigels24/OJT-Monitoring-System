@@ -9,8 +9,16 @@ type LoginResponse = {
     username: string | null;
     name: string;
     role: string;
+    /** True when the password was system-generated and must be changed first. */
+    mustChangePassword: boolean;
   };
 };
+
+/**
+ * A password change hands back a fresh session: the token in use may carry
+ * the server's must-change claim, which every other route refuses.
+ */
+type ChangePasswordResponse = LoginResponse & { changed: boolean };
 
 type LoginRequest = {
   /** Username or email — the server matches either. */
@@ -32,7 +40,7 @@ export const authApi = createApi({
     }),
     /** Any signed-in user changing their own password. */
     changePassword: builder.mutation<
-      { changed: boolean },
+      ChangePasswordResponse,
       { currentPassword: string; newPassword: string }
     >({
       query: (body) => ({

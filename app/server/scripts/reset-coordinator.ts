@@ -72,7 +72,12 @@ async function main() {
 
   await prisma.user.update({
     where: { id: target.id },
-    data: { password: await bcrypt.hash(password, 10) },
+    // A coordinator is never forced to change (only generated student and
+    // supervisor credentials are); cleared here in case the flag was ever set.
+    data: {
+      password: await bcrypt.hash(password, 10),
+      mustChangePassword: false,
+    },
   });
 
   console.log(`Password reset for ${target.name}:`);

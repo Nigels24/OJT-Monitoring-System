@@ -148,10 +148,10 @@ export default function LoginPage() {
       </form>
       </Card>
 
-      {/* There is no emailed reset link — no mail infrastructure exists, and
-          the coordinator already issues every credential by hand. So this
-          explains the actual recovery route rather than pretending to send
-          an email. */}
+      {/* There is no emailed reset link — no mail infrastructure exists yet,
+          and the coordinator hands over every generated login. So this
+          explains the actual recovery route (Resend login) rather than
+          pretending to send an email. */}
       <Overlay
         open={showForgotHelp}
         label="Forgot your password?"
@@ -173,9 +173,9 @@ export default function LoginPage() {
                   Students and supervisors
                 </p>
                 <p>
-                  Ask your OJT coordinator. They can issue you a new password
-                  straight away, and you can change it yourself once you sign
-                  in.
+                  Ask your OJT coordinator. They can issue you a new temporary
+                  password straight away, and you will choose your own the
+                  first time you sign in with it.
                 </p>
               </div>
               <div>

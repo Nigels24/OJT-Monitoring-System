@@ -5,9 +5,11 @@ import {
   useUpdateStudentMutation,
   useDeleteStudentMutation,
   useBulkDeleteStudentsMutation,
+  useResendStudentCredentialsMutation,
   Student,
   StudentStatus,
 } from "@/lib/api/studentApi";
+import type { IssuedCredentials } from "@/features/account/CredentialsDialog";
 import { useGetEstablishmentsQuery } from "@/lib/api/establishmentApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
 import { COURSES, findCourse, isOfferedCourse } from "@/lib/courses";
@@ -41,8 +43,6 @@ const EMPTY_FORM = {
   middleInitial: "",
   lastName: "",
   email: "",
-  username: "",
-  password: "",
   contactNumber: "",
   address: "",
   course: "",
@@ -69,6 +69,14 @@ export function useStudents() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
   const [bulkConfirmText, setBulkConfirmText] = useState("");
+  /** The student whose Resend login is awaiting confirmation. */
+  const [resendTarget, setResendTarget] = useState<Student | null>(null);
+  /**
+   * Login details just generated (create or resend), shown once. Cleared when
+   * the dialog closes and never stored anywhere else, so nothing can reopen it.
+   */
+  const [issuedCredentials, setIssuedCredentials] =
+    useState<IssuedCredentials | null>(null);
 
   const { showSuccess, showError } = useSnackbar();
 
@@ -77,6 +85,8 @@ export function useStudents() {
   const [createStudent, { isLoading: isCreating }] = useCreateStudentMutation();
   const [updateStudent, { isLoading: isUpdating }] = useUpdateStudentMutation();
   const [deleteStudent] = useDeleteStudentMutation();
+  const [resendCredentials, { isLoading: isResending }] =
+    useResendStudentCredentialsMutation();
   const [bulkDeleteStudents, { isLoading: isBulkDeleting }] =
     useBulkDeleteStudentsMutation();
 
@@ -128,16 +138,21 @@ export function useStudents() {
       } else {
         const result = await createStudent({
           email: form.email,
-          username: form.username,
-          password: form.password,
           studentIdNumber: form.studentIdNumber,
           ...detailsPayload(),
+          firstName: form.firstName,
+          lastName: form.lastName,
           course: form.course,
         }).unwrap();
 
-        showSuccess(
-          `"${result.name}" has been added. Give them the username and password you set.`,
-        );
+        // The generated username and temporary password, shown once.
+        setIssuedCredentials({
+          name: result.name,
+          email: result.email,
+          username: result.credentials.username,
+          tempPassword: result.credentials.tempPassword,
+          reason: "created",
+        });
       }
       closeDialog();
     } catch (err: unknown) {
@@ -163,6 +178,24 @@ export function useStudents() {
     }
   };
 
+  /** Resend login: a new generated password, after the coordinator confirms. */
+  const handleResendConfirm = async () => {
+    if (!resendTarget) return;
+    try {
+      const result = await resendCredentials(resendTarget.id).unwrap();
+      setResendTarget(null);
+      setIssuedCredentials({
+        name: result.name,
+        email: result.email,
+        username: result.credentials.username,
+        tempPassword: result.credentials.tempPassword,
+        reason: "resent",
+      });
+    } catch (err: unknown) {
+      showError(readError(err, "Failed to issue a new login."));
+    }
+  };
+
   const handleView = (student: Student) => {
     setViewTarget(student);
   };
@@ -175,10 +208,6 @@ export function useStudents() {
       middleInitial: student.middleInitial ?? "",
       lastName: student.lastName ?? "",
       email: student.user.email,
-      // Credentials are not editable here — the fields are disabled in edit
-      // mode and these values are only shown for reference.
-      username: student.user.username ?? "",
-      password: "",
       contactNumber: student.contactNumber ?? "",
       address: student.address ?? "",
       course: student.course ?? "",
@@ -429,6 +458,15 @@ export function useStudents() {
     handleBulkDeleteConfirm,
 
     STATUS_OPTIONS,
+
+    resendTarget,
+    setResendTarget,
+    isResending,
+    handleResendConfirm,
+    issuedCredentials,
+    closeIssuedCredentials: () => {
+      setIssuedCredentials(null);
+    },
 
     setField,
     setSearch,

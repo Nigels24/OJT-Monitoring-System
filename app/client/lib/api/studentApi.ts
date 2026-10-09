@@ -79,16 +79,26 @@ export interface StudentDetailsRequest {
 
 /**
  * No `status`: a new student is always ACTIVE, and the server rejects a
- * create body that carries one.
+ * create body that carries one. No `username` or `password` either — the
+ * server generates both and returns them once, in `credentials`.
  */
 export interface CreateStudentRequest extends StudentDetailsRequest {
   email: string;
-  /** Login name issued by the coordinator. No "@" allowed. */
-  username: string;
-  /** Set by the coordinator and handed to the student. */
-  password: string;
   studentIdNumber: string;
-  name?: string;
+  /** Required on create: the generated username is built from these. */
+  firstName: string;
+  lastName: string;
+  course: string;
+}
+
+/**
+ * Generated login details. The only response that ever carries the plaintext
+ * password — show it once (`CredentialsDialog`) and keep no copy.
+ */
+export interface GeneratedCredentials {
+  /** `null` only for an account from before usernames — it signs in by email. */
+  username: string | null;
+  tempPassword: string;
 }
 
 export interface CreateStudentResponse {
@@ -97,6 +107,15 @@ export interface CreateStudentResponse {
   username: string | null;
   name: string;
   role: string;
+  credentials: GeneratedCredentials;
+}
+
+/** "Resend login": a new temporary password for an existing account. */
+export interface ResendCredentialsResponse {
+  id: string;
+  name: string;
+  email: string;
+  credentials: GeneratedCredentials;
 }
 
 /** Status is NOT NULL server-side, so it is omit-only. */
@@ -195,17 +214,18 @@ export const studentApi = createApi({
       },
     }),
     /**
-     * Issues a new password for a student who has forgotten theirs.
-     * No current password needed — that's the point.
+     * "Resend login": the server generates a new temporary password and forces
+     * a change at next sign-in. Invalidates nothing — no query this slice
+     * serves shows the password or the must-change flag, and the username is
+     * never changed.
      */
-    resetStudentPassword: builder.mutation<
-      { id: string; name: string; username: string | null },
-      { id: string; password: string }
+    resendStudentCredentials: builder.mutation<
+      ResendCredentialsResponse,
+      string
     >({
-      query: ({ id, password }) => ({
-        url: `/coordinator/students/${id}/password`,
-        method: "PATCH",
-        body: { password },
+      query: (id) => ({
+        url: `/coordinator/students/${id}/resend-credentials`,
+        method: "POST",
       }),
     }),
   }),
@@ -217,5 +237,5 @@ export const {
   useUpdateStudentMutation,
   useDeleteStudentMutation,
   useBulkDeleteStudentsMutation,
-  useResetStudentPasswordMutation,
+  useResendStudentCredentialsMutation,
 } = studentApi;

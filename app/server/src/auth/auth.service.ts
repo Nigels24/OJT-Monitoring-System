@@ -17,10 +17,11 @@ export class AuthService {
   /**
    * `identifier` is a username or an email address.
    *
-   * Coordinators issue usernames to students and supervisors, but accounts
-   * created before usernames existed only have an email, so both are accepted.
-   * Usernames are barred from containing "@" (see CreateStudentDto), which is
-   * what stops one account's username from shadowing another's email.
+   * Students and supervisors get a generated username (common/credentials.ts),
+   * but accounts created before usernames existed only have an email, so both
+   * are accepted. Generated usernames are letters and digits only, and the old
+   * typed ones were barred from "@", which is what stops one account's
+   * username from shadowing another's email.
    */
   async login(identifier: string, password: string) {
     const user = await this.prisma.client.user.findFirst({
@@ -39,18 +40,41 @@ export class AuthService {
       throw new UnauthorizedException('Invalid username or password');
     }
 
-    const payload = { sub: user.id, email: user.email, role: user.role };
+    return this.session(user);
+  }
 
-    const token = await this.jwtService.signAsync(payload);
+  /**
+   * A signed token plus the user summary the client stores.
+   *
+   * `mcp` ("must change password") is added only when the flag is set, so an
+   * ordinary token is byte-for-byte what it was before the flag existed.
+   * RolesGuard reads it from the token rather than the database on every
+   * request; that is why changing the password has to hand back a fresh token.
+   */
+  private async session(user: {
+    id: string;
+    email: string;
+    username: string | null;
+    name: string;
+    role: string;
+    mustChangePassword: boolean;
+  }) {
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      ...(user.mustChangePassword ? { mcp: true } : {}),
+    };
 
     return {
-      accessToken: token,
+      accessToken: await this.jwtService.signAsync(payload),
       user: {
         id: user.id,
         email: user.email,
         username: user.username,
         name: user.name,
         role: user.role,
+        mustChangePassword: user.mustChangePassword,
       },
     };
   }
@@ -63,8 +87,14 @@ export class AuthService {
    * the account owner. Without this check, an unattended logged-in browser is
    * enough to lock the real owner out.
    *
-   * There is no token-expiry story here — the existing JWT stays valid until it
-   * expires on its own, since there is no refresh flow or token blocklist.
+   * Also the way out of a forced change: it clears `mustChangePassword`. The
+   * current password is still required then — it is the temporary one the user
+   * just signed in with — so a stolen must-change token alone can't set a
+   * password.
+   *
+   * Returns a fresh session: the caller's token may carry `mcp`, and RolesGuard
+   * would keep refusing it. The old token itself is not revoked (there is no
+   * blocklist) and simply expires on its own.
    */
   async changePassword(
     userId: string,
@@ -89,11 +119,14 @@ export class AuthService {
       );
     }
 
-    await this.prisma.client.user.update({
+    const updated = await this.prisma.client.user.update({
       where: { id: userId },
-      data: { password: await bcrypt.hash(newPassword, 10) },
+      data: {
+        password: await bcrypt.hash(newPassword, 10),
+        mustChangePassword: false,
+      },
     });
 
-    return { changed: true };
+    return { changed: true, ...(await this.session(updated)) };
   }
 }

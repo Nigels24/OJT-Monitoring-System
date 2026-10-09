@@ -16,7 +16,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   // Passport accepts a sync return here; there is nothing to await.
   // Whatever this returns becomes `req.user` — see AuthedRequest.
-  validate(payload: { sub: string; email: string; role: string }): JwtUser {
-    return { userId: payload.sub, email: payload.email, role: payload.role };
+  validate(payload: {
+    sub: string;
+    email: string;
+    role: string;
+    mcp?: boolean;
+  }): JwtUser {
+    return {
+      userId: payload.sub,
+      email: payload.email,
+      role: payload.role,
+      // Absent on every token issued without the flag, including all tokens
+      // from before it existed — those read as false.
+      mustChangePassword: payload.mcp === true,
+    };
   }
 }
