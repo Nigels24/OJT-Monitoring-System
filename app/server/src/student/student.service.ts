@@ -515,8 +515,8 @@ interface StudentRow {
 /**
  * Why this student can't log attendance today, or null if they can. The same
  * three blocks the old submit form enforced:
- * - COMPLETED closes logging. Completion is by hours, so a passed `endDate`
- *   never does.
+ * - COMPLETED closes logging. Completion is by hours; no calendar date
+ *   ever closes it.
  * - No establishment: the approval queue is establishment-scoped, so a punch
  *   would sit PENDING forever (CLAUDE.md §8 item 21).
  * - Nothing before `startDate`, compared as Manila calendar days.

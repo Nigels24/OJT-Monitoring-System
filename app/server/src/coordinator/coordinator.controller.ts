@@ -21,26 +21,18 @@ import {
   IsDateString,
   IsEmail,
   IsIn,
-  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   Matches,
-  Max,
   MaxLength,
-  Min,
   MinLength,
 } from 'class-validator';
 import { CoordinatorService } from './coordinator.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
-import {
-  EmptyToNull,
-  EmptyToUndefined,
-  ToNullableNumber,
-  ToOptionalNumber,
-} from '../common/transforms';
+import { EmptyToNull, EmptyToUndefined } from '../common/transforms';
 import { attachmentDisposition } from '../common/document-types';
-import { COURSES } from '../common/courses';
+import { COURSE_LABELS } from '../common/courses';
 
 // Usernames must not contain "@" so they can never shadow an email address
 // when AuthService.login matches an identifier against both columns.
@@ -77,14 +69,19 @@ class CreateSupervisorDto {
 /**
  * Personal and OJT fields the coordinator's student form collects. Shared by
  * create and update; create adds the identity fields below.
+ *
+ * Deliberately absent, so `forbidNonWhitelisted` turns any of them into a 400:
+ * - `yearLevel` and `requiredHours` — derived from `course` by the service
+ *   (`common/courses.ts`), never typed;
+ * - `age`, `dateOfBirth`, `gender` and `endDate` — retired. Their columns stay
+ *   in the schema, unused, and `PrismaService` omits them from every read.
  */
 class StudentDetailsDto {
   // The nullable columns below use EmptyToNull, not EmptyToUndefined: on an
   // edit, emptying a box has to persist as cleared rather than silently keep
   // the old value. Absent from the body still means "leave unchanged".
-  // `requiredHours` (and `status`, on UpdateStudentDto) stay on the
-  // undefined-based transforms — they are NOT NULL, so null there is a write
-  // error, not a clear.
+  // `status`, on UpdateStudentDto, stays undefined-only — it is NOT NULL, so
+  // null there is a write error, not a clear.
   @IsOptional()
   @EmptyToNull()
   @IsString()
@@ -102,18 +99,6 @@ class StudentDetailsDto {
   @IsString()
   @MaxLength(10)
   middleInitial?: string | null;
-
-  @IsOptional()
-  @ToNullableNumber()
-  @IsInt()
-  @Min(15)
-  @Max(100)
-  age?: number | null;
-
-  @IsOptional()
-  @EmptyToNull()
-  @IsDateString()
-  dateOfBirth?: string | null;
 
   @IsOptional()
   @EmptyToNull()
@@ -138,12 +123,6 @@ class StudentDetailsDto {
   // `course` is declared on CreateStudentDto and UpdateStudentDto, not here:
   // the two validate it differently.
 
-  @IsOptional()
-  @EmptyToNull()
-  @IsString()
-  @MaxLength(30)
-  yearLevel?: string | null;
-
   // Clearing the establishment select unassigns the student — Student
   // .establishmentId is nullable for exactly that (see §8 item 17).
   @IsOptional()
@@ -151,12 +130,6 @@ class StudentDetailsDto {
   @IsString()
   @IsNotEmpty()
   establishmentId?: string | null;
-
-  @IsOptional()
-  @ToOptionalNumber()
-  @IsInt()
-  @Min(0)
-  requiredHours?: number;
 
   // The day the student's OJT begins. Read by the coordinator's attendance
   // oversight (GET /coordinator/attendance), which measures approved days
@@ -166,33 +139,18 @@ class StudentDetailsDto {
   @EmptyToNull()
   @IsDateString()
   startDate?: string | null;
-
-  // The EXPECTED end of the OJT — a planning date the coordinator enters, not
-  // the day it actually finished. It bounds nothing: completion is decided by
-  // hours (see attendanceBlockedReason in StudentService), so a student who hasn't met
-  // requiredHours by this date keeps logging past it.
-  @IsOptional()
-  @EmptyToNull()
-  @IsDateString()
-  endDate?: string | null;
-
-  // Same option list as the coordinator's establishment form. Null on both
-  // sides for the students that predate the field.
-  @IsOptional()
-  @EmptyToNull()
-  @IsIn(['Male', 'Female', 'Other'])
-  gender?: string | null;
 }
 
 // No `status`: a new student is always ACTIVE (the service sets it), so a
 // create body carrying one is a 400 under forbidNonWhitelisted. COMPLETED and
 // INACTIVE are set later, by an edit.
 class CreateStudentDto extends StudentDetailsDto {
-  // A new student's course must be one the school offers. Blank is allowed.
-  @IsOptional()
-  @EmptyToNull()
-  @IsIn(COURSES, { message: `course must be one of: ${COURSES.join('; ')}` })
-  course?: string | null;
+  // Required, and must be one the school offers: it decides the student's
+  // year level and required hours (common/courses.ts).
+  @IsIn(COURSE_LABELS, {
+    message: `course must be one of: ${COURSE_LABELS.join('; ')}`,
+  })
+  course!: string;
 
   @IsEmail()
   email!: string;
@@ -223,7 +181,8 @@ class CreateStudentDto extends StudentDetailsDto {
 class UpdateStudentDto extends StudentDetailsDto {
   // Only a string check: a student saved before the offered list existed may
   // keep their old course, which CoordinatorService.updateStudent allows only
-  // while it is unchanged — any new value must be on the list.
+  // while it is unchanged — any new value must be on the list, and changing it
+  // recomputes the year level and required hours.
   @IsOptional()
   @EmptyToNull()
   @IsString()

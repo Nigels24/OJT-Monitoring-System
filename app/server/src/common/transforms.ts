@@ -38,7 +38,7 @@ export const ToOptionalNumber = () =>
  * `""` (or `null`) clears.
  *
  * Only for columns that are nullable in `schema.prisma`. On a NOT NULL column
- * (`Student.requiredHours`, `Student.status`) keep `EmptyToUndefined` /
+ * (`Student.status`) keep `EmptyToUndefined` /
  * `ToOptionalNumber` — a `null` there is a write error, not a clear.
  */
 export const EmptyToNull = () =>
@@ -48,8 +48,8 @@ export const EmptyToNull = () =>
 
 /**
  * As `EmptyToNull`, but coerces to a number. For **nullable** numeric columns
- * (`Student.age`), where `ToOptionalNumber` would make a cleared field
- * unclearable.
+ * on an update DTO, where `ToOptionalNumber` would make a cleared field
+ * unclearable. (Its one caller, `Student.age`, was retired; kept for the next.)
  */
 export const ToNullableNumber = () =>
   Transform(({ value }: { value: unknown }) => {

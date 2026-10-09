@@ -126,14 +126,10 @@ export interface StudentProfile {
   firstName: string | null;
   lastName: string | null;
   middleInitial: string | null;
-  age: number | null;
-  dateOfBirth: string | null;
-  gender: string | null;
   contactNumber: string | null;
   address: string | null;
   requiredHours: number;
   startDate: string | null;
-  endDate: string | null;
   status: string;
   user: { id: string; email: string; name: string };
   establishment: { id: string; name: string } | null;

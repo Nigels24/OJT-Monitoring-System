@@ -24,7 +24,6 @@ interface PunchCardProps {
   isLoading: boolean;
   isError: boolean;
   blockedReason: string | null;
-  noticeMessage?: string;
   punchingKind: PunchKind | null;
   remarksDraft: string;
   remarksDirty: boolean;
@@ -43,7 +42,6 @@ export default function PunchCard({
   isLoading,
   isError,
   blockedReason,
-  noticeMessage,
   punchingKind,
   remarksDraft,
   remarksDirty,
@@ -154,12 +152,6 @@ export default function PunchCard({
         <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex items-start gap-2">
           <Info size={16} className="shrink-0 mt-0.5" />
           {blockedReason}
-        </p>
-      )}
-      {noticeMessage && (
-        <p className="text-sm text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 flex items-start gap-2">
-          <Info size={16} className="shrink-0 mt-0.5" />
-          {noticeMessage}
         </p>
       )}
 

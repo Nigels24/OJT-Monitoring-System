@@ -38,34 +38,30 @@ import {
 } from '../common/document-types';
 import { DocumentType } from '../../generated/prisma/client';
 import { SCHOOL_NAME } from '../common/school';
-import { isOfferedCourse } from '../common/courses';
+import { deriveFromCourse } from '../common/courses';
 
 /** Fields the coordinator can set on a student, shared by create and update. */
 /**
  * On the nullable fields, `null` and `undefined` mean different things:
  * `null` = the coordinator emptied the box, clear the column; `undefined` =
  * the field wasn't in the request at all, leave the column alone. The DTO's
- * `EmptyToNull`/`ToNullableNumber` transforms are what produce that split.
- * `requiredHours` and `status` are NOT NULL, so they stay undefined-only.
+ * `EmptyToNull` transform is what produces that split. `status` is NOT NULL,
+ * so it stays undefined-only.
+ *
+ * No `yearLevel` or `requiredHours`: both are derived from `course`
+ * (`deriveFromCourse`), never accepted from a request.
  */
 interface StudentDetails {
   name?: string;
   firstName?: string | null;
   lastName?: string | null;
   middleInitial?: string | null;
-  age?: number | null;
-  dateOfBirth?: string | null;
   school?: string | null;
   contactNumber?: string | null;
   address?: string | null;
   course?: string | null;
-  yearLevel?: string | null;
   establishmentId?: string | null;
-  requiredHours?: number;
   startDate?: string | null;
-  /** Expected end of the OJT; never a bound on attendance. */
-  endDate?: string | null;
-  gender?: string | null;
   status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
 }
 
@@ -122,12 +118,23 @@ export class CoordinatorService {
 
   async createStudent(
     data: StudentDetails & {
+      course: string;
       email: string;
       username: string;
       password: string;
       studentIdNumber: string;
     },
   ) {
+    // The DTO already restricts `course` to the offered list; this is the
+    // service-level guarantee that a student is never created without the year
+    // level and hours their course implies.
+    const derived = deriveFromCourse(data.course);
+    if (!derived) {
+      throw new BadRequestException(
+        `"${data.course}" is not an offered course`,
+      );
+    }
+
     await this.assertCredentialsAvailable(data.email, data.username);
 
     const idTaken = await this.prisma.client.student.findUnique({
@@ -168,6 +175,8 @@ export class CoordinatorService {
           studentIdNumber: data.studentIdNumber,
           school: SCHOOL_NAME,
           ...studentProfileData(data),
+          yearLevel: derived.yearLevel,
+          requiredHours: derived.requiredHours,
           // A new student is always ACTIVE — the create DTO has no status
           // field, and this line holds even if a caller passes one.
           status: 'ACTIVE',
@@ -610,17 +619,24 @@ export class CoordinatorService {
       throw new NotFoundException('Student not found');
     }
 
-    // A course must be one the school offers — except that a student saved
-    // before the list existed may keep their old value, as long as this edit
-    // leaves it unchanged. Changing it means picking from the list.
-    if (
-      data.course != null &&
-      !isOfferedCourse(data.course) &&
-      data.course !== student.course
-    ) {
-      throw new BadRequestException(
-        `"${data.course}" is not an offered course`,
-      );
+    // The course decides the year level and required hours, so they move only
+    // when the course does. Unchanged or absent leaves all three alone, which
+    // is what lets a student saved before the current list (another course,
+    // 1st/3rd year, hand-typed hours) keep those values until the course is
+    // deliberately changed. A change must name an offered course; clearing it
+    // (null) is not one, because the hours would have nothing to follow.
+    const courseChanged =
+      data.course !== undefined && data.course !== student.course;
+    let derived: { yearLevel: string; requiredHours: number } | null = null;
+    if (courseChanged) {
+      derived = deriveFromCourse(data.course);
+      if (!derived) {
+        throw new BadRequestException(
+          data.course == null
+            ? 'Course is required'
+            : `"${data.course}" is not an offered course`,
+        );
+      }
     }
 
     // Name lives on User, everything else on Student.
@@ -634,7 +650,7 @@ export class CoordinatorService {
 
     return this.prisma.client.student.update({
       where: { id: studentId },
-      data: studentProfileData(data),
+      data: { ...studentProfileData(data), ...derived },
       include: {
         user: { select: { id: true, email: true, name: true } },
         establishment: { select: { id: true, name: true } },
@@ -1063,17 +1079,11 @@ function studentProfileData(data: StudentDetails) {
     firstName: data.firstName,
     lastName: data.lastName,
     middleInitial: data.middleInitial,
-    age: data.age,
-    dateOfBirth: toNullableDate(data.dateOfBirth),
     contactNumber: data.contactNumber,
     address: data.address,
     course: data.course,
-    yearLevel: data.yearLevel,
     establishmentId: data.establishmentId,
-    requiredHours: data.requiredHours,
     startDate: toNullableDate(data.startDate),
-    endDate: toNullableDate(data.endDate),
-    gender: data.gender,
     status: data.status,
   };
 }

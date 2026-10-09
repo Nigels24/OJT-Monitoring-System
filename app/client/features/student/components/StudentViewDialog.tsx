@@ -59,13 +59,6 @@ export default function StudentViewDialog({
               value={student.contactNumber}
               icon={Phone}
             />
-            <DetailItem label="Age" value={student.age} icon={User} />
-            <DetailItem label="Gender" value={student.gender} icon={User} />
-            <DetailItem
-              label="Date of Birth"
-              value={formatDateOnly(student.dateOfBirth, "")|| null}
-              icon={CalendarDays}
-            />
             <DetailItem
               label="Address"
               value={student.address}
@@ -108,11 +101,6 @@ export default function StudentViewDialog({
               <DetailItem
                 label="Start Date"
                 value={formatDateOnly(student.startDate, "") || null}
-                icon={CalendarDays}
-              />
-              <DetailItem
-                label="Expected End Date"
-                value={formatDateOnly(student.endDate, "") || null}
                 icon={CalendarDays}
               />
             </div>

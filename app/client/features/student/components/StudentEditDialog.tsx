@@ -2,7 +2,10 @@ import { Users, X } from "lucide-react";
 import StudentForm from "./StudentForm";
 import { Student, StudentStatus } from "@/lib/api/studentApi";
 import { Establishment } from "@/lib/api/establishmentApi";
-import type { StudentForm as StudentFormValues } from "../hooks/use-students";
+import type {
+  StudentForm as StudentFormValues,
+  StudentPlacement,
+} from "../hooks/use-students";
 import Overlay from "@/components/ui/Overlay";
 
 interface StudentEditDialogProps {
@@ -15,8 +18,7 @@ interface StudentEditDialogProps {
   establishments: Establishment[];
   /** The offered courses, plus an edited student's "(old)" value if any. */
   courseOptions: { label: string; value: string }[];
-  yearLevelOptions: string[];
-  genderOptions: string[];
+  placement: StudentPlacement | null;
   statusOptions: StudentStatus[];
   setField: (
     key: keyof StudentFormValues,
@@ -34,8 +36,7 @@ export default function StudentEditDialog({
   error,
   establishments,
   courseOptions,
-  yearLevelOptions,
-  genderOptions,
+  placement,
   statusOptions,
   setField,
   onSubmit,
@@ -76,8 +77,7 @@ export default function StudentEditDialog({
             error={error}
             establishments={establishments}
             courseOptions={courseOptions}
-            yearLevelOptions={yearLevelOptions}
-            genderOptions={genderOptions}
+            placement={placement}
             statusOptions={statusOptions}
             setField={setField}
             onSubmit={onSubmit}

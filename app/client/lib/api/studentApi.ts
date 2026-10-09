@@ -23,8 +23,6 @@ export interface Student {
   firstName?: string | null;
   lastName?: string | null;
   middleInitial?: string | null;
-  age?: number | null;
-  dateOfBirth?: string | null;
   school?: string | null;
   contactNumber?: string | null;
   address?: string | null;
@@ -33,9 +31,6 @@ export interface Student {
   establishmentId?: string | null;
   requiredHours: number;
   startDate?: string | null;
-  /** Expected end of the OJT, not the actual completion date. */
-  endDate?: string | null;
-  gender?: string | null;
   status: StudentStatus;
   /** Sum of APPROVED attendance hours, computed server-side. */
   completedHours: number;
@@ -61,7 +56,11 @@ export interface Student {
 
 /**
  * `null` on a nullable field clears it; omitting the field leaves the stored
- * value alone. `requiredHours` is NOT NULL server-side, so it is omit-only.
+ * value alone.
+ *
+ * No `yearLevel` or `requiredHours`: both are derived from `course` on the
+ * server (`lib/courses.ts` mirrors the table), and the server rejects a body
+ * that carries either.
  *
  * `school` is deliberately absent — the server ignores any client-supplied
  * value and always sets it to the one permanent school name (`SCHOOL_NAME`,
@@ -71,17 +70,11 @@ export interface StudentDetailsRequest {
   firstName?: string | null;
   lastName?: string | null;
   middleInitial?: string | null;
-  age?: number | null;
-  dateOfBirth?: string | null;
   contactNumber?: string | null;
   address?: string | null;
   course?: string | null;
-  yearLevel?: string | null;
   establishmentId?: string | null;
-  requiredHours?: number;
   startDate?: string | null;
-  endDate?: string | null;
-  gender?: string | null;
 }
 
 /**
@@ -106,7 +99,7 @@ export interface CreateStudentResponse {
   role: string;
 }
 
-/** Status is NOT NULL server-side, so it is omit-only like `requiredHours`. */
+/** Status is NOT NULL server-side, so it is omit-only. */
 export interface UpdateStudentRequest extends StudentDetailsRequest {
   status?: StudentStatus;
 }

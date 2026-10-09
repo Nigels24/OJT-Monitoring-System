@@ -53,8 +53,7 @@ export default function StudentManagementPage() {
     totalPages,
     stats,
     courseOptions,
-    YEAR_LEVEL_OPTIONS,
-    GENDER_OPTIONS,
+    placement,
     STATUS_OPTIONS,
     setField,
     setSearch,
@@ -245,8 +244,7 @@ export default function StudentManagementPage() {
         error={error}
         establishments={establishments || []}
         courseOptions={courseOptions}
-        yearLevelOptions={YEAR_LEVEL_OPTIONS}
-        genderOptions={GENDER_OPTIONS}
+        placement={placement}
         statusOptions={STATUS_OPTIONS}
         setField={setField}
         onSubmit={handleSubmit}

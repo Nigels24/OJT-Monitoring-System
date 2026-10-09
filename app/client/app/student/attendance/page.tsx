@@ -37,7 +37,6 @@ export default function StudentAttendancePage() {
     isTodayLoading,
     isTodayError,
     blockedReason,
-    noticeMessage,
     confirmKind,
     punchingKind,
     remarksDraft,
@@ -113,7 +112,6 @@ export default function StudentAttendancePage() {
               isLoading={isTodayLoading}
               isError={isTodayError}
               blockedReason={blockedReason}
-              noticeMessage={noticeMessage}
               punchingKind={punchingKind}
               remarksDraft={remarksDraft}
               remarksDirty={remarksDirty}

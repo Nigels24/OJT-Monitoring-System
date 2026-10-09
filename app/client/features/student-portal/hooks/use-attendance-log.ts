@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import {
   useGetAttendanceHistoryQuery,
-  useGetMyProfileQuery,
   useGetTodayAttendanceQuery,
   usePunchMutation,
   useUpdateTodayRemarksMutation,
@@ -10,7 +9,6 @@ import {
 } from "@/lib/api/studentPortalApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
 import { PUNCH_LABEL, formatPunchTime } from "@/lib/attendance";
-import { formatDateOnly } from "@/lib/format";
 
 const PAGE_SIZE = 10;
 
@@ -37,7 +35,6 @@ export function useAttendanceLog() {
   });
   const { data: history, isLoading: isHistoryLoading } =
     useGetAttendanceHistoryQuery();
-  const { data: profile } = useGetMyProfileQuery();
   const [punch] = usePunchMutation();
   const [updateRemarks, { isLoading: isSavingRemarks }] =
     useUpdateTodayRemarksMutation();
@@ -65,16 +62,6 @@ export function useAttendanceLog() {
   const remarksDirty = seededRemarks !== null && remarksDraft !== seededRemarks;
 
   const blockedReason = today?.blockedReason ?? null;
-
-  // Informational only — an expected end date never blocks punching
-  // (completion is by hours; CLAUDE.md §8 item 12). Compared against the
-  // server's own "today", both as Manila calendar days.
-  const endDate = profile?.endDate?.slice(0, 10);
-  const todayDate = today?.date.slice(0, 10);
-  const noticeMessage =
-    !blockedReason && endDate && todayDate && todayDate > endDate
-      ? `Your expected end date (${formatDateOnly(profile!.endDate!)}) has passed. Keep logging until your required hours are met.`
-      : undefined;
 
   const requestPunch = (kind: PunchKind) => setConfirmKind(kind);
   const cancelPunch = () => setConfirmKind(null);
@@ -141,7 +128,6 @@ export function useAttendanceLog() {
     isTodayLoading,
     isTodayError,
     blockedReason,
-    noticeMessage,
     confirmKind,
     punchingKind,
     remarksDraft,

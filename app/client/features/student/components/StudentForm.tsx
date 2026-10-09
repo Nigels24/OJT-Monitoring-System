@@ -18,7 +18,10 @@ import SelectField from "@/components/ui/SelectField";
 import { Student, StudentStatus } from "@/lib/api/studentApi";
 import { Establishment } from "@/lib/api/establishmentApi";
 import { SCHOOL_NAME } from "@/lib/school";
-import type { StudentForm as StudentFormValues } from "../hooks/use-students";
+import type {
+  StudentForm as StudentFormValues,
+  StudentPlacement,
+} from "../hooks/use-students";
 
 interface StudentFormProps {
   form: StudentFormValues;
@@ -29,8 +32,8 @@ interface StudentFormProps {
   establishments: Establishment[];
   /** The offered courses, plus an edited student's "(old)" value if any. */
   courseOptions: { label: string; value: string }[];
-  yearLevelOptions: string[];
-  genderOptions: string[];
+  /** Year level and hours implied by the course — displayed, never typed. */
+  placement: StudentPlacement | null;
   statusOptions: StudentStatus[];
   setField: (
     key: keyof StudentFormValues,
@@ -54,8 +57,7 @@ export default function StudentForm({
   error,
   establishments,
   courseOptions,
-  yearLevelOptions,
-  genderOptions,
+  placement,
   statusOptions,
   setField,
   onSubmit,
@@ -175,40 +177,6 @@ export default function StudentForm({
             maxLength={10}
           />
           <TextField
-            label="Age"
-            labelIcon={User}
-            fieldIcon={User}
-            type="number"
-            min={15}
-            max={100}
-            value={form.age}
-            onChange={setField("age")}
-            placeholder="21"
-          />
-          <TextField
-            label="Date of Birth"
-            labelIcon={CalendarDays}
-            fieldIcon={CalendarDays}
-            type="date"
-            value={form.dateOfBirth}
-            onChange={setField("dateOfBirth")}
-          />
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Gender
-            </label>
-            <SelectField
-              value={form.gender}
-              onChange={setValue("gender")}
-              placeholder="Select Gender"
-              options={[
-                { label: "Not specified", value: "" },
-                ...genderOptions.map((g) => ({ label: g, value: g })),
-              ]}
-              className="w-full"
-            />
-          </div>
-          <TextField
             label="Contact Number"
             labelIcon={Phone}
             fieldIcon={Phone}
@@ -252,7 +220,7 @@ export default function StudentForm({
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Course / Program
+              Course / Program{!editTarget && <span className="text-red-500"> *</span>}
             </label>
             <SelectField
               value={form.course}
@@ -262,18 +230,18 @@ export default function StudentForm({
               className="w-full"
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Year Level
-            </label>
-            <SelectField
-              value={form.yearLevel}
-              onChange={setValue("yearLevel")}
-              placeholder="Select Year"
-              options={yearLevelOptions.map((y) => ({ label: y, value: y }))}
-              className="w-full"
-            />
-          </div>
+          {/* Year level and hours follow from the course — shown, never
+              typed. A legacy student's stored values stay (marked "old")
+              until the course is changed. */}
+          <ReadOnlyField
+            label="Year Level"
+            icon={GraduationCap}
+            value={
+              placement
+                ? `${placement.yearLevel ?? "—"}${placement.yearLevelIsOld ? " (old)" : ""}`
+                : "Set by course"
+            }
+          />
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Establishment Assignment
@@ -292,15 +260,14 @@ export default function StudentForm({
               className="w-full"
             />
           </div>
-          <TextField
+          <ReadOnlyField
             label="Required Hours"
-            labelIcon={Clock}
-            fieldIcon={Clock}
-            type="number"
-            min={0}
-            value={form.requiredHours}
-            onChange={setField("requiredHours")}
-            placeholder="500"
+            icon={Clock}
+            value={
+              placement
+                ? `${placement.requiredHours} hrs${placement.hoursAreOld ? " (old)" : ""}`
+                : "Set by course"
+            }
           />
           <TextField
             label="OJT Start Date"
@@ -309,14 +276,6 @@ export default function StudentForm({
             type="date"
             value={form.startDate}
             onChange={setField("startDate")}
-          />
-          <TextField
-            label="Expected End Date"
-            labelIcon={CalendarDays}
-            fieldIcon={CalendarDays}
-            type="date"
-            value={form.endDate}
-            onChange={setField("endDate")}
           />
           {/* Edit only: a new student is always ACTIVE (set by the
               server). COMPLETED / INACTIVE are set here later. */}
@@ -365,5 +324,29 @@ export default function StudentForm({
         </div>
       </div>
     </form>
+  );
+}
+
+/** A labelled value styled like a disabled input — the School box's look. */
+function ReadOnlyField({
+  label,
+  icon: Icon,
+  value,
+}: {
+  label: string;
+  icon: typeof Clock;
+  value: string;
+}) {
+  return (
+    <div>
+      <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1.5">
+        <Icon size={15} className="text-blue-600" />
+        {label}
+      </label>
+      <div className="flex items-center gap-2 h-11 px-3 border border-gray-200 rounded-lg bg-gray-50 text-gray-600">
+        <Icon size={18} className="text-gray-400" />
+        {value}
+      </div>
+    </div>
   );
 }

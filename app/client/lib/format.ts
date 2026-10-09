@@ -1,6 +1,6 @@
 /**
- * Renders a **date-only** column (`Attendance.date`, `Student.startDate` /
- * `endDate` / `dateOfBirth`, `Evaluation.trainingStartedAt` / `trainingEndedAt`).
+ * Renders a **date-only** column (`Attendance.date`, `Student.startDate`,
+ * `Evaluation.trainingStartedAt` / `trainingEndedAt`).
  *
  * Those are stored as UTC midnight of the intended calendar day, so they must
  * be read back in UTC. Plain `new Date(iso).toLocaleDateString()` converts to

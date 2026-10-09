@@ -96,8 +96,8 @@ Student punches (four separately approved clock events per day)
                                          (nothing logged here could ever be approved —
                                           the supervisor's queue is establishment-scoped)
       manilaToday() < startDate       → names the start date
-      NOTE: endDate is deliberately NOT a bound. Completion is by hours, not the
-      calendar; only status COMPLETED closes logging.
+      NOTE: no calendar date is a bound (the old expected endDate is retired).
+      Completion is by hours; only status COMPLETED closes logging.
 
     ORDER (punchAvailability, attendance-hours.ts — no clock windows):
       Out needs its In, not DECLINED · PM In blocked while AM is open ·

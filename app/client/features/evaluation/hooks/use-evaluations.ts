@@ -71,10 +71,14 @@ function useEvaluationDraft(
     };
 
   /**
-   * Picking the student also prefills the training dates from their record,
+   * Picking the student also prefills Training Date Started from their record,
    * which is what the paper form's header expects. Done here rather than in an
    * effect — deriving state from a change is not a synchronisation problem, and
    * `react-hooks/set-state-in-effect` rules the effect version out anyway.
+   *
+   * Training Date Ended has no prefill: the expected end date it used to read
+   * is retired, and the real end date is a later step. It is reset to blank
+   * per student so one student's typed date never carries over to another.
    */
   const setStudentId = (studentId: string) => {
     const student = (students ?? []).find((s) => s.id === studentId);
@@ -82,7 +86,7 @@ function useEvaluationDraft(
       ...f,
       studentId,
       trainingStartedAt: toDateInput(student?.startDate ?? null),
-      trainingEndedAt: toDateInput(student?.endDate ?? null),
+      trainingEndedAt: "",
     }));
   };
 

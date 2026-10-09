@@ -1,7 +1,7 @@
 /**
  * Calendar-date helpers, shared because the write and read paths must agree.
  *
- * Every date-only column (`Attendance.date`, `Student.startDate`/`endDate`) is
+ * Every date-only column (`Attendance.date`, `Student.startDate`) is
  * stored as **UTC midnight of the intended calendar day**, so a date-only
  * comparison is a straight timestamp comparison between two values produced
  * here. Mixing in a raw `new Date()` breaks that: the server may run in UTC
@@ -24,7 +24,7 @@ export const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * The `@@unique([studentId, date])` constraint compares the full timestamp, so
  * without this two submissions for the same calendar day at different clock
  * times would both be accepted and the day counted twice. Also used to
- * date-only-compare a stored `startDate`/`endDate`, which may carry a nonzero
+ * date-only-compare a stored `startDate`, which may carry a nonzero
  * time component.
  *
  * An unparseable string returns an Invalid Date for the caller to reject.

@@ -288,9 +288,9 @@ an update DTO**, because Prisma reads `undefined` as "leave this column alone" �
 | Transform | Empty input becomes | Use on |
 |---|---|---|
 | `EmptyToUndefined()` | `undefined` | create DTOs; any NOT NULL column |
-| `ToOptionalNumber()` | `undefined` | optional numbers on a NOT NULL column (`requiredHours`) |
+| `ToOptionalNumber()` | `undefined` | optional numbers where blank must mean "absent", never 0 (`limit` on `GET /messages/conversations/:id`) |
 | `EmptyToNull()` | `null` | **nullable** columns on an update DTO |
-| `ToNullableNumber()` | `null` | **nullable** numbers on an update DTO (`age`) |
+| `ToNullableNumber()` | `null` | **nullable** numbers on an update DTO (no caller since `Student.age` was retired) |
 
 A field **absent** from the body is `undefined` either way and always means "leave
 unchanged" — only an explicit `""`/`null` clears. The client must therefore send `null`
@@ -303,7 +303,8 @@ The original two, in detail:
   alone only skips `null`/`undefined`.
 - `ToOptionalNumber()` — use instead of `@Type(() => Number)` on optional numbers.
   `@Type` coerces `""` to `0`, silently turning a blank field into a real zero (a blank
-  "Required Hours" becomes a genuine 0-hour requirement).
+  "Required Hours" once became a genuine 0-hour requirement — hours are now derived from
+  the course, but the trap stands for any optional number).
 
 They are `@Transform` wrappers, so they go *above* the validators and replace `@Type`
 entirely:
@@ -314,10 +315,10 @@ class CreateStudentDto {
   studentIdNumber: string;
 
   @EmptyToUndefined() @IsOptional() @IsString()
-  course?: string;
+  contactNumber?: string;
 
   @ToOptionalNumber() @IsOptional() @IsInt() @Min(0)
-  requiredHours?: number;      // NOT @Type(() => Number)
+  someCount?: number;          // NOT @Type(() => Number)
 
   @EmptyToUndefined() @IsOptional() @IsDateString()
   startDate?: string;
@@ -381,7 +382,7 @@ and makes required create fields optional.
   (`validateScores`). Injected into `SupervisorService`, which is why
   `SupervisorModule` imports `EvaluationTemplateModule`.
 - **`src/common/dates.ts`** — every calendar-date comparison. Date-only columns
-  (`Attendance.date`, `Student.startDate`/`endDate`) are stored as **UTC midnight of the
+  (`Attendance.date`, `Student.startDate`) are stored as **UTC midnight of the
   intended day**, so comparisons must be between values this module produced.
   **`manilaToday()` is the only correct "today"** — `startOfUtcDay(new Date())` reads the
   *server's* UTC day, which only rolls over at 08:00 Manila, so the write and read paths
@@ -390,7 +391,13 @@ and makes required create fields optional.
   `updatedAt`/`uploadedAt` are real instants and stay local.
 - **`src/common/cascade-delete.ts`** — delete ordering, see §6.
 - **`PrismaService`** exposes the client as `.client` rather than extending
-  `PrismaClient` — every query reads `this.prisma.client.<model>`.
+  `PrismaClient` — every query reads `this.prisma.client.<model>`. It is built with a
+  **global `omit`** of the retired `Student` columns (`age`, `dateOfBirth`, `gender`,
+  `endDate` — §7 "Course decides year level and hours"), so no query returns them and
+  the generated types don't have them. Remove the entry when the columns are dropped.
+- **`src/common/courses.ts`** — the course table (`COURSES`: `code`, `label`,
+  `yearLevel`, `requiredHours`), `COURSE_LABELS`, `isOfferedCourse`,
+  `deriveFromCourse`. The only source of a student's year level and required hours.
 
 ### "No data" vs "zero" — a repeated convention
 
@@ -553,10 +560,10 @@ table; never derive one from the other.
 | PATCH | `/auth/password` | any signed-in | `{ currentPassword, newPassword }` |
 | GET | `/establishments` · `/establishments/:id` | any signed-in | reads are open |
 | POST/PATCH/DELETE | `/establishments` · `/establishments/:id` | COORDINATOR | POST always creates **ACTIVE** — `status` is only on the update DTO (400 on create) |
-| POST | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | issues username + password. A student is created **ACTIVE** — `status` is not on the create DTO (400 if sent); `course` must be one of `COURSES` or blank |
+| POST | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | issues username + password. A student is created **ACTIVE** — `status` is not on the create DTO (400 if sent). `course` is **required** and must be an offered course; the server sets `yearLevel`/`requiredHours` from it. `yearLevel`, `requiredHours`, `age`, `dateOfBirth`, `gender`, `endDate` in the body are a 400 |
 | POST | `/coordinator/students/bulk-delete` | COORDINATOR | `{ ids }`, 1–100. Every id must exist and be **COMPLETED**, else 400 with `offenders: [{ id, reason }]` and nothing deleted. Then `deleteStudentCascade` per student, **one `$transaction` each** (status re-checked inside), files after each commit. Returns `{ deleted: [ids], failed: [{ id, reason }] }` |
 | GET | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | |
-| PATCH/DELETE | `/coordinator/students/:id` | COORDINATOR | delete is guarded, see §6. PATCH: a `course` not in `COURSES` is a 400 **unless it equals the stored value** (pre-list students keep theirs until changed) |
+| PATCH/DELETE | `/coordinator/students/:id` | COORDINATOR | delete is guarded, see §6. PATCH: same six fields rejected. A `course` that **differs from the stored one** must be offered (clearing it is a 400) and recomputes `yearLevel`/`requiredHours`; an unchanged or absent course leaves all three alone, so legacy students keep their values until the course changes |
 | DELETE | `/coordinator/supervisors/:id` | COORDINATOR | delete is guarded, see §6 |
 | PATCH | `/coordinator/students/:id/password` · `/coordinator/supervisors/:id/password` | COORDINATOR | |
 | GET | `/coordinator/dashboard` | COORDINATOR | real aggregates |
@@ -748,7 +755,7 @@ their own supervisor approval. Hours: §4 `attendance-hours.ts`.
 as `allowed` so the client holds no copy):
 
 - **Blocks** (every kind, also for remarks): `status: COMPLETED`; no establishment (§8
-  item 21); Manila today before `startDate`. A passed `endDate` never blocks (§8 item 12).
+  item 21); Manila today before `startDate`. No calendar date ever ends the OJT — only `COMPLETED` does.
 - Only **Manila today** — the day row is `manilaToday()`, created by `upsert` on
   `(studentId, date)` at the first punch or remark; a concurrent first punch that loses
   the insert race (P2002) re-reads instead of 500ing.
@@ -838,7 +845,7 @@ recoverable, a half-deleted database is not.
 - **Auth** — `POST /auth/login`, JWT bearer, role-based routing.
 - **Establishment (Coordinator)** — full CRUD, PSGC cascading address dropdowns.
 - **Student Management (Coordinator)** — full CRUD, computed hours, progress, stats,
-  including writable `Student.startDate`, expected `endDate` and `gender` (§8 item 12). `school` is not one of the writable fields —
+  including writable `Student.startDate`. `school` is not one of the writable fields —
   this system serves exactly one school, permanently named by the `SCHOOL_NAME` constant
   (`server/src/common/school.ts`, `client/lib/school.ts`, deliberately duplicated with a
   comment on each pointing at the other, since the two projects share no code). The
@@ -849,7 +856,7 @@ recoverable, a half-deleted database is not.
   from before this was settled. The column itself is untouched — no migration.
 - **Student self-service (dashboard, attendance, profile)** — logging and history, plus
   `GET`/`PATCH /student/profile` (self-edit limited to `contactNumber` and `address`; every
-  other field, including `gender` and `endDate`, is read-only from this endpoint). The rest
+  other field is read-only from this endpoint). The rest
   of the student portal is unbuilt; see "Partially built" below.
 - **Supervisor** — dashboard + per-punch attendance approval with required decline reasons.
 - **Attendance punches (server)** — §6 "Attendance is a day plus four separately approved
@@ -877,11 +884,28 @@ recoverable, a half-deleted database is not.
   have no `status`. `StudentStatus.PENDING` is still in the enum and the edit select but
   nothing assigns it automatically and no dashboard counts it (the dashboard's
   `pendingApprovals` is punches).
-- **Offered courses** — the four programmes in `COURSES` (`server/src/common/courses.ts`,
-  `client/lib/courses.ts`, deliberately duplicated like `SCHOOL_NAME`). The only course
-  list in the client; the student form reads it. Editing a student whose saved course
-  predates the list shows that value as an extra "<course> (old)" option so it isn't
-  blanked; the server accepts it only while unchanged.
+- **Course decides year level and hours** — two programmes, one table (`COURSES` in
+  `server/src/common/courses.ts`, mirrored in `client/lib/courses.ts`, deliberately
+  duplicated like `SCHOOL_NAME`):
+
+  | Code | `label` (stored in `Student.course`) | Year level | Required hours |
+  |---|---|---|---|
+  | ACT | Associate in Computer Technology | 2nd Year | 320 |
+  | BSIT | Bachelor of Science in Information Technology | 4th Year | 486 |
+
+  No form asks for year level or hours; the server derives both (`deriveFromCourse`) on
+  create and whenever the course **changes**. The student form shows them as read-only
+  text that follows the course select. **Legacy rule:** a student stored with another
+  course, year level or hours keeps all of them until their course is changed — the edit
+  form shows the stored course as an extra "<course> (old)" option and the stored year
+  level/hours marked "(old)" where the table disagrees. Course is required on create
+  (client guard + DTO); on edit it can be changed but not cleared.
+  **Retired student fields** — `age`, `dateOfBirth`, `gender`, `endDate` (expected end
+  date) are gone from every DTO, response and screen. The columns **stay in
+  `schema.prisma`, unused** (no migration); `PrismaService`'s global `omit` hides them.
+  Drop them in a later cleanup migration, after a `pg_dump`. The evaluation form no
+  longer prefills Training Date Ended (it read `endDate`); the real end date is a later
+  step.
 - **Bulk delete (Coordinator Students)** — checkbox column, only COMPLETED rows selectable
   (others disabled with a tooltip); header box selects every COMPLETED row matching the
   search + status filter across all pages; "Select all completed" switches the filter to
@@ -1039,6 +1063,12 @@ recoverable, a half-deleted database is not.
 
 ### Needs live verification
 
+**Final-defense step F1** (course table, derived year level/hours, retired student
+fields). Verified in-process only — real `AppModule`, the global `ValidationPipe` and the
+real services against a faked Prisma (20 cases: derivation on create, the six rejected
+fields on create and update, the legacy rule on update); no live request was made. The
+global `omit` was checked only by constructing the client.
+
 **Revisions batch 2** (ACTIVE on create, the four courses, bulk delete). Verified
 in-process only — real controllers, global `ValidationPipe` and services against a faked
 Prisma; no live request was made (the coordinator's password is no longer `admin123`).
@@ -1158,17 +1188,11 @@ Ordered roughly by how likely each is to bite.
     details/establishment. Don't build it speculatively — add it when asked.
 11. The coordinator dashboard's attendance trend has no server-side date range; it is
     always the last 6 weeks from today.
-12. `Student.endDate` is the **expected** end of the OJT — a coordinator-entered planning
-    date, labelled "Expected End Date" everywhere it is shown — never the actual completion
-    date, and it bounds nothing: completion is by hours, only `status: COMPLETED` closes
-    attendance (`attendanceBlockedReason` in `student.service.ts`; the student attendance page merely shows a
-    non-blocking notice once the date has passed). Both it and `Student.gender`
-    (`Male`/`Female`/`Other`, the establishment form's list) are set only from the
-    coordinator's student form (`StudentDetailsDto`); the student's own `PATCH
-    /student/profile` still excludes them. Both are nullable end to end, so students created
-    before this show `—`. One knock-on: the supervisor's evaluation form prefills "Training
-    Date Ended" from `endDate`, so that prefill is now an *expected* date the supervisor is
-    expected to correct if the training actually ended earlier or later.
+12. **Resolved by retirement: `Student.endDate` and `Student.gender`.** Both were retired
+    with `age` and `dateOfBirth` (§7 "Course decides year level and hours"); the columns
+    remain, unused and omitted from every read. Completion was always by hours — only
+    `status: COMPLETED` closes attendance — so nothing depended on `endDate` but a
+    non-blocking notice and the evaluation's Training Date Ended prefill, both removed.
 13. `getMyDocuments` mints a signed URL per row on every request (at most six; the
     coordinator's checklist deliberately mints none) (`Promise.all(rows.map(withSignedUrl))`) — an extra Supabase round trip per
     row, same scaling shape as item 4. Fine at current volume; revisit alongside item 3 if

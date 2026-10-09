@@ -10,20 +10,23 @@ import {
 } from "@/lib/api/studentApi";
 import { useGetEstablishmentsQuery } from "@/lib/api/establishmentApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
-import { COURSES, isOfferedCourse } from "@/lib/courses";
+import { COURSES, findCourse, isOfferedCourse } from "@/lib/courses";
 
 /** The word the coordinator types to arm the bulk-delete button. */
 export const BULK_DELETE_CONFIRM_WORD = "DELETE";
 
-export const YEAR_LEVEL_OPTIONS = [
-  "1st Year",
-  "2nd Year",
-  "3rd Year",
-  "4th Year",
-];
-
-// Same values as the establishment coordinator's gender select.
-export const GENDER_OPTIONS = ["Male", "Female", "Other"];
+/**
+ * The year level and required hours the form displays. Never typed: they
+ * follow from the course (`lib/courses.ts`), and the server derives the stored
+ * values itself. `…IsOld` marks a stored value that predates the course table
+ * and is kept only while the course is left unchanged.
+ */
+export interface StudentPlacement {
+  yearLevel: string | null;
+  requiredHours: number;
+  yearLevelIsOld: boolean;
+  hoursAreOld: boolean;
+}
 
 export const STATUS_OPTIONS: StudentStatus[] = [
   "ACTIVE",
@@ -40,17 +43,11 @@ const EMPTY_FORM = {
   email: "",
   username: "",
   password: "",
-  age: "",
-  dateOfBirth: "",
-  gender: "",
   contactNumber: "",
   address: "",
   course: "",
-  yearLevel: "",
   establishmentId: "",
-  requiredHours: "",
   startDate: "",
-  endDate: "",
   // Only sent on an edit — a new student is always ACTIVE server-side.
   status: "ACTIVE" as StudentStatus,
 };
@@ -94,31 +91,31 @@ export function useStudents() {
    * server reads an *absent* field as "leave unchanged", so omitting them
    * would silently restore the old value on every edit.
    *
-   * `requiredHours` is the exception: it is NOT NULL server-side, so a blank
-   * stays omitted rather than becoming a null write.
+   * No year level or hours: the server derives both from `course`. Sending
+   * the course unchanged (including a legacy one) leaves them as stored.
    */
   const detailsPayload = () => ({
     firstName: form.firstName || null,
     lastName: form.lastName || null,
     middleInitial: form.middleInitial || null,
-    age: form.age ? Number(form.age) : null,
-    dateOfBirth: form.dateOfBirth
-      ? new Date(form.dateOfBirth).toISOString()
-      : null,
-    gender: form.gender || null,
     contactNumber: form.contactNumber || null,
     address: form.address || null,
     course: form.course || null,
-    yearLevel: form.yearLevel || null,
     establishmentId: form.establishmentId || null,
-    requiredHours: form.requiredHours ? Number(form.requiredHours) : undefined,
     startDate: form.startDate ? new Date(form.startDate).toISOString() : null,
-    endDate: form.endDate ? new Date(form.endDate).toISOString() : null,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    // SelectField has no native `required`, so a missing course is caught
+    // here rather than as a 400 — it decides the year level and hours. Create
+    // only: an edit may leave a legacy student's blank course as it is.
+    if (!editTarget && !form.course) {
+      setError("Select a course.");
+      return;
+    }
 
     try {
       if (editTarget) {
@@ -135,6 +132,7 @@ export function useStudents() {
           password: form.password,
           studentIdNumber: form.studentIdNumber,
           ...detailsPayload(),
+          course: form.course,
         }).unwrap();
 
         showSuccess(
@@ -181,18 +179,12 @@ export function useStudents() {
       // mode and these values are only shown for reference.
       username: student.user.username ?? "",
       password: "",
-      age: student.age?.toString() ?? "",
-      // <input type="date"> wants yyyy-mm-dd, not a full ISO timestamp.
-      dateOfBirth: student.dateOfBirth ? student.dateOfBirth.slice(0, 10) : "",
-      gender: student.gender ?? "",
       contactNumber: student.contactNumber ?? "",
       address: student.address ?? "",
       course: student.course ?? "",
-      yearLevel: student.yearLevel ?? "",
       establishmentId: student.establishmentId ?? "",
-      requiredHours: student.requiredHours?.toString() ?? "",
+      // <input type="date"> wants yyyy-mm-dd, not a full ISO timestamp.
       startDate: student.startDate ? student.startDate.slice(0, 10) : "",
-      endDate: student.endDate ? student.endDate.slice(0, 10) : "",
       status: student.status,
     });
     setIsDialogOpen(true);
@@ -245,8 +237,8 @@ export function useStudents() {
    */
   const courseOptions = useMemo(() => {
     const options: { label: string; value: string }[] = COURSES.map((c) => ({
-      label: c,
-      value: c,
+      label: c.label,
+      value: c.label,
     }));
     const saved = editTarget?.course;
     if (saved && !isOfferedCourse(saved)) {
@@ -254,6 +246,35 @@ export function useStudents() {
     }
     return options;
   }, [editTarget]);
+
+  /**
+   * What the read-only Year Level / Required Hours boxes show. Mirrors the
+   * server's rule in `CoordinatorService.updateStudent`: while the edited
+   * student's course is left as stored, their stored year level and hours are
+   * kept (and marked old if the table would say otherwise); once the course
+   * changes, both come from the table. `null` until a course is picked.
+   */
+  const placement = useMemo((): StudentPlacement | null => {
+    if (editTarget && form.course === (editTarget.course ?? "")) {
+      const course = findCourse(editTarget.course);
+      const yearLevel = editTarget.yearLevel ?? null;
+      return {
+        yearLevel,
+        requiredHours: editTarget.requiredHours,
+        yearLevelIsOld: !!yearLevel && course?.yearLevel !== yearLevel,
+        hoursAreOld: course?.requiredHours !== editTarget.requiredHours,
+      };
+    }
+    const course = findCourse(form.course);
+    return course
+      ? {
+          yearLevel: course.yearLevel,
+          requiredHours: course.requiredHours,
+          yearLevelIsOld: false,
+          hoursAreOld: false,
+        }
+      : null;
+  }, [editTarget, form.course]);
 
   // ── Bulk delete ────────────────────────────────────────────────────────
   // Only COMPLETED students are selectable. The selection is derived against
@@ -388,6 +409,7 @@ export function useStudents() {
     filtered,
     stats,
     courseOptions,
+    placement,
 
     selectedIds,
     selectedStudents,
@@ -406,8 +428,6 @@ export function useStudents() {
     closeBulkDelete,
     handleBulkDeleteConfirm,
 
-    YEAR_LEVEL_OPTIONS,
-    GENDER_OPTIONS,
     STATUS_OPTIONS,
 
     setField,

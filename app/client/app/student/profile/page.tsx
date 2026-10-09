@@ -8,8 +8,6 @@ import {
   UserCircle,
   IdCard,
   GraduationCap,
-  Cake,
-  Users,
   School,
   Phone,
   MapPin,
@@ -89,12 +87,6 @@ export default function StudentProfilePage() {
                   icon={IdCard}
                 />
                 <DetailItem label="Email" value={data.user.email} icon={Mail} />
-                <DetailItem label="Gender" value={data.gender} icon={Users} />
-                <DetailItem
-                  label="Date of Birth"
-                  value={formatDateOnly(data.dateOfBirth, "") || null}
-                  icon={Cake}
-                />
                 <DetailItem label="Course" value={data.course} icon={GraduationCap} />
                 <DetailItem label="Year Level" value={data.yearLevel} icon={GraduationCap} />
                 <DetailItem label="School" value={SCHOOL_NAME} icon={School} />
@@ -120,11 +112,6 @@ export default function StudentProfilePage() {
                 <DetailItem
                   label="Start Date"
                   value={formatDateOnly(data.startDate, "") || null}
-                  icon={CalendarClock}
-                />
-                <DetailItem
-                  label="Expected End Date"
-                  value={formatDateOnly(data.endDate, "") || null}
                   icon={CalendarClock}
                 />
                 <DetailItem label="Status" value={data.status} icon={UserCircle} />
