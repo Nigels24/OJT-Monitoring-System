@@ -289,7 +289,8 @@ remains is the hand-verification pass listed in CLAUDE.md §7.
 
 ```
 GET /establishments        any signed-in role
-  → explicit select: ESTABLISHMENT_FIELDS + _count + earliest supervisor {id,name,email,position}
+  → explicit select: ESTABLISHMENT_FIELDS + _count {students} + THE supervisor {id,name,email,position} | null
+      (one per establishment since P1 — unique index on Supervisor.establishmentId)
   ← coordinator page loads it once; useEstablishmentFilters filters it IN THE CLIENT
       (search name/supervisor, industry, province → city, status, has/no supervisor),
       options = distinct values in the loaded rows — no PSGC, no request, and none of
@@ -301,6 +302,19 @@ GET /establishments/:id    any signed-in role
                                             course, yearLevel, status}
                          : no `students` key, no student query
   ← only the coordinator's view dialog calls it (refetch on every open)
+```
+
+### Adding a supervisor (one per establishment)
+
+```
+POST /establishments/:id/supervisor
+  → establishment + its supervisor?   none → 404 | has one → 409
+  → email free?                        else 409
+  → issueNewAccount(… create = $transaction(tx =>
+        tx.supervisor.findUnique({ establishmentId })   has one → 409
+        tx.supervisor.create(+ nested User)              ))
+        P2002 on username        → rolled back, retried with the next free name
+        P2002 on establishmentId → (a concurrent add won the index) → the same 409
 ```
 
 ## 7. Where to look for a given bug

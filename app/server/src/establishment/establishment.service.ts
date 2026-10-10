@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CASCADE_TRANSACTION_OPTIONS,
@@ -7,8 +11,11 @@ import {
 import {
   assertEmailAvailable,
   buildPersonName,
+  isUniqueClashOn,
   issueNewAccount,
 } from '../common/accounts';
+
+const ALREADY_HAS_SUPERVISOR = 'This establishment already has a supervisor';
 
 /**
  * The User half of a new supervisor. Takes the password *hash*; the plaintext
@@ -193,19 +200,33 @@ export class EstablishmentService {
    * one-time `credentials` as the nested create. 404 for an unknown
    * establishment.
    *
-   * A second supervisor is NOT refused here — one supervisor per
-   * establishment is a separate, later rule. The client only offers this when
-   * the establishment has none.
+   * **One supervisor per establishment** (409 "This establishment already
+   * has a supervisor"), at three levels:
    *
-   * User and Supervisor are one nested write, which Prisma runs atomically.
+   * 1. the establishment lookup also reads its supervisor, so the common case
+   *    is refused before an account is generated or an email checked;
+   * 2. the same check again **inside the transaction** that creates the
+   *    supervisor, right before the insert;
+   * 3. the database's unique index on `Supervisor.establishmentId`, for two
+   *    requests that both pass (2) at once: the loser's insert fails with
+   *    P2002 on `establishmentId`, mapped to the same 409.
+   *
+   * That P2002 is told apart from the username one by its target:
+   * `isUsernameClash` (inside `issueNewAccount`) retries only a clash on
+   * `username`, so an `establishmentId` clash propagates out of the retry
+   * loop untouched and is caught below. Replacing a supervisor means deleting
+   * the old one first (their evaluations go with them, as before).
    */
   async addSupervisor(establishmentId: string, supervisor: NewSupervisorInput) {
     const establishment = await this.prisma.client.establishment.findUnique({
       where: { id: establishmentId },
-      select: { id: true },
+      select: { id: true, supervisor: { select: { id: true } } },
     });
     if (!establishment) {
       throw new NotFoundException('Establishment not found');
+    }
+    if (establishment.supervisor) {
+      throw new ConflictException(ALREADY_HAS_SUPERVISOR);
     }
 
     await assertEmailAvailable(this.prisma.client, supervisor.email);
@@ -215,17 +236,34 @@ export class EstablishmentService {
       supervisor.firstName,
       supervisor.lastName,
       (username, passwordHash) =>
-        this.prisma.client.supervisor.create({
-          data: {
-            position: supervisor.position,
-            establishment: { connect: { id: establishmentId } },
-            user: {
-              create: supervisorUserData(supervisor, username, passwordHash),
+        this.prisma.client.$transaction(async (tx) => {
+          // Sequential, never Promise.all, inside the transaction.
+          const existing = await tx.supervisor.findUnique({
+            where: { establishmentId },
+            select: { id: true },
+          });
+          if (existing) {
+            throw new ConflictException(ALREADY_HAS_SUPERVISOR);
+          }
+          return tx.supervisor.create({
+            data: {
+              position: supervisor.position,
+              establishment: { connect: { id: establishmentId } },
+              user: {
+                create: supervisorUserData(supervisor, username, passwordHash),
+              },
             },
-          },
-          select: SUPERVISOR_SUMMARY_SELECT,
-        }),
-    );
+            select: SUPERVISOR_SUMMARY_SELECT,
+          });
+        }, CASCADE_TRANSACTION_OPTIONS),
+    ).catch((err: unknown) => {
+      // A concurrent add that won the unique index. Any other error —
+      // including the in-transaction 409 above — passes through unchanged.
+      if (isUniqueClashOn(err, 'establishmentId')) {
+        throw new ConflictException(ALREADY_HAS_SUPERVISOR);
+      }
+      throw err;
+    });
 
     return {
       ...toSupervisorSummary(result),
@@ -235,30 +273,24 @@ export class EstablishmentService {
   }
 
   /**
-   * Every establishment, with its supervisor `{ id, name, email, position }`
-   * or `null`. Until one-supervisor-per-establishment is enforced an older
-   * establishment may have several; the earliest-created is shown and
-   * `_count.supervisors` still says how many there are.
+   * Every establishment, with its one supervisor `{ id, name, email,
+   * position }` or `null`, and `_count: { students }`. (`_count.supervisors`
+   * went with the 1:1 relation — Prisma only counts list relations, and
+   * `supervisor !== null` says the same thing.)
    */
   async findAll() {
     const establishments = await this.prisma.client.establishment.findMany({
       select: {
         ...ESTABLISHMENT_FIELDS,
-        _count: {
-          select: { students: true, supervisors: true },
-        },
-        supervisors: {
-          select: SUPERVISOR_SUMMARY_SELECT,
-          orderBy: { user: { createdAt: 'asc' } },
-          take: 1,
-        },
+        _count: { select: { students: true } },
+        supervisor: { select: SUPERVISOR_SUMMARY_SELECT },
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    return establishments.map(({ supervisors, ...establishment }) => ({
+    return establishments.map(({ supervisor, ...establishment }) => ({
       ...establishment,
-      supervisor: supervisors[0] ? toSupervisorSummary(supervisors[0]) : null,
+      supervisor: supervisor ? toSupervisorSummary(supervisor) : null,
     }));
   }
 
@@ -280,22 +312,18 @@ export class EstablishmentService {
       where: { id },
       select: {
         ...ESTABLISHMENT_FIELDS,
-        _count: { select: { students: true, supervisors: true } },
-        supervisors: {
-          select: SUPERVISOR_SUMMARY_SELECT,
-          orderBy: { user: { createdAt: 'asc' } },
-          take: 1,
-        },
+        _count: { select: { students: true } },
+        supervisor: { select: SUPERVISOR_SUMMARY_SELECT },
       },
     });
     if (!establishment) {
       throw new NotFoundException('Establishment not found');
     }
 
-    const { supervisors, ...rest } = establishment;
+    const { supervisor, ...rest } = establishment;
     const detail = {
       ...rest,
-      supervisor: supervisors[0] ? toSupervisorSummary(supervisors[0]) : null,
+      supervisor: supervisor ? toSupervisorSummary(supervisor) : null,
     };
     // Everyone else: no `students` key at all, and no query for them.
     if (role !== 'COORDINATOR') return detail;

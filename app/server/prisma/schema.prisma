@@ -100,15 +100,22 @@ model Establishment {
   coordinatorEmail         String?
   createdAt                DateTime            @default(now())
 
-  supervisors Supervisor[]
-  students    Student[]
+  // At most one supervisor per establishment (Supervisor.establishmentId is
+  // @unique). Replacing one means deleting the old supervisor (their
+  // evaluations go with them, as before) and adding the new one.
+  supervisor Supervisor?
+  students   Student[]
 }
 
 model Supervisor {
   id              String        @id @default(cuid())
   userId          String        @unique
   user            User          @relation(fields: [userId], references: [id])
-  establishmentId String
+  // @unique: one supervisor per establishment, enforced by the database as
+  // well as by EstablishmentService.addSupervisor's 409. Migration
+  // 20261012090000_one_supervisor_per_establishment aborts if any
+  // establishment already has two.
+  establishmentId String        @unique
   establishment   Establishment @relation(fields: [establishmentId], references: [id])
   position        String?
 

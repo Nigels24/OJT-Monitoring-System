@@ -68,7 +68,7 @@ OJT-Monitoring-System/
     │   ├── prisma/
     │   │   ├── schema.prisma
     │   │   ├── seed.ts             # bootstraps ONLY the coordinator
-    │   │   └── migrations/         # 17 migrations, listed in §6
+    │   │   └── migrations/         # 18 migrations, listed in §6
     │   ├── scripts/reset-coordinator.ts
     │   ├── test/                   # e2e only
     │   └── generated/prisma/       # gitignored — run `npx prisma generate`
@@ -614,9 +614,9 @@ table; never derive one from the other.
 |---|---|---|---|
 | POST | `/auth/login` | public | `{ identifier, password }` |
 | PATCH | `/auth/password` | any signed-in (also must-change) | `{ currentPassword, newPassword }` → `{ changed, accessToken, user }`, clears `mustChangePassword` |
-| GET | `/establishments` · `/establishments/:id` | any signed-in | reads are open. Both return **only** the explicit `ESTABLISHMENT_FIELDS` (id, name, industryType, streetAddress, region, barangay, city, province, zipCode, status, createdAt) + `_count { students, supervisors }` + `supervisor { id, name, email, position } \| null`. `/:id` adds **`students: [{ id, name, studentIdNumber, course, yearLevel, status }]` for the COORDINATOR only** (a second, coordinator-only query); for every other role the key is absent. Until F7 it was `include: { students: true }` to any role — see §8 item 30 |
-| POST/PATCH/DELETE | `/establishments` · `/establishments/:id` | COORDINATOR | POST always creates **ACTIVE** — `status` is only on the update DTO (400 on create). The `coordinator*` contact fields are a **400** on both. POST takes an optional nested **`supervisor: { firstName, middleInitial?, lastName, email, position? }`** (no `username`/`password`/`establishmentId` — 400): Establishment + User + Supervisor in **one `$transaction`** (`CASCADE_TRANSACTION_OPTIONS`), generated login, `mustChangePassword` set, 409 on a taken email; the response is the establishment plus `supervisor: { id, name, email, position }` and `credentials`. PATCH rejects `supervisor` (400). `GET /establishments` rows carry `supervisor: { id, name, email, position } \| null` (earliest-created if several) |
-| POST | `/establishments/:id/supervisor` | COORDINATOR | same body as the nested `supervisor`; `{ id, name, email, position, establishmentId, credentials }`. 404 unknown establishment, 409 taken email. **A second supervisor is not refused** (paid item 3, pending) — the client offers this only when there is none |
+| GET | `/establishments` · `/establishments/:id` | any signed-in | reads are open. Both return **only** the explicit `ESTABLISHMENT_FIELDS` (id, name, industryType, streetAddress, region, barangay, city, province, zipCode, status, createdAt) + `_count { students }` + `supervisor { id, name, email, position } \| null` (P1: `_count.supervisors` is **gone** — Prisma only counts list relations, and `supervisor !== null` says it). `/:id` adds **`students: [{ id, name, studentIdNumber, course, yearLevel, status }]` for the COORDINATOR only** (a second, coordinator-only query); for every other role the key is absent. Until F7 it was `include: { students: true }` to any role — see §8 item 30 |
+| POST/PATCH/DELETE | `/establishments` · `/establishments/:id` | COORDINATOR | POST always creates **ACTIVE** — `status` is only on the update DTO (400 on create). The `coordinator*` contact fields are a **400** on both. POST takes an optional nested **`supervisor: { firstName, middleInitial?, lastName, email, position? }`** (no `username`/`password`/`establishmentId` — 400): Establishment + User + Supervisor in **one `$transaction`** (`CASCADE_TRANSACTION_OPTIONS`), generated login, `mustChangePassword` set, 409 on a taken email; the response is the establishment plus `supervisor: { id, name, email, position }` and `credentials`. PATCH rejects `supervisor` (400). `GET /establishments` rows carry `supervisor: { id, name, email, position } \| null` — the one supervisor (P1) |
+| POST | `/establishments/:id/supervisor` | COORDINATOR | same body as the nested `supervisor`; `{ id, name, email, position, establishmentId, credentials }`. 404 unknown establishment, 409 taken email. **409 `"This establishment already has a supervisor"`** (P1) at three levels: the establishment lookup reads its supervisor; the same check inside the create's `$transaction`; and a P2002 on `establishmentId` from the unique index (a race) mapped to the same 409. That P2002 is told apart from the username one by its target — `isUsernameClash` retries only `username`. Replacing a supervisor = delete the old one (evaluations go with them, as before), then add |
 | POST | `/coordinator/students` | — | **Removed (F5).** The coordinator no longer creates students; their supervisor does (`POST /supervisor/students`). (`POST /coordinator/supervisors` was removed in F4 — supervisors are created through `/establishments`.) |
 | POST | `/coordinator/students/bulk-delete` | COORDINATOR | `{ ids }`, 1–100. Every id must exist and be **COMPLETED**, else 400 with `offenders: [{ id, reason }]` and nothing deleted. Then `deleteStudentCascade` per student, **one `$transaction` each** (status re-checked inside), files after each commit. Returns `{ deleted: [ids], failed: [{ id, reason }] }` |
 | GET | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | |
@@ -636,7 +636,7 @@ table; never derive one from the other.
 | GET | `/coordinator/documents` | COORDINATOR | the checklist: one row per student, **including students with nothing submitted** — `{ id, name, studentIdNumber, establishment: { id, name } \| null, submittedCount, documents: { <DocumentType>: { id, uploadedAt, fileName } \| null } }`. No signed URLs |
 | GET | `/coordinator/documents/:id/download` | COORDINATOR | one file as an attachment (`Content-Type` from storage, RFC 5987 `Content-Disposition`). 404 unknown id, 503 if storage can't return it |
 | GET | `/coordinator/students/:studentId/documents/zip` | COORDINATOR | `?ids=a,b,c` for a selection, none for all. Every id must belong to that student (else 400); 404 unknown student or nothing submitted. Entries `<Type Label> - <Student Name>.<ext>`, archive `<Student Name> - OJT Documents.zip` |
-| GET | `/student/dashboard` · `/student/profile` · `/student/documents` | STUDENT | own data only. Dashboard `establishment` = `{ id, name, industryType, supervisorName, supervisorPosition, supervisorEmail }` (the contact card — the establishment's earliest supervisor, each `null` when it has none) or `null`. Documents: `[{ id, type, fileName, uploadedAt, fileUrl }]`, `fileUrl` signed or `null` |
+| GET | `/student/dashboard` · `/student/profile` · `/student/documents` | STUDENT | own data only. Dashboard `establishment` = `{ id, name, industryType, supervisorName, supervisorPosition, supervisorEmail }` (the contact card — the establishment's one supervisor, each `null` when it has none) or `null`. Documents: `[{ id, type, fileName, uploadedAt, fileUrl }]`, `fileUrl` signed or `null` |
 | GET | `/student/attendance` | STUDENT | history, newest first: `[{ id, date, remarks, createdAt, punches: { TIME_IN_AM: Punch \| null, TIME_OUT_AM, TIME_IN_PM, TIME_OUT_PM }, dayStatus, approvedHours, pendingHours }]`, `Punch = { id, kind, time, status, declineReason, decidedAt, decidedBy: { id, user: { name } } \| null }` |
 | GET | `/student/attendance/today` | STUDENT | the punch card: `{ date, attendanceId \| null, remarks, punches, dayStatus \| null (null = nothing logged today), approvedHours, pendingHours, allowed: { <PunchKind>: true \| "<reason>" }, blockedReason \| null }`. The client renders from `allowed` and holds no punch rules |
 | POST | `/student/attendance/punch` | STUDENT | `{ kind }` only — **no date or time**; the server stamps now on Manila's today, and a sent `time`/`date` is a 400 (`forbidNonWhitelisted`). Returns the `/today` shape. 409 if that kind already stands today; 400 for an ordering rule or a block (§6) |
@@ -879,6 +879,7 @@ recoverable, a half-deleted database is not.
 | `20260905163310_official_evaluation_sheet` | **Rewrote `Evaluation` for the school's official form.** Dropped the 9 criteria, `overallRating`, `performanceLevel` and `periodStart`/`periodEnd`; added the 19 item columns, `totalRating`, `trainingStartedAt`/`trainingEndedAt`/`trainingEmployedAt`, `evaluatorName`/`evaluatorPosition` and `updatedAt`. Destructive — **the table was empty (verified: 0 rows)**, which is also why the new `NOT NULL` item columns could be added without defaults. Generated with `migrate diff` + `migrate deploy`, since `migrate dev` prompts on column drops. Touches no other table |
 | `20260914142544_evaluation_sheet_template` | **Moved the sheet into the database.** Added `EvaluationTemplate`, `EvaluationTemplateSection`, `EvaluationTemplateItem`, `EvaluationScore`; seeded template **version 1** PUBLISHED with the nineteen items' exact wording, keyed by the nineteen column names; added `Evaluation.templateId`/`maxTotalRating` backfilled to version 1 / 95; copied the nineteen columns into `EvaluationScore`; **then** dropped them. Hand-written in that order so it is one transaction and no signed sheet loses its scores — structural statements generated with `migrate diff --from-schema-datamodel <previous> --to-schema-datamodel <current> --script` (which never touches the DB), data steps added by hand |
 | `20261005011611_documents_typed_checklist` | **Documents became a typed checklist; Credentials folded in.** Added enum `DocumentType`, `Document.type` and `originalFileName`; deleted the two pre-existing free-text Document rows (test data, no type mapping); copied the two `Credential` rows into `Document` (same id and path, `createdAt` → `uploadedAt`); a `DO $$` guard aborts if any row is untyped; dedup keeps the newest per `(studentId, type)`; then `type` NOT NULL, `@@unique([studentId, type])`, and dropped `name`, `status`, `reviewedById`/FK, `reviewNote`, `reviewedAt` and the `Credential` table. Hand-ordered like the one above; applied with `migrate deploy`. `migrate dev --create-only` refuses to run non-interactively when it would warn about data loss, so `migrate diff` between schema files was used |
+| `20261012090000_one_supervisor_per_establishment` | **Written, NOT yet applied.** A `DO $$` guard raises `An establishment has 2+ supervisors, resolve before migrating` (and changes nothing) if any establishment has two or more; then `CREATE UNIQUE INDEX "Supervisor_establishmentId_key"`, exactly what `migrate diff` between the schema files emits. Nothing is deleted or moved |
 | `20261010090000_user_credential_flags` | **Written, NOT yet applied** (apply with `migrate deploy` after a `pg_dump`). `User`: `mustChangePassword BOOLEAN NOT NULL DEFAULT false`, `credentialsSentAt TIMESTAMP(3)`, `credentialsEmailError TEXT`. Additive; every existing user gets `false`. Hand-written, three `ALTER TABLE` statements; matches `migrate diff` between the schema files |
 | `20261005015145_attendance_punches` | **Four separately approved punches per day.** Added enum `PunchKind` and table `AttendancePunch` (FK to `Attendance` RESTRICT, to `Supervisor` SET NULL, `@@unique([attendanceId, kind])`, index on `status`); copied each non-null `timeInAM`/`timeOutAM`/`timeInPM`/`timeOutPM` into a punch carrying the day's `status`, `approvedById` → `decidedById` and `declineReason`, `decidedAt` NULL (never recorded), ids from `gen_random_uuid()`; a `DO $$` guard aborts unless punches = non-null times (8 = 8 live: 2 APPROVED days); **then** dropped those four columns, `status`, `declineReason`, `approvedById` and its FK. Explicit `BEGIN`/`COMMIT`. Structural SQL from `migrate diff` between schema files, reordered so the drops come last (the diff emits them first); applied with `migrate deploy` after a `pg_dump` |
 
@@ -925,8 +926,8 @@ recoverable, a half-deleted database is not.
   view dialog with `refetchOnMountOrArgChange` (a student's move happens in `studentApi`,
   which can't invalidate this slice without an import cycle); `EstablishmentViewDialog`
   lists the assigned students (name, ID, course, year level, status badge), "No students
-  assigned yet" when empty. Branch (item 14) and one-supervisor (item 3) remain paid and
-  pending.
+  assigned yet" when empty. Branch (item 14) remains paid and pending; one-supervisor
+  (item 3) was done in P1.
 - **Student Management (Coordinator)** — list, view, **edit**, delete, bulk delete and
   Resend login, computed hours, progress, stats — **no create since F5** (next item);
   the edit can still move a student to another establishment or unassign them,
@@ -1029,9 +1030,35 @@ recoverable, a half-deleted database is not.
   `Evaluation` (the coordinator's list reads the supervisor's name live) and messages
   `Conversations`/`Contacts`. `supervisorManagementApi` ↔ `establishmentApi` import each
   other — safe, both only read the other inside `onQueryStarted`.
-  **Still pending, paid:** item 3 (one supervisor per establishment — no 409 yet, the
-  relation is unchanged, older establishments may have several) and item 14 (Branch,
-  unique establishment names).
+  **Still pending, paid:** item 14 (Branch, unique establishment names). Item 3 (one
+  supervisor per establishment) was done in P1, below.
+- **One supervisor per establishment (paid step P1, item 3)** — `Supervisor.establishmentId`
+  is `@unique`, so `Establishment.supervisors Supervisor[]` became `supervisor
+  Supervisor?`. Enforced at three levels: the unique index (migration
+  `20261012090000_one_supervisor_per_establishment`, **NOT yet applied**), the 409 in
+  `EstablishmentService.addSupervisor` (§5), and the list offering "Add supervisor" only
+  when `supervisor` is null (unchanged since F4). Changed shapes: `GET /establishments`
+  and `/:id` `_count` is `{ students }` only; `supervisor` is the one supervisor, no
+  longer "earliest of several". Unchanged shapes: the student dashboard's
+  `supervisorName/Position/Email`, the DTR's supervisor name, messaging contacts (still
+  a list — `MessagesService` queries the `Supervisor` table by `establishmentId`, which
+  now returns 0 or 1 rows). Cascades unchanged: `deleteSupervisorCascade` works by
+  supervisor id and `EstablishmentService.remove` finds supervisors by
+  `establishmentId` on the `Supervisor` table, so both behave the same with 0 or 1.
+  Client: `deleteEstablishmentMessage(name, { supervisorName, students })` names the
+  supervisor ("This also deletes its supervisor, <name>, and their login." / "It has no
+  supervisor."); the view dialog's redundant "Supervisors" count row is removed (its
+  Supervisor section already shows the one); the supervisors page stat reads "With a
+  supervisor (one each)". `AddSupervisorDialog` shows the 409 message in its error slot;
+  the mutation's `invalidatesTags` also fires on an error response, so the list behind
+  it refetches and the stale "Add supervisor" disappears.
+  **Before the migration is applied** the server and client run unchanged — Prisma
+  doesn't check for the index at runtime, and `findUnique({ where: { establishmentId } })`
+  is a plain `WHERE … LIMIT 1` — and checks 1 and 2 already return the 409. Only the
+  race protection (check 3) is missing, and an establishment that already has two
+  supervisors would show one of them arbitrarily. Order: resolve any 2+ by hand →
+  `pg_dump` → `migrate deploy` (which also applies the still-pending
+  `20261010090000_user_credential_flags` first).
 - **The evaluation sheet is the school's to change**, end to end. `EvaluationTemplate`
   and friends (§6) hold it as a versioned, immutable-once-published template; the
   coordinator owns the draft, supervisors consume whichever version is published, and
@@ -1258,6 +1285,18 @@ recoverable, a half-deleted database is not.
 **All three roles land on a real page after login. No role 404s.**
 
 ### Needs live verification
+
+**Paid step P1** (one supervisor per establishment). Verified in-process only — real
+`AppModule`, `ValidationPipe`, guards and services against a faked Prisma that raises
+real `P2002`s for `username` and `establishmentId` (8 cases: contact card with no
+supervisor; first supervisor 201 with credentials after a username-collision retry —
+`mreyes` taken, gets `mreyes2`, two transactions; second supervisor 409 at the
+pre-check with nothing created; the race — both reads miss — hits the index, 409, rolled
+back, **not** retried as a username clash; the in-transaction check alone 409 before the
+insert; unknown establishment 404 and another establishment's first supervisor 201;
+list/detail `_count` = `{ students }` with the supervisor object and no hashes; contact
+card with a supervisor). `migrate diff` between the schema files emits only the index.
+The migration has not been run.
 
 **Final-defense step F8** (oversight month + filters, single-student DTR PDF). Verified
 in-process only (20 cases). Renderer as a pure function: `%PDF` and exactly one page

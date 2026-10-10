@@ -114,14 +114,12 @@ export class StudentService {
             // The contact card is the establishment's supervisor (the old
             // coordinator* contact columns were the same person, and are
             // retired). Name, position and email only — nothing else of the
-            // account leaves here. Earliest-created if there are several.
-            supervisors: {
+            // account leaves here. One per establishment, or none.
+            supervisor: {
               select: {
                 position: true,
                 user: { select: { name: true, email: true } },
               },
-              orderBy: { user: { createdAt: 'asc' } },
-              take: 1,
             },
           },
         },
@@ -564,13 +562,12 @@ function withSupervisorContact(establishment: {
   id: string;
   name: string;
   industryType: string | null;
-  supervisors: {
+  supervisor: {
     position: string | null;
     user: { name: string; email: string };
-  }[];
+  } | null;
 }) {
-  const { supervisors, ...rest } = establishment;
-  const supervisor = supervisors[0];
+  const { supervisor, ...rest } = establishment;
   return {
     ...rest,
     supervisorName: supervisor?.user.name ?? null,

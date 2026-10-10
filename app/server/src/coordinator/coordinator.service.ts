@@ -547,12 +547,8 @@ export class CoordinatorService {
         establishment: {
           select: {
             name: true,
-            // Earliest supervisor, as on the establishment list; may be none.
-            supervisors: {
-              select: { user: { select: { name: true } } },
-              orderBy: { user: { createdAt: 'asc' } },
-              take: 1,
-            },
+            // The establishment's one supervisor; may be none.
+            supervisor: { select: { user: { select: { name: true } } } },
           },
         },
       },
@@ -577,7 +573,7 @@ export class CoordinatorService {
       schoolName: SCHOOL_NAME,
       course: student.course,
       establishmentName: student.establishment?.name ?? null,
-      supervisorName: student.establishment?.supervisors[0]?.user.name ?? null,
+      supervisorName: student.establishment?.supervisor?.user.name ?? null,
       year: range.year,
       month: range.month,
       days: days.map((day) => {

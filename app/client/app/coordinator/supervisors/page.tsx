@@ -73,7 +73,7 @@ export default function SupervisorManagementPage() {
             label="Establishments Covered"
             value={stats.establishmentsCovered}
             icon={Building2}
-            subtext="With at least one supervisor"
+            subtext="With a supervisor (one each)"
           />
           <StatCard
             label="No Position Set"

@@ -10,9 +10,9 @@ import { messagesApi } from "./messagesApi";
 import type { GeneratedCredentials } from "./studentApi";
 
 /**
- * The establishment's supervisor as the list shows it. Until one supervisor
- * per establishment is enforced an older establishment may have several: the
- * earliest is shown here and `_count.supervisors` says how many there are.
+ * The establishment's supervisor. At most one per establishment — enforced by
+ * a unique index, the server's 409 and the list offering "Add supervisor"
+ * only when there is none.
  */
 export interface EstablishmentSupervisor {
   id: string;
@@ -38,11 +38,10 @@ export interface Establishment {
   zipCode?: string | null;
   status?: "ACTIVE" | "INACTIVE" | null;
   createdAt: string;
-  /** Present on the list (`GET /establishments`); `null` = none yet. */
+  /** `null` = none yet. (`_count.supervisors` is gone: this says it.) */
   supervisor?: EstablishmentSupervisor | null;
   _count?: {
     students: number;
-    supervisors: number;
   } | null;
 }
 

@@ -137,7 +137,7 @@ export default function EstablishmentManagementPage() {
         message={
           deleteTarget
             ? deleteEstablishmentMessage(deleteTarget.name, {
-                supervisors: deleteTarget._count?.supervisors ?? 0,
+                supervisorName: deleteTarget.supervisor?.name ?? null,
                 students: deleteTarget._count?.students ?? 0,
               })
             : ""

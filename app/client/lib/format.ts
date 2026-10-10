@@ -97,15 +97,20 @@ export function deleteSupervisorMessage(
   );
 }
 
-/** Students survive an establishment's deletion — they are unassigned, not removed. */
+/**
+ * Students survive an establishment's deletion — they are unassigned, not
+ * removed. An establishment has at most one supervisor, so it is named rather
+ * than counted.
+ */
 export function deleteEstablishmentMessage(
   name: string,
-  counts: { supervisors: number; students: number },
+  counts: { supervisorName: string | null; students: number },
 ): string {
+  const supervisor = counts.supervisorName
+    ? `This also deletes its supervisor, ${counts.supervisorName}, and their login. `
+    : "It has no supervisor. ";
   return (
-    `Permanently delete ${name}? This also deletes ` +
-    `${countLabel(counts.supervisors, "supervisor")} and their ` +
-    `${counts.supervisors === 1 ? "login" : "logins"}. ` +
+    `Permanently delete ${name}? ${supervisor}` +
     `${countLabel(counts.students, "student")} will be unassigned but not deleted. ` +
     "This cannot be undone."
   );

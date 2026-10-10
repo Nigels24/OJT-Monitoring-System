@@ -178,11 +178,6 @@ export default function EstablishmentViewDialog({
               value={new Date(establishment.createdAt).toLocaleDateString()}
               icon={CalendarCheck}
             />
-            <DetailItem
-              label="Supervisors"
-              value={establishment._count?.supervisors ?? 0}
-              icon={Users}
-            />
           </div>
         </div>
       )}
