@@ -7,6 +7,7 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   DAY_SELECT,
@@ -475,36 +476,89 @@ export class SupervisorService {
       punchId,
       supervisor.establishmentId,
     );
+    const studentId = punch.attendance.student.id;
+    const approving = decision.status === 'APPROVED';
 
-    // `status: 'PENDING'` in the filter is the finality rule and a
-    // compare-and-set at once: a punch already decided — or decided by
-    // someone else a moment ago — matches nothing and is left untouched.
-    const { count } = await this.prisma.client.attendancePunch.updateMany({
-      where: { id: punchId, status: 'PENDING' },
-      data: {
-        ...decision,
-        decidedById: supervisor.id,
-        decidedAt: new Date(),
-      },
-    });
-    if (count === 0) {
-      // Re-read: the status fetched above may predate a decision made by
-      // someone else in between.
-      const current = await this.prisma.client.attendancePunch.findUnique({
-        where: { id: punchId },
-        select: { status: true },
+    // One transaction, sequential awaits only (CLAUDE.md §8 item 19): the
+    // decision, the hours check and the auto-COMPLETED write commit together
+    // or not at all.
+    return this.prisma.client.$transaction(async (tx) => {
+      // Approvals of one student's punches run one at a time. Without this,
+      // two concurrent approvals (the In and the Out of the same session, say)
+      // each see only their own write under READ COMMITTED: neither sees the
+      // session complete, so neither notices the crossing and the student is
+      // never completed. The lock is on the student row, taken before any
+      // punch row, and a decline never takes it — declines can't complete.
+      const before = approving ? await lockAndReadHours(tx, studentId) : null;
+
+      // `status: 'PENDING'` in the filter is the finality rule and a
+      // compare-and-set at once: a punch already decided — or decided by
+      // someone else a moment ago — matches nothing and is left untouched.
+      const { count } = await tx.attendancePunch.updateMany({
+        where: { id: punchId, status: 'PENDING' },
+        data: {
+          ...decision,
+          decidedById: supervisor.id,
+          decidedAt: new Date(),
+        },
       });
-      throw new ConflictException(
-        `This ${PUNCH_LABEL[punch.kind]} punch has already been ${
-          current?.status === 'DECLINED' ? 'declined' : 'approved'
-        }. Decisions are final.`,
-      );
-    }
+      if (count === 0) {
+        // Re-read: the status fetched above may predate a decision made by
+        // someone else in between. Nothing was written, so the rollback the
+        // throw causes is a no-op.
+        const current = await tx.attendancePunch.findUnique({
+          where: { id: punchId },
+          select: { status: true },
+        });
+        throw new ConflictException(
+          `This ${PUNCH_LABEL[punch.kind]} punch has already been ${
+            current?.status === 'DECLINED' ? 'declined' : 'approved'
+          }. Decisions are final.`,
+        );
+      }
 
-    return this.prisma.client.attendancePunch.findUniqueOrThrow({
-      where: { id: punchId },
-      select: { ...PUNCH_SELECT, attendanceId: true },
-    });
+      let completedStudent: {
+        name: string;
+        approvedHours: number;
+        requiredHours: number;
+      } | null = null;
+
+      if (before) {
+        const after = totalApprovedHours(await approvedDays(tx, studentId));
+        // Only the approval that crosses the line completes anyone: a student
+        // already at or past it who was set back to ACTIVE by hand stays
+        // ACTIVE. A requirement of 0 is "not set", never "already met".
+        const crossed =
+          before.requiredHours > 0 &&
+          before.approvedHours < before.requiredHours &&
+          after >= before.requiredHours;
+        if (crossed) {
+          // Compare-and-set on ACTIVE: never from INACTIVE or PENDING, and a
+          // status changed by hand meanwhile is left alone.
+          const { count: flipped } = await tx.student.updateMany({
+            where: { id: studentId, status: 'ACTIVE' },
+            data: { status: 'COMPLETED' },
+          });
+          if (flipped === 1) {
+            completedStudent = {
+              name: before.name,
+              approvedHours: after,
+              requiredHours: before.requiredHours,
+            };
+          }
+        }
+      }
+
+      const decided = await tx.attendancePunch.findUniqueOrThrow({
+        where: { id: punchId },
+        select: { ...PUNCH_SELECT, attendanceId: true },
+      });
+      return {
+        ...decided,
+        studentCompleted: completedStudent !== null,
+        completedStudent,
+      };
+    }, CASCADE_TRANSACTION_OPTIONS);
   }
 
   /**
@@ -521,7 +575,7 @@ export class SupervisorService {
         kind: true,
         status: true,
         attendance: {
-          select: { student: { select: { establishmentId: true } } },
+          select: { student: { select: { id: true, establishmentId: true } } },
         },
       },
     });
@@ -984,4 +1038,40 @@ function settledOr<T>(
   if (result.status === 'fulfilled') return result.value;
   onFail(section, result.reason);
   return fallback;
+}
+
+type Tx = Prisma.TransactionClient;
+
+/**
+ * A student's days with only their APPROVED punches — nothing else can form a
+ * counted session — for `totalApprovedHours`. Same query shape as
+ * `completedTraining`.
+ */
+function approvedDays(tx: Tx, studentId: string) {
+  return tx.attendance.findMany({
+    where: { studentId },
+    select: {
+      punches: { where: { status: 'APPROVED' }, select: HOURS_PUNCH_SELECT },
+    },
+  });
+}
+
+/**
+ * Locks the student row for the rest of the transaction (`FOR UPDATE` — Prisma
+ * has no API for it; the table is unmapped, so its name is the model's), then
+ * reads what the auto-COMPLETED check needs before the approval is written.
+ * A concurrent approval of the same student's punches waits here until this
+ * transaction commits, and then reads hours that include this one's punch.
+ */
+async function lockAndReadHours(tx: Tx, studentId: string) {
+  await tx.$queryRaw`SELECT "id" FROM "Student" WHERE "id" = ${studentId} FOR UPDATE`;
+  const student = await tx.student.findUniqueOrThrow({
+    where: { id: studentId },
+    select: { requiredHours: true, user: { select: { name: true } } },
+  });
+  return {
+    name: student.user.name,
+    requiredHours: student.requiredHours,
+    approvedHours: totalApprovedHours(await approvedDays(tx, studentId)),
+  };
 }

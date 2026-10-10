@@ -98,6 +98,22 @@ export type CreateSupervisorStudentResponse = SupervisorStudent & {
   credentials: GeneratedCredentials;
 };
 
+/**
+ * The decided punch, plus whether this approval took the student's approved
+ * hours across their requirement and so set them COMPLETED (ACTIVE students
+ * only, and only on the approval that crosses). `completedStudent` is `null`
+ * unless `studentCompleted`.
+ */
+export type ApprovePunchResponse = Punch & {
+  attendanceId: string;
+  studentCompleted: boolean;
+  completedStudent: {
+    name: string;
+    approvedHours: number;
+    requiredHours: number;
+  } | null;
+};
+
 export const supervisorApi = createApi({
   reducerPath: "supervisorApi",
   baseQuery: baseQueryWithAuth,
@@ -194,13 +210,16 @@ export const supervisorApi = createApi({
       providesTags: ["SupervisorAttendance"],
     }),
     /** Decisions are final — the server 409s on a punch that isn't PENDING. */
-    approvePunch: builder.mutation<Punch & { attendanceId: string }, string>({
+    approvePunch: builder.mutation<ApprovePunchResponse, string>({
       query: (id) => ({
         url: `/supervisor/punches/${id}/approve`,
         method: "PATCH",
       }),
       // The queue, the dashboard counters, and the roster's completed hours
-      // all move on an approval (the roster used to go stale here).
+      // all move on an approval (the roster used to go stale here). An
+      // approval that auto-completes a student needs nothing more: the queue
+      // hides COMPLETED students, the dashboard counts them, and the roster
+      // (SupervisorStudent) is also the evaluation picker's source.
       invalidatesTags: [
         "SupervisorAttendance",
         "SupervisorDashboard",

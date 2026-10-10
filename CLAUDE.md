@@ -648,7 +648,7 @@ table; never derive one from the other.
 | GET | `/supervisor/attendance` | SUPERVISOR | `?status=&includeCompleted=` — **days** with nested punches (the history shape plus `student`), own establishment, COMPLETED students hidden by default. `status=PENDING` = days with at least one PENDING punch |
 | POST | `/supervisor/students` | SUPERVISOR | **Creates a student at the caller's own establishment.** `{ studentIdNumber, firstName, middleInitial?, lastName, email, course, contactNumber?, address?, startDate? }`. `establishmentId` is taken from the caller's `Supervisor` row (via `req.user.userId`), **never the body**: `establishmentId`, `username`, `password`, `yearLevel`, `requiredHours`, `status`, `school` in the body are each a 400. `course` must be an offered label; `yearLevel`/`requiredHours` derived (F1), `school` = `SCHOOL_NAME`, `status` ACTIVE. Generated login via `issueNewAccount`, `mustChangePassword` set; User + Student in **one `$transaction`** (`CASCADE_TRANSACTION_OPTIONS`). Response: the roster row (explicit select, `user: { id, email, username, name }`, `completedHours: 0`) + `credentials`. Taken student ID → 409 `"This student ID is already registered"` (fixed text — names no student or establishment); taken email → 409. Both pre-checked and caught again as P2002 |
 | PATCH | `/supervisor/students/:id/status` | SUPERVISOR | `{ status: ACTIVE \| COMPLETED }`. Unknown id **and** another establishment's student are the same **404** `"Student not found"` (F6 — was 403, which leaked existence) |
-| PATCH | `/supervisor/punches/:id/approve` | SUPERVISOR | one punch. Sets `decidedById`/`decidedAt`. **Decisions are final: 409 unless PENDING.** 404 unknown, 403 another establishment's. Returns the punch + `attendanceId` |
+| PATCH | `/supervisor/punches/:id/approve` | SUPERVISOR | one punch. Sets `decidedById`/`decidedAt`. **Decisions are final: 409 unless PENDING.** 404 unknown, 403 another establishment's. Returns the punch + `attendanceId` + **`studentCompleted: boolean`** + **`completedStudent: { name, approvedHours, requiredHours } \| null`** (P3 auto-COMPLETED, §6) |
 | PATCH | `/supervisor/punches/:id/decline` | SUPERVISOR | `{ reason }`, 3–500 chars, required; same rules as approve. There is deliberately **no bulk approve** — each punch is its own approval |
 | GET | `/supervisor/evaluations/form` | SUPERVISOR | the **currently PUBLISHED template**: `templateId`, `version`, `title`, sections with item keys, printed letters and wording, the 1–5 legend and `maxTotalRating` — plus `evaluator` and `employedAt`, the header/footer blanks as they will be stamped for this supervisor. **409 if the school has published no sheet.** The client renders the whole form from this one endpoint instead of keeping its own copy of the form text or reading the dashboard |
 | GET/POST | `/supervisor/evaluations` | SUPERVISOR | POST takes `scores` as **one nested object** keyed by the template's item keys (`{ scores: { courtesy: 5, … } }`), not top-level fields — see §8 item 23. Written against the published version; repeatable — a student is evaluated more than once. **POST only for a COMPLETED student** (after the 403 ownership check): otherwise 409 `"This student has not completed OJT yet (<approved> / <required> hrs)"`. `trainingStartedAt` = the student's `startDate`, `trainingEndedAt` = `lastApprovedDay`, both server-derived and snapshotted on the row, `null` when there is nothing to derive from (never today). Neither date is on the DTO — sending one is a 400 |
@@ -835,6 +835,23 @@ as `allowed` so the client holds no copy):
 - **Supervisor decisions are final**: approve/decline is an `updateMany` filtered on
   `status: 'PENDING'`, so a decided punch (or one decided a moment ago by someone else) is
   a 409 and is never overwritten.
+- **Auto-COMPLETED (P3).** An approval that takes the student's approved hours
+  (`totalApprovedHours`) from **below** `requiredHours` to **at or above** it sets an
+  **ACTIVE** student COMPLETED — and that is the only trigger. Never from INACTIVE or
+  PENDING; never on a decline; never when `requiredHours` is 0 (the column is
+  `Int NOT NULL DEFAULT 0`, so 0 means "not set", not "already met"; null is impossible);
+  never on an approval that doesn't cross, so a student already at or past the line who
+  was set back to ACTIVE by hand **stays ACTIVE** on later approvals. `decidePunch` does
+  the punch compare-and-set, the before/after hours and the status write in **one
+  `$transaction`** (sequential, `CASCADE_TRANSACTION_OPTIONS`). The status write is
+  itself a compare-and-set (`updateMany where { id, status: 'ACTIVE' }`), reported as
+  `studentCompleted` only when its count is 1. An approval first takes **`SELECT … FROM
+  "Student" … FOR UPDATE`** (`$queryRaw`, the one raw query in the server): without it,
+  approving the In and Out of one session concurrently lets each transaction see only its
+  own punch under READ COMMITTED, so neither sees the session complete and the crossing
+  is missed. Declines don't take the lock. Manual status changes are unchanged — the
+  supervisor's toggle (`PATCH /supervisor/students/:id/status`) and the coordinator's
+  edit can still set ACTIVE or COMPLETED at any time.
 
 **Deletes cascade in the service layer, not the schema.** There is deliberately **no**
 `onDelete: Cascade` anywhere in `schema.prisma` and no migration behind this — the order
@@ -1133,7 +1150,7 @@ recoverable, a half-deleted database is not.
   `trainingStartedAt`/`trainingEndedAt` fields are gone from the evaluation DTO (they
   were optional `IsDateString` on both create and update, and the old edit nulled a
   date the client didn't send). How COMPLETED is set is unchanged (supervisor toggle,
-  coordinator edit); auto-COMPLETED is a later paid step.
+  coordinator edit), plus auto-COMPLETED since P3 (next item).
   Client: the picker lists every roster student but only COMPLETED ones are selectable;
   the rest are disabled with "OJT not completed (x / y hrs)" (`SelectField` options now
   take optional `disabled` and `hint`), and with none selectable an amber note says
@@ -1282,9 +1299,48 @@ recoverable, a half-deleted database is not.
   messaging. Opening a conversation's `GET /messages/conversations/:id` (which already
   marks `lastReadAt`) invalidates the `Unread` tag, so the badge clears without a reload.
 
+- **Auto-COMPLETED on the crossing approval (paid step P3, item 12)** — §6 "Auto-COMPLETED"
+  has the rule. Server: `decidePunch` in `supervisor.service.ts` (module helpers
+  `lockAndReadHours`, `approvedDays`); `verifyPunchBelongsToSupervisor` now also selects
+  the student's `id`. No schema change, no migration. Client: `ApprovePunchResponse` in
+  `supervisorApi.ts`; `use-attendance-approval.ts` shows "<Name> has reached <approved>
+  of <required> hours and is now COMPLETED." instead of the plain "Approved …" snackbar
+  (name and hours from the response, not the queue row). The mutation's existing
+  `invalidatesTags` already covered everything a completion moves — `SupervisorAttendance`
+  (the queue hides COMPLETED students), `SupervisorDashboard` (`completedStudents`) and
+  `SupervisorStudent` (roster and the evaluation picker) — so no tag changed.
+  **The only other way approved hours can reach the requirement is the coordinator
+  changing a student's course** (`updateStudent` → `deriveFromCourse`): BSIT (486) →
+  ACT (320) can leave approved hours at or above the new requirement with no approval.
+  That does **not** auto-complete (by decision: approvals only). No other path writes
+  punch status to APPROVED: the student's re-punch only moves DECLINED → PENDING,
+  `deleteSupervisorCascade` only nulls `decidedById`, `deleteStudentCascade` deletes the
+  student outright, and there is no bulk or coordinator approve.
+  What COMPLETED already did, unchanged: blocks punching and remarks
+  (`attendanceBlockedReason`), hides the student from the supervisor's queue and
+  dashboard pending/declined counts (approved hours still counted), unlocks the
+  evaluation picker (F6), counts in both dashboards' `completedStudents`. Messaging
+  ignores status entirely — a COMPLETED student keeps messaging and stays a contact.
+  Known: `deleteStudentCascade` locks punch rows before the student row and an approval
+  locks the student row first, so a coordinator deleting a student while their punch
+  is being approved can deadlock; Postgres aborts one of the two (a 500 to that caller,
+  nothing half-written). Rare enough to leave.
+
 **All three roles land on a real page after login. No role 404s.**
 
 ### Needs live verification
+
+**Paid step P3** (auto-COMPLETED). Verified in-process only — the real
+`SupervisorService` against a faked Prisma that models per-transaction uncommitted writes
+(READ COMMITTED), waiting row locks, `FOR UPDATE` and rollback on throw (16 checks:
+crossing completes an ACTIVE student with the name/hours in the response; below the line
+stays ACTIVE; already-at-the-line reset to ACTIVE stays ACTIVE; INACTIVE and PENDING
+unchanged; concurrent In+Out of one session completes exactly once — and **without** the
+row lock is missed, which is why it is there; two concurrent approvals that each cross
+complete once; a decline completes nobody and takes no lock; requiredHours 0 never
+completes; an In with no Out doesn't cross; one `$transaction`, no write outside it; a
+failure after the status write leaves the punch PENDING and the student ACTIVE; a
+decided punch still 409s). No live request; the snackbar was typechecked, never rendered.
 
 **Paid step P1** (one supervisor per establishment). Verified in-process only — real
 `AppModule`, `ValidationPipe`, guards and services against a faked Prisma that raises
@@ -1692,6 +1748,13 @@ Ordered roughly by how likely each is to bite.
       **email**; only coordinator pages call it today, but a student could list every
       establishment's supervisor email. Not changed (reads are open by design); restrict
       the summary to COORDINATOR if that matters.
+31. **`decidePunch` is the one place that sets COMPLETED automatically, and it relies
+    on the student-row lock.** Any new path that approves punches (a bulk approve, a
+    coordinator override) must go through the same transaction — lock the student,
+    read hours, write, read hours, compare-and-set on ACTIVE — or it will either miss
+    crossings or skip the rule entirely. And a new transaction that touches both a
+    student and their punches should lock the **student first**, as `decidePunch` does,
+    or it can deadlock against an approval (`deleteStudentCascade` doesn't — §7 P3).
 
 ---
 

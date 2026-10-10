@@ -150,6 +150,20 @@ Supervisor decides each punch on its own (no bulk approve)
     ownership: verifyPunchBelongsToSupervisor, punch → day → student → establishment → 403
     FINAL: updateMany where status = PENDING; a decided punch → 409, never overwritten
     sets decidedById + decidedAt
+    APPROVE only, all in one $transaction (sequential):
+      SELECT … FROM "Student" … FOR UPDATE   (approvals of one student run one at a time)
+      before = totalApprovedHours(approved punches)
+      punch compare-and-set (above)
+      after  = totalApprovedHours(approved punches)
+      requiredHours > 0 AND before < required AND after >= required
+        → student.updateMany where { id, status: ACTIVE } → COMPLETED
+      response + studentCompleted (count = 1) + completedStudent { name, approvedHours,
+        requiredHours } | null → snackbar "<Name> has reached N of M hours…"
+    Only the crossing approval completes; ACTIVE only; declines never. A student set
+    back to ACTIVE by hand stays ACTIVE. Manual status changes (supervisor toggle,
+    coordinator edit) are untouched. A coordinator course change can lower requiredHours
+    below approved hours — that does NOT auto-complete.
+    COMPLETED then: no punches/remarks, gone from the queue, evaluable (§5).
        ↓
 Client: the student's PunchCard renders /today's `allowed` and `blockedReason` verbatim
   (no rule copies), confirms every punch, polls /today every 30s; the supervisor's queue
@@ -322,6 +336,7 @@ POST /establishments/:id/supervisor
 | Symptom | Start here |
 |---|---|
 | Wrong/missing data for one student but not others | Ownership check in the service (§2) — is it filtering by the right profile id? |
+| A student didn't auto-complete (or completed when they shouldn't) | `decidePunch` in `supervisor.service.ts`: only the approval that crosses from below `requiredHours` to at/above it, ACTIVE only, `requiredHours > 0` (§4 of this file, CLAUDE.md §6). A student already past the line and reset to ACTIVE by hand is meant to stay ACTIVE; a course change lowering the requirement never completes anyone |
 | Hours don't match across two pages | `src/common/attendance-hours.ts` usage — is one call site bypassing `totalApprovedHours()`/`summarizeDay()`, or counting a session with only one punch approved? |
 | A field silently became `0` instead of blank | Missing `ToOptionalNumber()`/`EmptyToUndefined()` on that DTO field (CLAUDE.md §4, "Validation and DTOs") |
 | 400 on a request that looks right | An undeclared body property (`forbidNonWhitelisted`) — check the DTO lists every field the form sends |

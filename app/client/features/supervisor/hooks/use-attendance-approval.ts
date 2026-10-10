@@ -51,9 +51,12 @@ export function useAttendanceApproval() {
   const handleApprove = async (day: SupervisorAttendance, punch: Punch) => {
     setActioningId(punch.id);
     try {
-      await approvePunch(punch.id).unwrap();
+      const result = await approvePunch(punch.id).unwrap();
+      const done = result.completedStudent;
       showSuccess(
-        `Approved ${PUNCH_LABEL[punch.kind]} for ${day.student.user.name}.`,
+        done
+          ? `${done.name} has reached ${done.approvedHours} of ${done.requiredHours} hours and is now COMPLETED.`
+          : `Approved ${PUNCH_LABEL[punch.kind]} for ${day.student.user.name}.`,
       );
     } catch (err: unknown) {
       // A 409 means someone already decided it; the refetch shows the result.
