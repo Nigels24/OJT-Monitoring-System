@@ -31,13 +31,11 @@ import { CoordinatorService } from './coordinator.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { EmptyToNull } from '../common/transforms';
 import { attachmentDisposition } from '../common/document-types';
-import { COURSE_LABELS } from '../common/courses';
 
-// No `username` or `password` on the student create DTO: both are generated
-// by the service (common/credentials.ts) and returned once in the create
-// response. Sending either is a 400 under forbidNonWhitelisted. Supervisors are
-// created inside an establishment (POST /establishments, POST
-// /establishments/:id/supervisor), not here.
+// The coordinator creates no accounts here. Supervisors are created inside an
+// establishment (POST /establishments, POST /establishments/:id/supervisor);
+// students by their establishment's supervisor (POST /supervisor/students),
+// which is what fixes a new student's establishment to the supervisor's.
 
 /**
  * Editing a supervisor: name parts, email and position. No `establishmentId`
@@ -79,8 +77,8 @@ class UpdateSupervisorDto {
 }
 
 /**
- * Personal and OJT fields the coordinator's student form collects. Shared by
- * create and update; create adds the identity fields below.
+ * Personal and OJT fields the coordinator's student edit form sends.
+ * (`UpdateStudentDto` adds `course` and `status`.)
  *
  * Deliberately absent, so `forbidNonWhitelisted` turns any of them into a 400:
  * - `yearLevel` and `requiredHours` — derived from `course` by the service
@@ -132,8 +130,8 @@ class StudentDetailsDto {
   @MaxLength(255)
   address?: string | null;
 
-  // `course` is declared on CreateStudentDto and UpdateStudentDto, not here:
-  // the two validate it differently.
+  // `course` is declared on UpdateStudentDto, which validates it against the
+  // stored value (a legacy course may stay while unchanged).
 
   // Clearing the establishment select unassigns the student — Student
   // .establishmentId is nullable for exactly that (see §8 item 17).
@@ -151,32 +149,6 @@ class StudentDetailsDto {
   @EmptyToNull()
   @IsDateString()
   startDate?: string | null;
-}
-
-// No `status`: a new student is always ACTIVE (the service sets it), so a
-// create body carrying one is a 400 under forbidNonWhitelisted. COMPLETED and
-// INACTIVE are set later, by an edit.
-class CreateStudentDto extends StudentDetailsDto {
-  // Required, and must be one the school offers: it decides the student's
-  // year level and required hours (common/courses.ts).
-  @IsIn(COURSE_LABELS, {
-    message: `course must be one of: ${COURSE_LABELS.join('; ')}`,
-  })
-  course!: string;
-
-  @IsEmail()
-  email!: string;
-
-  // firstName and lastName (from StudentDetailsDto) are required on create —
-  // the username is built from them — but they are optional in the shared
-  // DTO for the edit form, so CoordinatorService.createStudent enforces it.
-  // (Redeclaring them here would not work: class-validator inherits the
-  // parent's @IsOptional.)
-
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(50)
-  studentIdNumber!: string;
 }
 
 class UpdateStudentDto extends StudentDetailsDto {
@@ -211,11 +183,6 @@ export class CoordinatorController {
   private readonly logger = new Logger(CoordinatorController.name);
 
   constructor(private coordinatorService: CoordinatorService) {}
-
-  @Post('students')
-  createStudent(@Body() dto: CreateStudentDto) {
-    return this.coordinatorService.createStudent(dto);
-  }
 
   @Get('students')
   listStudents() {

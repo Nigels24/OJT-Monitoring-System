@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -23,9 +24,61 @@ import {
   totalRating,
 } from '../common/evaluation-scoring';
 import { CASCADE_TRANSACTION_OPTIONS } from '../common/cascade-delete';
+import { deriveFromCourse } from '../common/courses';
+import { SCHOOL_NAME } from '../common/school';
+import {
+  RESEND_ACCOUNT_SELECT,
+  assertEmailAvailable,
+  buildPersonName,
+  isEmailClash,
+  isUniqueClashOn,
+  issueNewAccount,
+  reissuePassword,
+} from '../common/accounts';
 import { EvaluationTemplateService } from '../evaluation-template/evaluation-template.service';
 
 type AttendanceStatus = 'PENDING' | 'APPROVED' | 'DECLINED';
+
+/** What a supervisor sends to create a student — see CreateStudentDto. */
+interface NewStudentInput {
+  studentIdNumber: string;
+  firstName: string;
+  middleInitial?: string;
+  lastName: string;
+  email: string;
+  course: string;
+  contactNumber?: string;
+  address?: string;
+  startDate?: string;
+}
+
+/**
+ * A created student as the roster shows one (`GET /supervisor/students`'s row,
+ * plus the name parts and username). Explicit `select` on User — never the
+ * password hash.
+ */
+const NEW_STUDENT_SELECT = {
+  id: true,
+  studentIdNumber: true,
+  firstName: true,
+  middleInitial: true,
+  lastName: true,
+  course: true,
+  yearLevel: true,
+  requiredHours: true,
+  contactNumber: true,
+  address: true,
+  startDate: true,
+  status: true,
+  establishmentId: true,
+  user: { select: { id: true, email: true, username: true, name: true } },
+} as const;
+
+/**
+ * Deliberately the same words whoever holds the ID: it must not reveal which
+ * student or establishment has it.
+ */
+const STUDENT_ID_TAKEN = 'This student ID is already registered';
 
 @Injectable()
 export class SupervisorService {
@@ -211,6 +264,142 @@ export class SupervisorService {
       ...student,
       completedHours: totalApprovedHours(attendances),
     }));
+  }
+
+  /**
+   * Creates a student account at the caller's own establishment.
+   *
+   * Ownership: `establishmentId` comes ONLY from the caller's supervisor row,
+   * found through the JWT's `userId` — the DTO has no such field, so a body
+   * naming another establishment is a 400 before it gets here.
+   *
+   * User and Student are written in one transaction (sequential awaits — an
+   * interactive transaction is one connection, CLAUDE.md §8 item 19), so a
+   * failure leaves no login without a profile. A lost username race rolls it
+   * back and `issueNewAccount` retries the whole thing. The plaintext password
+   * exists only in the returned `credentials`.
+   *
+   * A taken student ID is a 409 with a fixed message that names no student or
+   * establishment; a taken email is the usual 409. Both are pre-checked for a
+   * clean message and caught again as P2002 for the race.
+   */
+  async createStudent(userId: string, data: NewStudentInput) {
+    const supervisor = await this.getSupervisorByUserId(userId);
+
+    // The DTO restricts `course` to the offered list; this is the service's
+    // guarantee that no student exists without the year level and hours their
+    // course implies.
+    const derived = deriveFromCourse(data.course);
+    if (!derived) {
+      throw new BadRequestException(
+        `"${data.course}" is not an offered course`,
+      );
+    }
+
+    // Trimmed: the username is built from the names, and a stray space would
+    // let the same student ID in twice.
+    const firstName = data.firstName.trim();
+    const lastName = data.lastName.trim();
+    const studentIdNumber = data.studentIdNumber.trim();
+    if (!firstName || !lastName || !studentIdNumber) {
+      throw new BadRequestException(
+        'studentIdNumber, firstName and lastName are required',
+      );
+    }
+
+    await assertEmailAvailable(this.prisma.client, data.email);
+    const idTaken = await this.prisma.client.student.findUnique({
+      where: { studentIdNumber },
+      select: { id: true },
+    });
+    if (idTaken) {
+      throw new ConflictException(STUDENT_ID_TAKEN);
+    }
+
+    try {
+      const { result, credentials } = await issueNewAccount(
+        this.prisma.client,
+        firstName,
+        lastName,
+        (username, passwordHash) =>
+          this.prisma.client.$transaction(async (tx) => {
+            const user = await tx.user.create({
+              data: {
+                email: data.email,
+                username,
+                password: passwordHash,
+                mustChangePassword: true,
+                name: buildPersonName({
+                  firstName,
+                  middleInitial: data.middleInitial,
+                  lastName,
+                }),
+                role: 'STUDENT',
+              },
+              select: { id: true },
+            });
+            return tx.student.create({
+              data: {
+                userId: user.id,
+                studentIdNumber,
+                firstName,
+                middleInitial: data.middleInitial?.trim() || null,
+                lastName,
+                contactNumber: data.contactNumber,
+                address: data.address,
+                course: data.course,
+                yearLevel: derived.yearLevel,
+                requiredHours: derived.requiredHours,
+                // Date-only: "2026-10-12" parses as UTC midnight of that day,
+                // the convention every date-only column follows (§4 dates.ts).
+                startDate: data.startDate ? new Date(data.startDate) : null,
+                school: SCHOOL_NAME,
+                // Always the caller's — never from the request.
+                establishmentId: supervisor.establishmentId,
+                status: 'ACTIVE',
+              },
+              select: NEW_STUDENT_SELECT,
+            });
+          }, CASCADE_TRANSACTION_OPTIONS),
+      );
+      // Nothing approved yet; the field keeps the roster's row shape.
+      return { ...result, completedHours: 0, credentials };
+    } catch (err) {
+      if (isUniqueClashOn(err, 'studentIdNumber')) {
+        throw new ConflictException(STUDENT_ID_TAKEN);
+      }
+      if (isEmailClash(err)) {
+        throw new ConflictException('Email already in use');
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * "Resend login" for one of the caller's own students: a new generated
+   * password, a forced change at next sign-in, `{ id, name, email,
+   * credentials }` — the same code and shape as the coordinator's.
+   *
+   * A student at another establishment is a 404, not a 403, so this route
+   * can't be used to discover which student ids exist elsewhere.
+   */
+  async resendStudentCredentials(userId: string, studentId: string) {
+    const supervisor = await this.getSupervisorByUserId(userId);
+    const student = await this.prisma.client.student.findUnique({
+      where: { id: studentId },
+      select: {
+        id: true,
+        establishmentId: true,
+        user: { select: RESEND_ACCOUNT_SELECT },
+      },
+    });
+    if (!student || student.establishmentId !== supervisor.establishmentId) {
+      throw new NotFoundException('Student not found');
+    }
+    return {
+      id: student.id,
+      ...(await reissuePassword(this.prisma.client, student.user)),
+    };
   }
 
   /**

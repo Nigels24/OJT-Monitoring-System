@@ -8,7 +8,6 @@ import {
   Clock,
   CalendarDays,
   Pencil,
-  UserPlus,
 } from "lucide-react";
 import TextField from "@/components/ui/TextField";
 import TextArea from "@/components/ui/TextArea";
@@ -22,10 +21,10 @@ import type {
   StudentPlacement,
 } from "../hooks/use-students";
 
+/** The coordinator's edit form — students are created by their supervisor. */
 interface StudentFormProps {
   form: StudentFormValues;
-  editTarget: Student | null;
-  isCreating: boolean;
+  editTarget: Student;
   isUpdating: boolean;
   error: string;
   establishments: Establishment[];
@@ -51,7 +50,6 @@ const STATUS_LABEL: Record<StudentStatus, string> = {
 export default function StudentForm({
   form,
   editTarget,
-  isCreating,
   isUpdating,
   error,
   establishments,
@@ -87,7 +85,7 @@ export default function StudentForm({
             placeholder="e.g., 2024-001"
             // The ID is the student's identity across attendance and
             // evaluations; changing it after creation is not supported.
-            disabled={!!editTarget}
+            disabled
           />
           <TextField
             label="Email Address"
@@ -98,28 +96,18 @@ export default function StudentForm({
             value={form.email}
             onChange={setField("email")}
             placeholder="student@wphi.edu"
-            disabled={!!editTarget}
+            disabled
           />
-          {editTarget && (
-            <ReadOnlyField
-              label="Username"
-              icon={User}
-              value={editTarget.user.username ?? "None — signs in with email"}
-            />
-          )}
+          <ReadOnlyField
+            label="Username"
+            icon={User}
+            value={editTarget.user.username ?? "None — signs in with email"}
+          />
         </div>
-        {!editTarget ? (
-          <p className="text-xs text-gray-500 mt-2">
-            A username and a temporary password are generated when you add the
-            student, and shown to you once. The student must choose their own
-            password the first time they sign in.
-          </p>
-        ) : (
-          <p className="text-xs text-gray-500 mt-2">
-            Login details can&apos;t be changed from this form. Use Resend
-            login in the list to issue a new temporary password.
-          </p>
-        )}
+        <p className="text-xs text-gray-500 mt-2">
+          Login details can&apos;t be changed from this form. Use Resend login
+          in the list to issue a new temporary password.
+        </p>
       </section>
 
       <section className="border-l-4 border-blue-400 pl-4 md:pl-6">
@@ -201,7 +189,7 @@ export default function StudentForm({
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Course / Program{!editTarget && <span className="text-red-500"> *</span>}
+              Course / Program
             </label>
             <SelectField
               value={form.course}
@@ -258,25 +246,23 @@ export default function StudentForm({
             value={form.startDate}
             onChange={setField("startDate")}
           />
-          {/* Edit only: a new student is always ACTIVE (set by the
-              server). COMPLETED / INACTIVE are set here later. */}
-          {editTarget && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Status
-              </label>
-              <SelectField
-                value={form.status}
-                onChange={setValue("status")}
-                placeholder="Select Status"
-                options={statusOptions.map((s) => ({
-                  label: STATUS_LABEL[s],
-                  value: s,
-                }))}
-                className="w-full"
-              />
-            </div>
-          )}
+          {/* A new student is always ACTIVE (set by the server on the
+              supervisor's create). COMPLETED / INACTIVE are set here. */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Status
+            </label>
+            <SelectField
+              value={form.status}
+              onChange={setValue("status")}
+              placeholder="Select Status"
+              options={statusOptions.map((s) => ({
+                label: STATUS_LABEL[s],
+                value: s,
+              }))}
+              className="w-full"
+            />
+          </div>
         </div>
       </section>
 
@@ -295,12 +281,8 @@ export default function StudentForm({
           Cancel
         </button>
         <div className="sm:w-48">
-          <Button
-            type="submit"
-            icon={editTarget ? Pencil : UserPlus}
-            loading={isCreating || isUpdating}
-          >
-            {editTarget ? "Save Changes" : "Add Student"}
+          <Button type="submit" icon={Pencil} loading={isUpdating}>
+            Save Changes
           </Button>
         </div>
       </div>

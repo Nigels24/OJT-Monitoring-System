@@ -5,6 +5,11 @@ import type {
   AttendanceStatus,
   Punch,
 } from "./studentPortalApi";
+import type {
+  GeneratedCredentials,
+  ResendCredentialsResponse,
+} from "./studentApi";
+import { messagesApi } from "./messagesApi";
 
 /** The signed-in supervisor's view of their establishment (`/supervisor/*`). */
 
@@ -60,6 +65,30 @@ export interface SupervisorStudent {
   user: { id: string; email: string; name: string };
 }
 
+/**
+ * A student created by the signed-in supervisor. No `establishmentId` — the
+ * server always uses the supervisor's own — and no username, password, year
+ * level or hours: generated or derived server-side. `course` is one of the
+ * offered labels (`lib/courses.ts`).
+ */
+export interface CreateSupervisorStudentRequest {
+  studentIdNumber: string;
+  firstName: string;
+  middleInitial?: string;
+  lastName: string;
+  email: string;
+  course: string;
+  contactNumber?: string;
+  address?: string;
+  /** yyyy-mm-dd */
+  startDate?: string;
+}
+
+/** The roster row, plus the one-time login. */
+export type CreateSupervisorStudentResponse = SupervisorStudent & {
+  credentials: GeneratedCredentials;
+};
+
 export const supervisorApi = createApi({
   reducerPath: "supervisorApi",
   baseQuery: baseQueryWithAuth,
@@ -76,6 +105,49 @@ export const supervisorApi = createApi({
     getSupervisorStudents: builder.query<SupervisorStudent[], void>({
       query: () => "/supervisor/students",
       providesTags: ["SupervisorStudent"],
+    }),
+    /**
+     * Creates a student at this supervisor's establishment and returns the
+     * generated login once. The roster (also the evaluation page's student
+     * list) and the dashboard's counts gain a row, and so do this
+     * supervisor's message contacts.
+     *
+     * The coordinator's student list, dashboard, establishment counts and
+     * oversight also change, but those caches live in a different login's
+     * store — they refetch on the coordinator's next load (CLAUDE.md §8
+     * item 22).
+     */
+    createSupervisorStudent: builder.mutation<
+      CreateSupervisorStudentResponse,
+      CreateSupervisorStudentRequest
+    >({
+      query: (body) => ({
+        url: "/supervisor/students",
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["SupervisorStudent", "SupervisorDashboard"],
+      async onQueryStarted(_body, { dispatch, queryFulfilled }) {
+        try {
+          await queryFulfilled;
+          dispatch(messagesApi.util.invalidateTags(["Contacts"]));
+        } catch {
+          // Create failed — nothing else to invalidate.
+        }
+      },
+    }),
+    /**
+     * "Resend login" for one of this establishment's students. Invalidates
+     * nothing — no list shows the password or the must-change flag.
+     */
+    resendSupervisorStudentCredentials: builder.mutation<
+      ResendCredentialsResponse,
+      string
+    >({
+      query: (id) => ({
+        url: `/supervisor/students/${id}/resend-credentials`,
+        method: "POST",
+      }),
     }),
     /**
      * Marks an OJT finished, or reopens it.
@@ -148,6 +220,8 @@ export const {
   useGetSupervisorDashboardQuery,
   useGetSupervisorStudentsQuery,
   useSetStudentStatusMutation,
+  useCreateSupervisorStudentMutation,
+  useResendSupervisorStudentCredentialsMutation,
   useGetSupervisorAttendanceQuery,
   useApprovePunchMutation,
   useDeclinePunchMutation,

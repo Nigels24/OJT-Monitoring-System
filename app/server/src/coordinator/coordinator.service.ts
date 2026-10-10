@@ -6,7 +6,6 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   HOURS_PUNCH_SELECT,
@@ -37,17 +36,15 @@ import {
   safeFileName,
 } from '../common/document-types';
 import { DocumentType } from '../../generated/prisma/client';
-import { SCHOOL_NAME } from '../common/school';
 import { deriveFromCourse } from '../common/courses';
-import { generatePassword } from '../common/credentials';
 import {
-  assertEmailAvailable,
+  RESEND_ACCOUNT_SELECT,
   buildPersonName,
   isEmailClash,
-  issueNewAccount,
+  reissuePassword,
 } from '../common/accounts';
 
-/** Fields the coordinator can set on a student, shared by create and update. */
+/** Fields the coordinator can set on a student through an edit. */
 /**
  * On the nullable fields, `null` and `undefined` mean different things:
  * `null` = the coordinator emptied the box, clear the column; `undefined` =
@@ -93,103 +90,11 @@ const SUPERVISOR_ROW_SELECT = {
   establishment: { select: { id: true, name: true } },
 } as const;
 
-/** The login fields "Resend login" needs — never `password`. */
-const ACCOUNT_SELECT = {
-  id: true,
-  name: true,
-  email: true,
-  username: true,
-} as const;
-
 @Injectable()
 export class CoordinatorService {
   private readonly logger = new Logger(CoordinatorService.name);
 
   constructor(private prisma: PrismaService) {}
-
-  async createStudent(
-    data: StudentDetails & {
-      course: string;
-      email: string;
-      studentIdNumber: string;
-    },
-  ) {
-    // The DTO already restricts `course` to the offered list; this is the
-    // service-level guarantee that a student is never created without the year
-    // level and hours their course implies.
-    const derived = deriveFromCourse(data.course);
-    if (!derived) {
-      throw new BadRequestException(
-        `"${data.course}" is not an offered course`,
-      );
-    }
-
-    // Required here rather than in the DTO, which the edit form shares: the
-    // generated username is built from these two.
-    const firstName = data.firstName?.trim();
-    const lastName = data.lastName?.trim();
-    if (!firstName || !lastName) {
-      throw new BadRequestException('firstName and lastName are required');
-    }
-
-    await assertEmailAvailable(this.prisma.client, data.email);
-
-    const idTaken = await this.prisma.client.student.findUnique({
-      where: { studentIdNumber: data.studentIdNumber },
-    });
-    if (idTaken) {
-      throw new ConflictException(
-        `Student ID ${data.studentIdNumber} is already assigned to another student`,
-      );
-    }
-
-    const fullName = buildFullName(data) as string;
-
-    const { result: user, credentials } = await issueNewAccount(
-      this.prisma.client,
-      firstName,
-      lastName,
-      // User and Student are separate rows. Without a transaction a failure on
-      // the second write would leave a login with no profile, which every
-      // /student/* endpoint then rejects with "Student profile not found". A
-      // username race (P2002) rolls the whole transaction back and is retried.
-      (username, passwordHash) =>
-        this.prisma.client.$transaction(async (tx) => {
-          const created = await tx.user.create({
-            data: {
-              email: data.email,
-              username,
-              password: passwordHash,
-              mustChangePassword: true,
-              name: fullName,
-              role: 'STUDENT',
-            },
-          });
-
-          await tx.student.create({
-            data: {
-              userId: created.id,
-              studentIdNumber: data.studentIdNumber,
-              school: SCHOOL_NAME,
-              ...studentProfileData(data),
-              yearLevel: derived.yearLevel,
-              requiredHours: derived.requiredHours,
-              // A new student is always ACTIVE — the create DTO has no status
-              // field, and this line holds even if a caller passes one.
-              status: 'ACTIVE',
-            },
-          });
-
-          return tx.user.findUniqueOrThrow({
-            where: { id: created.id },
-            include: { studentProfile: true },
-          });
-        }),
-    );
-
-    const { password, ...result } = user;
-    return { ...result, credentials };
-  }
 
   async listStudents() {
     const students = await this.prisma.client.student.findMany({
@@ -753,46 +658,28 @@ export class CoordinatorService {
   async resendStudentCredentials(studentId: string) {
     const student = await this.prisma.client.student.findUnique({
       where: { id: studentId },
-      select: { id: true, user: { select: ACCOUNT_SELECT } },
+      select: { id: true, user: { select: RESEND_ACCOUNT_SELECT } },
     });
     if (!student) {
       throw new NotFoundException('Student not found');
     }
-    return { id: student.id, ...(await this.reissuePassword(student.user)) };
+    return {
+      id: student.id,
+      ...(await reissuePassword(this.prisma.client, student.user)),
+    };
   }
 
   async resendSupervisorCredentials(supervisorId: string) {
     const supervisor = await this.prisma.client.supervisor.findUnique({
       where: { id: supervisorId },
-      select: { id: true, user: { select: ACCOUNT_SELECT } },
+      select: { id: true, user: { select: RESEND_ACCOUNT_SELECT } },
     });
     if (!supervisor) {
       throw new NotFoundException('Supervisor not found');
     }
     return {
       id: supervisor.id,
-      ...(await this.reissuePassword(supervisor.user)),
-    };
-  }
-
-  private async reissuePassword(user: {
-    id: string;
-    name: string;
-    email: string;
-    username: string | null;
-  }) {
-    const tempPassword = generatePassword();
-    await this.prisma.client.user.update({
-      where: { id: user.id },
-      data: {
-        password: await bcrypt.hash(tempPassword, 10),
-        mustChangePassword: true,
-      },
-    });
-    return {
-      name: user.name,
-      email: user.email,
-      credentials: { username: user.username, tempPassword },
+      ...(await reissuePassword(this.prisma.client, supervisor.user)),
     };
   }
 
@@ -1148,9 +1035,10 @@ function toNullableDate(value?: string | null): Date | null | undefined {
 }
 
 /**
- * Shared create/update fields. `school` is deliberately excluded — the school
- * is permanent (`SCHOOL_NAME`), never client-editable. `createStudent` sets it
- * explicitly; `updateStudent` never touches the column at all, so any
+ * The edit's profile fields. `school` is deliberately excluded — the school
+ * is permanent (`SCHOOL_NAME`), never client-editable. The supervisor's create
+ * (`SupervisorService.createStudent`) sets it explicitly; `updateStudent`
+ * never touches the column at all, so any
  * `school` value in the request body is silently ignored rather than
  * rejected (`StudentDetailsDto` still declares the field so a client that
  * sends it isn't 400'd by `forbidNonWhitelisted`).

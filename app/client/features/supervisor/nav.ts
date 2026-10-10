@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
   CalendarCheck,
+  Users,
   Star,
   MessageSquare,
 } from "lucide-react";
@@ -13,6 +14,7 @@ export const SUPERVISOR_NAV = [
     href: "/supervisor/attendance",
     icon: CalendarCheck,
   },
+  { label: "Students", href: "/supervisor/students", icon: Users },
   { label: "Evaluation", href: "/supervisor/evaluation", icon: Star },
   { label: "Messages", href: "/supervisor/messages", icon: MessageSquare },
 ];

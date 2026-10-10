@@ -6,12 +6,10 @@ import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
-import Button from "@/components/ui/Button";
 import TextField from "@/components/ui/TextField";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import {
   Users,
-  Plus,
   CheckCircle2,
   Clock,
   UserCheck,
@@ -38,12 +36,10 @@ export default function StudentManagementPage() {
     error,
     establishments,
     isLoading,
-    isCreating,
     isUpdating,
     deleteTarget,
     viewTarget,
     editTarget,
-    isDialogOpen,
     search,
     statusFilter,
     page,
@@ -69,7 +65,6 @@ export default function StudentManagementPage() {
     handleDeleteConfirm,
     handleView,
     handleEdit,
-    handleOpenAddDialog,
     closeDialog,
     selectedIds,
     selectedStudents,
@@ -102,17 +97,9 @@ export default function StudentManagementPage() {
         <div className="bg-gradient-to-r from-gray-800 to-gray-700 rounded-2xl p-4 md:p-6 mb-6 flex flex-col md:flex-row md:items-start md:justify-between gap-4">
           <PageHeader
             title="Student Management"
-            subtitle="Manage OJT students, their assignments and progress"
+            subtitle="Manage OJT students, their assignments and progress. Students are added by their establishment's supervisor."
             icon={Users}
           />
-          <Button
-            icon={Plus}
-            onClick={handleOpenAddDialog}
-            fullWidth={false}
-            className="self-start md:self-auto"
-          >
-            Add Student
-          </Button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
@@ -240,10 +227,8 @@ export default function StudentManagementPage() {
       />
 
       <StudentEditDialog
-        open={isDialogOpen}
         form={form}
         editTarget={editTarget}
-        isCreating={isCreating}
         isUpdating={isUpdating}
         error={error}
         establishments={establishments || []}

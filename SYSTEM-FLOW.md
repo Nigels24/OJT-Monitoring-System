@@ -67,10 +67,13 @@ thrown from inside the service.
 ### Generated credentials → forced change
 
 ```
-Coordinator: POST /coordinator/students | /establishments {…, supervisor} | /establishments/:id/supervisor
+Coordinator: POST /establishments {…, supervisor} | /establishments/:id/supervisor
              (no username/password in body; the establishment create writes Establishment +
               User + Supervisor in one $transaction)
          or  POST /coordinator/{students,supervisors}/:id/resend-credentials
+Supervisor:  POST /supervisor/students   (establishmentId = the caller's Supervisor row,
+              found from req.user.userId — never the body; User + Student in one $transaction)
+         or  POST /supervisor/students/:id/resend-credentials   (own establishment, else 404)
   → generatePassword() → bcrypt.hash → user row (username via usernameBase +
     nextFreeUsername, retried on a P2002 race), mustChangePassword = true
   ← { …, credentials: { username, tempPassword } }  — the only time the plaintext exists

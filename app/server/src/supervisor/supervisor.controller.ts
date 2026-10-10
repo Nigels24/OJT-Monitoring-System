@@ -15,12 +15,14 @@ import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
+  IsEmail,
   IsIn,
   IsNotEmpty,
   IsNotEmptyObject,
   IsObject,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -28,6 +30,7 @@ import { SupervisorService } from './supervisor.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { AuthedRequest } from '../auth/authed-request';
 import { EmptyToNull, EmptyToUndefined } from '../common/transforms';
+import { COURSE_LABELS } from '../common/courses';
 
 class AttendanceQueryDto {
   @IsOptional()
@@ -40,6 +43,70 @@ class AttendanceQueryDto {
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   includeCompleted?: boolean;
+}
+
+/**
+ * A student created by their establishment's supervisor. Same rules as the
+ * coordinator's old create (F1/F3), with one more absence:
+ *
+ * - no `establishmentId` — the student's establishment is ALWAYS the caller's,
+ *   derived from their supervisor row, never from the body;
+ * - no `username` / `password` — generated, returned once;
+ * - no `yearLevel` / `requiredHours` — derived from `course`;
+ * - no `status` — a new student is ACTIVE;
+ * - no `school` — the constant `SCHOOL_NAME`.
+ *
+ * Any of them in the body is a 400 under `forbidNonWhitelisted`.
+ */
+class CreateStudentDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  studentIdNumber!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  firstName!: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(10)
+  middleInitial?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  lastName!: string;
+
+  @IsEmail()
+  email!: string;
+
+  // The offered courses only (ACT, BSIT); it decides year level and hours.
+  @IsIn(COURSE_LABELS, {
+    message: `course must be one of: ${COURSE_LABELS.join('; ')}`,
+  })
+  course!: string;
+
+  // Philippine mobile format, as on the coordinator's edit form.
+  @IsOptional()
+  @EmptyToUndefined()
+  @Matches(/^\d{11}$/, {
+    message: 'contactNumber must be exactly 11 digits (e.g. 09123456789)',
+  })
+  contactNumber?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(255)
+  address?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsDateString()
+  startDate?: string;
 }
 
 class SetStudentStatusDto {
@@ -131,6 +198,21 @@ export class SupervisorController {
   @Get('students')
   getStudents(@Req() req: AuthedRequest) {
     return this.supervisorService.getStudents(req.user.userId);
+  }
+
+  /**
+   * Creates a student at the caller's own establishment, with a generated
+   * login returned once in `credentials`.
+   */
+  @Post('students')
+  createStudent(@Req() req: AuthedRequest, @Body() dto: CreateStudentDto) {
+    return this.supervisorService.createStudent(req.user.userId, dto);
+  }
+
+  /** New temporary password for one of the caller's own students. */
+  @Post('students/:id/resend-credentials')
+  resendStudentCredentials(@Req() req: AuthedRequest, @Param('id') id: string) {
+    return this.supervisorService.resendStudentCredentials(req.user.userId, id);
   }
 
   @Get('attendance')

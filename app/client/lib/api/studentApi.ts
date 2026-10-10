@@ -78,20 +78,6 @@ export interface StudentDetailsRequest {
 }
 
 /**
- * No `status`: a new student is always ACTIVE, and the server rejects a
- * create body that carries one. No `username` or `password` either — the
- * server generates both and returns them once, in `credentials`.
- */
-export interface CreateStudentRequest extends StudentDetailsRequest {
-  email: string;
-  studentIdNumber: string;
-  /** Required on create: the generated username is built from these. */
-  firstName: string;
-  lastName: string;
-  course: string;
-}
-
-/**
  * Generated login details. The only response that ever carries the plaintext
  * password — show it once (`CredentialsDialog`) and keep no copy.
  */
@@ -99,15 +85,6 @@ export interface GeneratedCredentials {
   /** `null` only for an account from before usernames — it signs in by email. */
   username: string | null;
   tempPassword: string;
-}
-
-export interface CreateStudentResponse {
-  id: string;
-  email: string;
-  username: string | null;
-  name: string;
-  role: string;
-  credentials: GeneratedCredentials;
 }
 
 /** "Resend login": a new temporary password for an existing account. */
@@ -154,16 +131,6 @@ export const studentApi = createApi({
       query: () => "/coordinator/students",
       providesTags: ["Student"],
     }),
-    createStudent: builder.mutation<CreateStudentResponse, CreateStudentRequest>(
-      {
-        query: (body) => ({
-          url: "/coordinator/students",
-          method: "POST",
-          body,
-        }),
-        invalidatesTags: ["Student"],
-      },
-    ),
     updateStudent: builder.mutation<
       Student,
       { id: string } & UpdateStudentRequest
@@ -233,7 +200,6 @@ export const studentApi = createApi({
 
 export const {
   useGetStudentsQuery,
-  useCreateStudentMutation,
   useUpdateStudentMutation,
   useDeleteStudentMutation,
   useBulkDeleteStudentsMutation,

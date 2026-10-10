@@ -8,11 +8,14 @@ import type {
 } from "../hooks/use-students";
 import Overlay from "@/components/ui/Overlay";
 
+/**
+ * Edits a student. There is no create mode: students are created by their
+ * establishment's supervisor (`/supervisor/students`).
+ */
 interface StudentEditDialogProps {
-  open: boolean;
   form: StudentFormValues;
+  /** The student being edited; `null` = closed. */
   editTarget: Student | null;
-  isCreating: boolean;
   isUpdating: boolean;
   error: string;
   establishments: Establishment[];
@@ -28,10 +31,8 @@ interface StudentEditDialogProps {
 }
 
 export default function StudentEditDialog({
-  open,
   form,
   editTarget,
-  isCreating,
   isUpdating,
   error,
   establishments,
@@ -42,12 +43,12 @@ export default function StudentEditDialog({
   onSubmit,
   onClose,
 }: StudentEditDialogProps) {
-  if (!open) return null;
+  if (!editTarget) return null;
 
   return (
     <Overlay
       open
-      label={editTarget ? "Edit Student" : "Add Student"}
+      label="Edit Student"
       onClose={onClose}
       closeOnBackdrop={false}
     >
@@ -56,7 +57,7 @@ export default function StudentEditDialog({
           <div className="flex items-center gap-2">
             <Users size={20} className="text-blue-600" />
             <h2 className="text-lg md:text-xl font-semibold text-gray-900">
-              {editTarget ? "Edit Student" : "Add Student"}
+              Edit Student
             </h2>
           </div>
           <button
@@ -72,7 +73,6 @@ export default function StudentEditDialog({
           <StudentForm
             form={form}
             editTarget={editTarget}
-            isCreating={isCreating}
             isUpdating={isUpdating}
             error={error}
             establishments={establishments}

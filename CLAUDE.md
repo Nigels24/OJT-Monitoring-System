@@ -78,7 +78,7 @@ OJT-Monitoring-System/
         │   ├── login/
         │   ├── coordinator/{dashboard,establishments,supervisors,students,evaluations,attendance,documents,messages}
         │   ├── student/{dashboard,attendance,documents,profile,messages}
-        │   └── supervisor/{dashboard,attendance,evaluation,messages}
+        │   └── supervisor/{dashboard,attendance,students,evaluation,messages}
         ├── features/<domain>/
         │   ├── nav.ts                   # only in coordinator/, supervisor/, student-portal/
         │   ├── hooks/use-<domain>.ts    # all state, RTK Query, filtering, handlers
@@ -298,7 +298,10 @@ unused. Students and supervisors never choose their first password.
   `User.name` is composed) and **`issueNewAccount(db, first, last, create)`** — generate,
   hash, pick a username, run `create(username, hash)` (retried whole on a username race,
   so everything it writes belongs in one transaction), return `{ result, credentials }`.
-  Used by student create, establishment create and add-supervisor.
+  Used by the supervisor's student create, establishment create and add-supervisor.
+  Also **`reissuePassword(db, user)`** + `RESEND_ACCOUNT_SELECT` — the one Resend-login
+  implementation (coordinator for students and supervisors, supervisor for their own
+  students) — and `isUniqueClashOn(err, field)` for a P2002 on a named column.
 - The create/resend response carries **`credentials: { username, tempPassword }`** — the
   **only** place the plaintext exists. It is hashed (`bcrypt`, 10) before Prisma sees it,
   never logged, never stored; the client shows it once in `CredentialsDialog` (closes only
@@ -313,6 +316,7 @@ unused. Students and supervisors never choose their first password.
 | `PATCH /auth/password` | any signed-in user, **including a must-change session** | `{ currentPassword, newPassword }` (≥ 8) — the current password is required even with a valid JWT (in forced mode it is the temporary one). Clears `mustChangePassword` and returns a **fresh session** `{ changed, accessToken, user }`, since the caller's token may carry `mcp` |
 | `POST /coordinator/students/:id/resend-credentials` | COORDINATOR | "Resend login": new generated password, flag set, `{ id, name, email, credentials }`. Username never regenerated (`null` for a pre-username account → sign in by email) |
 | `POST /coordinator/supervisors/:id/resend-credentials` | COORDINATOR | same |
+| `POST /supervisor/students/:id/resend-credentials` | SUPERVISOR | same, own establishment's students only — any other id is a **404** (not 403) |
 | `POST /establishments` (with `supervisor`) · `POST /establishments/:id/supervisor` | COORDINATOR | how a supervisor account is created — see §5 |
 | `npm run reset-coordinator` | CLI, needs `.env` | **the only way to reset a coordinator.** Also clears `mustChangePassword`. There is deliberately no web route — don't add one |
 
@@ -611,7 +615,7 @@ table; never derive one from the other.
 | GET | `/establishments` · `/establishments/:id` | any signed-in | reads are open |
 | POST/PATCH/DELETE | `/establishments` · `/establishments/:id` | COORDINATOR | POST always creates **ACTIVE** — `status` is only on the update DTO (400 on create). The `coordinator*` contact fields are a **400** on both. POST takes an optional nested **`supervisor: { firstName, middleInitial?, lastName, email, position? }`** (no `username`/`password`/`establishmentId` — 400): Establishment + User + Supervisor in **one `$transaction`** (`CASCADE_TRANSACTION_OPTIONS`), generated login, `mustChangePassword` set, 409 on a taken email; the response is the establishment plus `supervisor: { id, name, email, position }` and `credentials`. PATCH rejects `supervisor` (400). `GET /establishments` rows carry `supervisor: { id, name, email, position } \| null` (earliest-created if several) |
 | POST | `/establishments/:id/supervisor` | COORDINATOR | same body as the nested `supervisor`; `{ id, name, email, position, establishmentId, credentials }`. 404 unknown establishment, 409 taken email. **A second supervisor is not refused** (paid item 3, pending) — the client offers this only when there is none |
-| POST | `/coordinator/students` | COORDINATOR | **generates** username + temporary password, returned once as `credentials` (§4); `username`/`password` in the body are a 400; `mustChangePassword` set. `firstName`/`lastName` required (service check). (`POST /coordinator/supervisors` is **removed** — supervisors are created through `/establishments`.) A student is created **ACTIVE** — `status` is not on the create DTO (400 if sent). `course` is **required** and must be an offered course; the server sets `yearLevel`/`requiredHours` from it. `yearLevel`, `requiredHours`, `age`, `dateOfBirth`, `gender`, `endDate` in the body are a 400 |
+| POST | `/coordinator/students` | — | **Removed (F5).** The coordinator no longer creates students; their supervisor does (`POST /supervisor/students`). (`POST /coordinator/supervisors` was removed in F4 — supervisors are created through `/establishments`.) |
 | POST | `/coordinator/students/bulk-delete` | COORDINATOR | `{ ids }`, 1–100. Every id must exist and be **COMPLETED**, else 400 with `offenders: [{ id, reason }]` and nothing deleted. Then `deleteStudentCascade` per student, **one `$transaction` each** (status re-checked inside), files after each commit. Returns `{ deleted: [ids], failed: [{ id, reason }] }` |
 | GET | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | |
 | PATCH/DELETE | `/coordinator/students/:id` | COORDINATOR | delete is guarded, see §6. PATCH: same six fields rejected. A `course` that **differs from the stored one** must be offered (clearing it is a 400) and recomputes `yearLevel`/`requiredHours`; an unchanged or absent course leaves all three alone, so legacy students keep their values until the course changes |
@@ -639,7 +643,8 @@ table; never derive one from the other.
 | DELETE | `/student/documents/:id` | STUDENT | own document; no status guard (there is no status) |
 | GET | `/supervisor/dashboard` · `/supervisor/students` | SUPERVISOR | scoped to own establishment. Dashboard counts **punches** (`pendingApprovals`, `declinedCount`, `approvedThisWeek` by `decidedAt`); `totalApprovedHours`/roster `completedHours` from approved sessions |
 | GET | `/supervisor/attendance` | SUPERVISOR | `?status=&includeCompleted=` — **days** with nested punches (the history shape plus `student`), own establishment, COMPLETED students hidden by default. `status=PENDING` = days with at least one PENDING punch |
-| PATCH | `/supervisor/students/:id/status` | SUPERVISOR | |
+| POST | `/supervisor/students` | SUPERVISOR | **Creates a student at the caller's own establishment.** `{ studentIdNumber, firstName, middleInitial?, lastName, email, course, contactNumber?, address?, startDate? }`. `establishmentId` is taken from the caller's `Supervisor` row (via `req.user.userId`), **never the body**: `establishmentId`, `username`, `password`, `yearLevel`, `requiredHours`, `status`, `school` in the body are each a 400. `course` must be an offered label; `yearLevel`/`requiredHours` derived (F1), `school` = `SCHOOL_NAME`, `status` ACTIVE. Generated login via `issueNewAccount`, `mustChangePassword` set; User + Student in **one `$transaction`** (`CASCADE_TRANSACTION_OPTIONS`). Response: the roster row (explicit select, `user: { id, email, username, name }`, `completedHours: 0`) + `credentials`. Taken student ID → 409 `"This student ID is already registered"` (fixed text — names no student or establishment); taken email → 409. Both pre-checked and caught again as P2002 |
+| PATCH | `/supervisor/students/:id/status` | SUPERVISOR | `{ status: ACTIVE \| COMPLETED }`. 404 unknown, **403** another establishment's (pre-existing; left as is) |
 | PATCH | `/supervisor/punches/:id/approve` | SUPERVISOR | one punch. Sets `decidedById`/`decidedAt`. **Decisions are final: 409 unless PENDING.** 404 unknown, 403 another establishment's. Returns the punch + `attendanceId` |
 | PATCH | `/supervisor/punches/:id/decline` | SUPERVISOR | `{ reason }`, 3–500 chars, required; same rules as approve. There is deliberately **no bulk approve** — each punch is its own approval |
 | GET | `/supervisor/evaluations/form` | SUPERVISOR | the **currently PUBLISHED template**: `templateId`, `version`, `title`, sections with item keys, printed letters and wording, the 1–5 legend and `maxTotalRating` — plus `evaluator` and `employedAt`, the header/footer blanks as they will be stamped for this supervisor. **409 if the school has published no sheet.** The client renders the whole form from this one endpoint instead of keeping its own copy of the form text or reading the dashboard |
@@ -897,7 +902,9 @@ recoverable, a half-deleted database is not.
 
 - **Auth** — `POST /auth/login`, JWT bearer, role-based routing.
 - **Establishment (Coordinator)** — full CRUD, PSGC cascading address dropdowns.
-- **Student Management (Coordinator)** — full CRUD, computed hours, progress, stats,
+- **Student Management (Coordinator)** — list, view, **edit**, delete, bulk delete and
+  Resend login, computed hours, progress, stats — **no create since F5** (next item);
+  the edit can still move a student to another establishment or unassign them,
   including writable `Student.startDate`. `school` is not one of the writable fields —
   this system serves exactly one school, permanently named by the `SCHOOL_NAME` constant
   (`server/src/common/school.ts`, `client/lib/school.ts`, deliberately duplicated with a
@@ -1065,10 +1072,30 @@ recoverable, a half-deleted database is not.
 - **Password recovery** — self-service change for everyone, coordinator "Resend login"
   for students and supervisors (generated, shown once, forced change), CLI for the
   coordinator.
+- **Supervisor creates students (final-defense F5)** — `POST /supervisor/students` and
+  `POST /supervisor/students/:id/resend-credentials` (§5). **A new student's establishment
+  always equals the creating supervisor's**, derived server-side; the coordinator's create
+  route, DTO, service method and client path are gone (`StudentEditDialog`/`StudentForm`
+  are edit-only, `editTarget` non-null; no Add button). Client: `/supervisor/students`
+  (nav **Students**, between Attendance Approval and Evaluation) —
+  `features/supervisor/hooks/use-supervisor-students.ts`,
+  `components/AddStudentDialog.tsx` (`FormDialog`; course select = the two offered
+  courses from `lib/courses.ts`, Year Level / Required Hours read-only and following the
+  course; no establishment field), and the shared `StudentRoster`, which takes an
+  optional `onResendLogin` (the Students page passes it; the dashboard doesn't, so its
+  roster is unchanged). Status toggle as before. `supervisorApi`:
+  `createSupervisorStudent` invalidates `SupervisorStudent` (also the evaluation page's
+  student list) + `SupervisorDashboard` + messages `Contacts`;
+  `resendSupervisorStudentCredentials` invalidates nothing. The coordinator's student
+  list, dashboard, establishment counts and oversight are **not** invalidated: those
+  caches belong to a different login's store, so dispatching to them from the
+  supervisor's session is a no-op (§8 item 22) — they refetch on the coordinator's next
+  page load.
 - **Generated credentials and forced password change (final-defense F3)** — §4
   "Generated credentials and recovery". Client: `features/account/CredentialsDialog.tsx`
   (one-time username + temporary password, copy buttons, closes only on Done; used by
-  student create, supervisor create and both Resend logins, each behind a
+  the supervisor's student create, establishment/supervisor create and every Resend
+  login, each behind a
   `ConfirmDialog`). `ChangePasswordDialog` has a **forced** mode (no X, no Cancel,
   Escape/backdrop inert, Log out as the only other way out) that `Sidebar` opens whenever
   the stored user has `mustChangePassword`; on success it stores the fresh session and
@@ -1159,6 +1186,17 @@ recoverable, a half-deleted database is not.
 **All three roles land on a real page after login. No role 404s.**
 
 ### Needs live verification
+
+**Final-defense step F5** (supervisor creates students; coordinator create removed).
+Verified in-process only — real `AppModule`, `ValidationPipe`, `RolesGuard` and services
+against a faked Prisma (17 cases: create with derived establishment/year/hours/school in
+one transaction; `establishmentId`, `username`, `password`, `yearLevel`,
+`requiredHours`, `status`, `school` each 400; unoffered course, blank ID, bad contact/email
+400; coordinator and student tokens 403, none 401; duplicate student ID 409 with no
+leak, pre-check and race (rolled back); duplicate email 409; supervisor resend own 201,
+other establishment and unknown both 404 with the same message; coordinator resend via
+the shared code; `POST /coordinator/students` 404; no plaintext password in any stored
+row or log line). No live request; the client was typechecked, never rendered.
 
 **Final-defense step F4** (supervisor inside the establishment form, supervisor edit,
 supervisor-based contact card, case-insensitive username login, no lowercase `o` in

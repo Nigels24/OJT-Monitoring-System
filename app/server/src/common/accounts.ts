@@ -49,6 +49,17 @@ export function isUsernameClash(err: unknown): boolean {
   return JSON.stringify(err.meta?.target ?? '').includes('username');
 }
 
+/**
+ * True for a P2002 on `field` — e.g. `studentIdNumber` claimed between a
+ * pre-check and the insert. Matches the constraint's target, so a clash on
+ * some other unique column is not mistaken for this one.
+ */
+export function isUniqueClashOn(err: unknown, field: string): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (err.code !== 'P2002') return false;
+  return JSON.stringify(err.meta?.target ?? '').includes(field);
+}
+
 /** True for a P2002 on `User.email` — an email claimed between check and insert. */
 export function isEmailClash(err: unknown): boolean {
   if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return false;
@@ -130,4 +141,55 @@ export async function assertEmailAvailable(
   if (clash) {
     throw new ConflictException('Email already in use');
   }
+}
+
+/**
+ * The login fields "Resend login" needs — never `password`. Select these on the
+ * User relation and pass the result to `reissuePassword`.
+ */
+export const RESEND_ACCOUNT_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  username: true,
+} as const;
+
+/** Anything with `user.update` — the client itself or a transaction. */
+type UserWriter = {
+  user: {
+    update(args: {
+      where: { id: string };
+      data: { password: string; mustChangePassword: true };
+      select: { id: true };
+    }): Promise<{ id: string }>;
+  };
+};
+
+/**
+ * "Resend login": a new generated password for an existing account, hashed
+ * before Prisma sees it, with a forced change at next sign-in. The plaintext
+ * leaves only in `credentials`. The username is never regenerated — `null`
+ * for an account from before usernames, which signs in with its email.
+ *
+ * The caller has already decided the account may be reset (the coordinator
+ * for anyone, a supervisor only for their own establishment's students).
+ */
+export async function reissuePassword(
+  db: UserWriter,
+  user: { id: string; name: string; email: string; username: string | null },
+) {
+  const tempPassword = generatePassword();
+  await db.user.update({
+    where: { id: user.id },
+    data: {
+      password: await bcrypt.hash(tempPassword, 10),
+      mustChangePassword: true,
+    },
+    select: { id: true },
+  });
+  return {
+    name: user.name,
+    email: user.email,
+    credentials: { username: user.username, tempPassword },
+  };
 }
