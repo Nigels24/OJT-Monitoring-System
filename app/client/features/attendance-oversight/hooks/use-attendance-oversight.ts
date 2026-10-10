@@ -73,6 +73,9 @@ export function useAttendanceOversight() {
   const [status, setStatusState] = useState("");
   /** The row whose DTR is downloading — one at a time, its button spins. */
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  /** The all-students ZIP is being built. Excludes row downloads, and vice versa. */
+  const [isDownloadingZip, setIsDownloadingZip] = useState(false);
+  const isDownloading = downloadingId !== null || isDownloadingZip;
 
   const {
     data: rows,
@@ -210,7 +213,7 @@ export function useAttendanceOversight() {
   const dtrMonth = month || currentManilaMonth();
 
   const downloadDtr = async (row: AttendanceOversightRow) => {
-    if (downloadingId) return;
+    if (isDownloading) return;
     setDownloadingId(row.id);
     try {
       await downloadFile(
@@ -223,6 +226,36 @@ export function useAttendanceOversight() {
       );
     } finally {
       setDownloadingId(null);
+    }
+  };
+
+  /**
+   * Every matching student's DTR for `dtrMonth` as one ZIP. Sends the page's
+   * own establishment / course / year level / status values (the
+   * "No establishment" option as its `__none__` value, which the server reads
+   * the same way); the search box is not applied. The server leaves out
+   * students with no approved punch that month, and answers 404 when that is
+   * everyone, 400 past its per-ZIP limit — both messages go to the snackbar.
+   */
+  const downloadDtrZip = async () => {
+    if (isDownloading) return;
+    setIsDownloadingZip(true);
+    const params = new URLSearchParams({ month: dtrMonth });
+    if (establishmentId) params.set("establishmentId", establishmentId);
+    if (course) params.set("course", course);
+    if (yearLevel) params.set("yearLevel", yearLevel);
+    if (status) params.set("status", status);
+    try {
+      await downloadFile(
+        `/coordinator/attendance/dtr-zip?${params.toString()}`,
+        `DTR ${dtrMonth}.zip`,
+      );
+    } catch (err: unknown) {
+      showError(
+        err instanceof Error ? err.message : "Couldn't download the DTRs.",
+      );
+    } finally {
+      setIsDownloadingZip(false);
     }
   };
 
@@ -253,6 +286,9 @@ export function useAttendanceOversight() {
     dtrMonthLabel: monthLabel(dtrMonth),
     downloadingId,
     downloadDtr,
+    isDownloadingZip,
+    isDownloading,
+    downloadDtrZip,
 
     setSearch,
     setPage,

@@ -27,6 +27,8 @@ interface AttendanceOversightTableProps {
   /** Whether the coordinator picked that month (vs. the current one by default). */
   dtrMonthIsPicked: boolean;
   downloadingId: string | null;
+  /** Any download running (a row's or the ZIP) — every DTR button waits. */
+  isDownloading: boolean;
   onDownloadDtr: (row: AttendanceOversightRow) => void;
 }
 
@@ -44,6 +46,7 @@ export default function AttendanceOversightTable({
   dtrMonthLabel,
   dtrMonthIsPicked,
   downloadingId,
+  isDownloading,
   onDownloadDtr,
 }: AttendanceOversightTableProps) {
   const dtrHint = dtrMonthIsPicked
@@ -99,7 +102,7 @@ export default function AttendanceOversightTable({
           <button
             type="button"
             onClick={() => onDownloadDtr(r)}
-            disabled={downloadingId !== null}
+            disabled={isDownloading}
             title={dtrHint}
             aria-label={`${dtrHint} — ${r.name}`}
             className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md border border-blue-200 text-blue-600 hover:bg-blue-50 text-xs font-medium whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"

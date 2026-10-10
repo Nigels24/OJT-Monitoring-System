@@ -188,6 +188,14 @@ Every hour figure goes through src/common/attendance-hours.ts
                                  still printed; TOTAL = totalApprovedHours (complete
                                  sessions only); rows placed by Attendance.date (the
                                  Manila day), times printed in Asia/Manila
+    - DTR ZIP (every matching student, one month): GET /coordinator/attendance/dtr-zip
+        ?month (required) &establishmentId (__none__ = none) &course &yearLevel &status
+        → student.findMany(filters + has an APPROVED punch that month)   0 → 404 | >300 → 400
+        → attendance.findMany(studentId in …, the month, APPROVED punches)   — 2 queries total
+        → per student, sequentially: buildDtrData (coordinator/dtr-data.ts, the SAME
+          function the single DTR uses) → renderDtrPdf → buffer
+        → every PDF built, THEN headers + archiver (store) → "DTR YYYY-MM.zip"
+          entries "<Last>, <First> - DTR YYYY-MM.pdf", " (<student ID>)" on shared names
 ```
 
 **"Today" is always Manila's calendar day, never the server's.** `manilaToday()` in
@@ -358,6 +366,7 @@ POST /establishments/:id/supervisor
 |---|---|
 | Wrong/missing data for one student but not others | Ownership check in the service (§2) — is it filtering by the right profile id? |
 | "An establishment named … already exists" for names that look different, or a duplicate got through | The keys, not the names: `establishmentKeys` in `common/establishment-identity.ts` (§6b). Rows that existed before P4 have SQL-backfilled keys, which can differ from `normalizeKey` for non-ASCII spaces/letters (CLAUDE.md §8 item 32) — editing that row's name recomputes its key |
+| A student is missing from the DTR ZIP, or the ZIP 404s | They have no APPROVED punch on a day of that month (by `Attendance.date`), or a filter excludes them — the ZIP never applies the page's search box. Same select as the single DTR: `coordinator/dtr-data.ts` |
 | An establishment shows without its branch somewhere | That call site prints `.name` instead of `establishmentLabel` (server for flattened strings, `lib/establishment.ts` on the client) |
 | A student didn't auto-complete (or completed when they shouldn't) | `decidePunch` in `supervisor.service.ts`: only the approval that crosses from below `requiredHours` to at/above it, ACTIVE only, `requiredHours > 0` (§4 of this file, CLAUDE.md §6). A student already past the line and reset to ACTIVE by hand is meant to stay ACTIVE; a course change lowering the requirement never completes anyone |
 | Hours don't match across two pages | `src/common/attendance-hours.ts` usage — is one call site bypassing `totalApprovedHours()`/`summarizeDay()`, or counting a session with only one punch approved? |

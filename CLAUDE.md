@@ -636,7 +636,8 @@ table; never derive one from the other.
 | POST | `/coordinator/students/:id/resend-credentials` · `/coordinator/supervisors/:id/resend-credentials` | COORDINATOR | no body; new temporary password, `{ id, name, email, credentials }`; 404 unknown id. Replaced `PATCH …/:id/password` |
 | GET | `/coordinator/dashboard` | COORDINATOR | real aggregates |
 | GET | `/coordinator/attendance` | COORDINATOR | cross-establishment oversight: `[{ id, studentIdNumber, name, course, yearLevel, status, establishmentId, establishmentName, presentDays, totalDays, approvedHours, attendancePercentage }]`. Optional **`?month=YYYY-MM`** (strict, month 01-12, else 400) is the **only** query param — any other (incl. `establishmentId`/`course`/…) is a 400; those filter client-side. **Window**: all-time = [startDate, Manila today]; with a month = [max(month start, startDate), min(month end, today)]. **presentDays** = days in the window with ≥1 session whose In and Out are both APPROVED; **approvedHours** = those sessions' hours (`totalApprovedHours`); **totalDays** = calendar days in the window inclusive, `0` if the window is empty (start after the month, a future month) or there is no startDate; **attendancePercentage** = round(present/total×100), `null` when totalDays is 0 (never a division by zero). Every student is returned, zeros included. Days are placed by `Attendance.date` (the Manila day), never by a punch's UTC timestamp |
-| GET | `/coordinator/students/:id/dtr?month=YYYY-MM` | COORDINATOR | the student's monthly Daily Time Record (Civil Service Form 48 style) as a PDF attachment, `"<Last>, <First> - DTR YYYY-MM.pdf"` (else `User.name`) via `attachmentDisposition` (ASCII `filename=` + RFC 5987 `filename*=`). 400 missing/invalid month, 404 unknown student. One bounded query (`date` in [1st, 1st of next month)) selecting **APPROVED punches only**. Renderer `common/dtr-pdf.ts` — see §7 |
+| GET | `/coordinator/students/:id/dtr?month=YYYY-MM` | COORDINATOR | the student's monthly Daily Time Record (Civil Service Form 48 style) as a PDF attachment, `"<Last>, <First> - DTR YYYY-MM.pdf"` (else `User.name`) via `attachmentDisposition` (ASCII `filename=` + RFC 5987 `filename*=`). 400 missing/invalid month, 404 unknown student. One bounded query (`date` in [1st, 1st of next month)) selecting **APPROVED punches only**. Renderer `common/dtr-pdf.ts`, input from `coordinator/dtr-data.ts` (shared with the ZIP) — see §7 |
+| GET | `/coordinator/attendance/dtr-zip?month=YYYY-MM` | COORDINATOR | **P5.** Every matching student's DTR for the month, one PDF each, as `"DTR YYYY-MM.zip"` (`attachmentDisposition`). `month` **required** (400 missing/invalid); optional `establishmentId` (`__none__` = students with no establishment, the page's own sentinel), `course`, `yearLevel`, `status` (enum) — each an exact match, blank = no filter; any other param (incl. the page's `search`) a 400. Only students with **≥1 APPROVED punch on a day of the month** (`Attendance.date` in [1st, 1st of next month), Manila calendar) — nobody gets a blank DTR. **404** `No approved attendance for that month with these filters`; **400** past `DTR_ZIP_LIMIT` = **300** (checked before any day is fetched or PDF rendered). Entries `"<Last>, <First> - DTR YYYY-MM.pdf"` through `safeFileName`; a name shared (case-insensitively) by two students gets ` (<studentIdNumber>)` on **each**, then a ` (2)`… counter as a last resort. Two queries whatever the count; PDFs rendered sequentially, all before the first header |
 | GET | `/coordinator/evaluations` | COORDINATOR | read-only, all establishments |
 | GET | `/coordinator/evaluations/:id/pdf` | COORDINATOR | the filled-in sheet as a PDF, `Content-Disposition: attachment`. 404 if the evaluation is gone. Rendered from **that evaluation's own template version**, never the published one |
 | GET | `/coordinator/evaluation-template` | COORDINATOR | `{ published, draft }`, each a sheet or `null` |
@@ -1252,8 +1253,8 @@ the database: `Establishment.nameKey String` + `branchKey String @default("")` +
   is `totalApprovedHours` (complete sessions only), computed by the service and passed
   in. Every y is fixed and text is shrunk-then-truncated to its box, so it can't spill to
   a second page; the document's own bottom margin is deliberately tiny because PDFKit
-  adds a page whenever text is written past it. Reusable as-is by the batch ZIP, **which
-  is still pending as paid step P5**. `common/dates.ts` gained `MONTH_PATTERN` and
+  adds a page whenever text is written past it. Reused unchanged by the monthly ZIP
+  (P5, below). `common/dates.ts` gained `MONTH_PATTERN` and
   `parseMonth`. Client: `use-attendance-oversight.ts` holds month (query arg — one cache
   entry per month, all under the `AttendanceOversight` tag) plus client-side
   establishment / course / year level / status / search, options from the loaded rows
@@ -1406,9 +1407,49 @@ the database: `Establishment.nameKey String` + `branchKey String @default("")` +
   `pg_dump` → `migrate deploy` (also applies the pending `20261010…` and `20261012…`
   first) → restart the server on this code.
 
+- **Monthly DTR ZIP (paid step P5, item 18)** — `GET /coordinator/attendance/dtr-zip`
+  (§5 has the contract). Server: the single DTR's data assembly moved, unchanged, into
+  **`coordinator/dtr-data.ts`** — `DTR_STUDENT_SELECT`, `DTR_DAY_SELECT` (APPROVED
+  punches only), `buildDtrData(student, range, days)` (the renderer input; total from
+  `totalApprovedHours`), `dtrDisplayName`, `dtrFileName`. `getStudentDtr` and the new
+  `getDtrZip` both use it, so the two can't print differently. `getDtrZip`: one
+  `student.findMany` (filters + `attendances: { some: { date in month, punches: { some:
+  APPROVED } } }`, explicit select), the 404/400 checks, one `attendance.findMany` for all
+  of them (`studentId in`), bucketed per student in JS, then `renderDtrPdf` one at a
+  time. Entry names: `dtrZipEntryNames` in `coordinator.service.ts`. The controller's
+  archive streaming became a private `sendZip`, shared with the documents ZIP (same
+  behaviour: entries built first, `store: true`, error → `res.destroy`). Archiver sets
+  the UTF-8 name flag on non-ASCII entries, so "Peña, José - DTR …" unzips intact.
+  **Limit 300:** measured 300 DTRs at ~0.5 s and 1.1 MB (≈3.8 KB per PDF, Helvetica,
+  nothing embedded) on a dev Mac; sequential rendering keeps one document in flight, so
+  even several times slower on a free-tier CPU it stays in seconds and a few MB.
+  Client: a "Download all DTRs (ZIP) · <Month>" button in `AttendanceFilterBar`'s row
+  (tooltip: which month — the picked one, or this month under "All time" — and that the
+  search box is not applied); `useAttendanceOversight.downloadDtrZip` sends the page's
+  current month and establishment / course / year level / status through
+  `lib/api/fileDownload.ts`, errors (404, the cap's 400) to the snackbar.
+  `isDownloadingZip` + `isDownloading`: the ZIP and every row's DTR button disable each
+  other (`AttendanceOversightTable` takes `isDownloading`). No filter or paging state
+  changed.
+
 **All three roles land on a real page after login. No role 404s.**
 
 ### Needs live verification
+
+**Paid step P5** (monthly DTR ZIP). Verified in-process only — real
+`CoordinatorController` + `CoordinatorService`, real `RolesGuard` and the global
+`ValidationPipe` (JWT stubbed) against a faked Prisma that applies the filters and counts
+queries (39 checks: missing/invalid month (5 forms), an unknown param and a bad status
+400; STUDENT/SUPERVISOR 403; 404 with the exact message for an empty month and a filter
+matching nobody; the October ZIP holds exactly the six students with an approved punch —
+not the one with only PENDING/DECLINED that month — incl. one with a single approved In;
+shared name → both carry their student ID; "/" and "\\" stripped; UTF-8 flag on the
+accented entry; `unzip` extracts six one-page `%PDF`s; each filter, `__none__`, a
+combination and blank values narrow correctly; September differs; `buildDtrData` equals
+the old inline code's renderer input for four students; the single route's PDF, filename
+and two queries unchanged, 404 unchanged; 2 queries for 7 and 40 students; 300 → 200;
+301 → 400 with nothing fetched). Sample: `/tmp/dtr-sample.zip`. The button was
+typechecked, never rendered.
 
 **Paid step P4** (unique names + branch). Verified in-process only — real
 `EstablishmentController` + `EstablishmentService` under the global `ValidationPipe`

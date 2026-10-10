@@ -190,6 +190,41 @@ class DtrQueryDto {
   month!: string;
 }
 
+/**
+ * `GET /coordinator/attendance/dtr-zip`. The month is required; the four
+ * filters are the attendance page's own (establishment by id —
+ * `__none__` (NO_ESTABLISHMENT) for students with none — course, year level, status),
+ * each an exact match, blank = no filter. The page's search box is
+ * deliberately not one of them. Anything else is a 400 (forbidNonWhitelisted).
+ */
+class DtrZipQueryDto {
+  @Matches(MONTH_PATTERN, { message: MONTH_MESSAGE })
+  month!: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(100)
+  establishmentId?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(200)
+  course?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(50)
+  yearLevel?: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsIn(['ACTIVE', 'PENDING', 'COMPLETED', 'INACTIVE'])
+  status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
+}
+
 class BulkDeleteStudentsDto {
   @IsArray()
   @ArrayNotEmpty()
@@ -225,6 +260,25 @@ export class CoordinatorController {
   @Get('attendance')
   getAttendanceOversight(@Query() query: AttendanceOversightQueryDto) {
     return this.coordinatorService.getAttendanceOversight(query.month);
+  }
+
+  /**
+   * Every matching student's DTR for one month, one PDF each, as
+   * "DTR YYYY-MM.zip". Students with no APPROVED punch that month are left
+   * out; none at all is a 404, more than `DTR_ZIP_LIMIT` a 400 (see the
+   * service). Every PDF is rendered before the first header is written.
+   */
+  @Get('attendance/dtr-zip')
+  async downloadDtrZip(
+    @Query() query: DtrZipQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { month, ...filters } = query;
+    const { filename, entries } = await this.coordinatorService.getDtrZip(
+      month,
+      filters,
+    );
+    await this.sendZip(res, filename, entries, `DTR ZIP for ${month}`);
   }
 
   /**
@@ -327,6 +381,21 @@ export class CoordinatorController {
         requested,
       );
 
+    await this.sendZip(res, filename, entries, `ZIP for student ${studentId}`);
+  }
+
+  /**
+   * Streams already-built entries as a ZIP. Every caller has every byte in
+   * memory before this runs, so the only thing left to fail is the zipping
+   * itself — no partial archive from a half-finished fetch or render, and no
+   * temp files.
+   */
+  private async sendZip(
+    res: Response,
+    filename: string,
+    entries: { name: string; buffer: Buffer }[],
+    label: string,
+  ): Promise<void> {
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', attachmentDisposition(filename));
 
@@ -334,7 +403,7 @@ export class CoordinatorController {
     // CPU and saves next to nothing, so entries are stored as-is.
     const archive = archiver('zip', { store: true });
     archive.on('error', (err) => {
-      this.logger.error(`ZIP for student ${studentId} failed: ${err.message}`);
+      this.logger.error(`${label} failed: ${err.message}`);
       res.destroy(err);
     });
     archive.pipe(res);

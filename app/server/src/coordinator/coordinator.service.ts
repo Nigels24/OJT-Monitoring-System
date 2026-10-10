@@ -19,7 +19,13 @@ import {
   startOfUtcDay,
 } from '../common/dates';
 import { renderDtrPdf } from '../common/dtr-pdf';
-import { SCHOOL_NAME } from '../common/school';
+import {
+  DTR_DAY_SELECT,
+  DTR_STUDENT_SELECT,
+  buildDtrData,
+  dtrDisplayName,
+  dtrFileName,
+} from './dtr-data';
 import {
   EVALUATION_INCLUDE,
   withSectionTotals,
@@ -97,6 +103,58 @@ const SUPERVISOR_ROW_SELECT = {
   },
   establishment: { select: { id: true, name: true, branch: true } },
 } as const;
+
+/**
+ * Most DTRs one ZIP request will render. Each is a one-page PDF of a few KB,
+ * rendered sequentially, so 300 is roughly a few MB of buffers and some
+ * seconds of CPU — comfortably inside a small host's memory and a proxy's
+ * request timeout. Past it, narrow the filters.
+ */
+export const DTR_ZIP_LIMIT = 300;
+
+/** The `establishmentId` filter value for students with no establishment — the client's own sentinel. */
+export const NO_ESTABLISHMENT = '__none__';
+
+/** `GET /coordinator/attendance/dtr-zip`'s filters; each absent = no filter. */
+export interface DtrZipFilters {
+  establishmentId?: string;
+  course?: string;
+  yearLevel?: string;
+  status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
+}
+
+/**
+ * ZIP entry names, unique within the archive: "<Last>, <First> - DTR YYYY-MM.pdf",
+ * with " (<student ID>)" added for every student whose name is shared
+ * (compared case-insensitively), and a counter as the last resort should two
+ * still collide once `safeFileName` has stripped their IDs.
+ */
+function dtrZipEntryNames(
+  students: readonly ({ id: string; studentIdNumber: string } & Parameters<
+    typeof dtrDisplayName
+  >[0])[],
+  month: string,
+): Map<string, string> {
+  const nameCount = new Map<string, number>();
+  for (const s of students) {
+    const key = dtrDisplayName(s).toLowerCase();
+    nameCount.set(key, (nameCount.get(key) ?? 0) + 1);
+  }
+  const used = new Set<string>();
+  const names = new Map<string, string>();
+  for (const s of students) {
+    const display = dtrDisplayName(s);
+    const shared = (nameCount.get(display.toLowerCase()) ?? 0) > 1;
+    const base = shared ? `${display} (${s.studentIdNumber})` : display;
+    let name = safeFileName(`${base} - DTR ${month}.pdf`);
+    for (let n = 2; used.has(name.toLowerCase()); n++) {
+      name = safeFileName(`${base} (${n}) - DTR ${month}.pdf`);
+    }
+    used.add(name.toLowerCase());
+    names.set(s.id, name);
+  }
+  return names;
+}
 
 @Injectable()
 export class CoordinatorService {
@@ -545,21 +603,7 @@ export class CoordinatorService {
 
     const student = await this.prisma.client.student.findUnique({
       where: { id: studentId },
-      select: {
-        firstName: true,
-        middleInitial: true,
-        lastName: true,
-        course: true,
-        user: { select: { name: true } },
-        establishment: {
-          select: {
-            name: true,
-            branch: true,
-            // The establishment's one supervisor; may be none.
-            supervisor: { select: { user: { select: { name: true } } } },
-          },
-        },
-      },
+      select: DTR_STUDENT_SELECT,
     });
     if (!student) {
       throw new NotFoundException('Student not found');
@@ -567,49 +611,96 @@ export class CoordinatorService {
 
     const days = await this.prisma.client.attendance.findMany({
       where: { studentId, date: { gte: range.start, lt: range.next } },
-      select: {
-        date: true,
-        punches: {
-          where: { status: 'APPROVED' },
-          select: HOURS_PUNCH_SELECT,
-        },
-      },
+      select: DTR_DAY_SELECT,
     });
 
-    const body = await renderDtrPdf({
-      studentName: student.user.name,
-      schoolName: SCHOOL_NAME,
-      course: student.course,
-      establishmentName: student.establishment
-        ? establishmentLabel(student.establishment)
-        : null,
-      supervisorName: student.establishment?.supervisor?.user.name ?? null,
-      year: range.year,
-      month: range.month,
-      days: days.map((day) => {
-        const time = (kind: string) =>
-          day.punches.find((p) => p.kind === kind)?.time ?? null;
-        return {
-          day: day.date.getUTCDate(),
-          amArrival: time('TIME_IN_AM'),
-          amDeparture: time('TIME_OUT_AM'),
-          pmArrival: time('TIME_IN_PM'),
-          pmDeparture: time('TIME_OUT_PM'),
-        };
-      }),
-      totalApprovedHours: totalApprovedHours(days),
-    });
-
+    const body = await renderDtrPdf(buildDtrData(student, range, days));
     // "Dela Cruz, Juan - DTR 2026-10.pdf": surname first, as the DTR is filed.
     // Accents are kept; attachmentDisposition adds the RFC 5987 form.
-    const displayName =
-      student.lastName?.trim() && student.firstName?.trim()
-        ? `${student.lastName.trim()}, ${student.firstName.trim()}`
-        : student.user.name;
-    return {
-      filename: safeFileName(`${displayName} - DTR ${month}.pdf`),
-      body,
-    };
+    return { filename: dtrFileName(student, month), body };
+  }
+
+  /**
+   * Every matching student's DTR for one month, as ZIP entries — built whole
+   * before the controller writes a header, like the documents ZIP, so a
+   * failure is a clean error and never a truncated archive.
+   *
+   * Who is in it: students matching the filters (the attendance page's own
+   * semantics — exact match on establishment id, course, year level and
+   * status; `establishmentId: NO_ESTABLISHMENT` = students with none) **and**
+   * with at least one APPROVED punch on a day of that month. Nobody else gets
+   * a blank DTR. Zero → 404; more than `DTR_ZIP_LIMIT` → 400 before anything
+   * is rendered.
+   *
+   * Two queries whatever the student count: the matching students (the
+   * approved-punch condition is a relation filter on the same query), then
+   * all their days of the month with APPROVED punches only. The month window
+   * is `Attendance.date` in [1st, 1st of next month) — the Manila calendar,
+   * exactly as the single DTR. Each PDF comes from the same `buildDtrData`
+   * and renderer as the single route, rendered one at a time.
+   */
+  async getDtrZip(month: string, filters: DtrZipFilters) {
+    const range = parseMonth(month);
+    if (!range) {
+      throw new BadRequestException('month must be YYYY-MM');
+    }
+    const monthDays = { gte: range.start, lt: range.next };
+
+    const students = await this.prisma.client.student.findMany({
+      where: {
+        ...(filters.establishmentId === NO_ESTABLISHMENT
+          ? { establishmentId: null }
+          : filters.establishmentId
+            ? { establishmentId: filters.establishmentId }
+            : {}),
+        ...(filters.course ? { course: filters.course } : {}),
+        ...(filters.yearLevel ? { yearLevel: filters.yearLevel } : {}),
+        ...(filters.status ? { status: filters.status } : {}),
+        attendances: {
+          some: { date: monthDays, punches: { some: { status: 'APPROVED' } } },
+        },
+      },
+      select: { id: true, studentIdNumber: true, ...DTR_STUDENT_SELECT },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+    });
+
+    if (students.length === 0) {
+      throw new NotFoundException(
+        'No approved attendance for that month with these filters',
+      );
+    }
+    if (students.length > DTR_ZIP_LIMIT) {
+      throw new BadRequestException(
+        `${students.length} students match — a ZIP holds at most ${DTR_ZIP_LIMIT} DTRs. Narrow the filters (establishment, course, year level or status).`,
+      );
+    }
+
+    const days = await this.prisma.client.attendance.findMany({
+      where: {
+        studentId: { in: students.map((s) => s.id) },
+        date: monthDays,
+      },
+      select: { studentId: true, ...DTR_DAY_SELECT },
+    });
+    const daysByStudent = new Map<string, typeof days>();
+    for (const day of days) {
+      const list = daysByStudent.get(day.studentId) ?? [];
+      list.push(day);
+      daysByStudent.set(day.studentId, list);
+    }
+
+    const names = dtrZipEntryNames(students, month);
+    // Sequential: one PDF in memory being drawn at a time (finished ones are
+    // small buffers), and no burst of CPU on a small host.
+    const entries: { name: string; buffer: Buffer }[] = [];
+    for (const student of students) {
+      const buffer = await renderDtrPdf(
+        buildDtrData(student, range, daysByStudent.get(student.id) ?? []),
+      );
+      entries.push({ name: names.get(student.id)!, buffer });
+    }
+
+    return { filename: `DTR ${month}.zip`, entries };
   }
 
   /**

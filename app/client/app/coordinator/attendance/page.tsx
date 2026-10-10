@@ -97,6 +97,7 @@ export default function CoordinatorAttendancePage() {
             dtrMonthLabel={oversight.dtrMonthLabel}
             dtrMonthIsPicked={!!oversight.month}
             downloadingId={oversight.downloadingId}
+            isDownloading={oversight.isDownloading}
             onDownloadDtr={(row) => {
               void oversight.downloadDtr(row);
             }}

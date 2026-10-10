@@ -1,4 +1,4 @@
-import { FilterX } from "lucide-react";
+import { FileArchive, FilterX, Loader2 } from "lucide-react";
 import SelectField from "@/components/ui/SelectField";
 import {
   STATUS_LABEL,
@@ -36,6 +36,13 @@ export default function AttendanceFilterBar({
   oversight: o,
 }: AttendanceFilterBarProps) {
   const all = (label: string) => ({ label, value: "" });
+  // Says which month (the picked one, or this month under "All time") and
+  // what narrows it — the search box does not.
+  const zipHint =
+    `${o.month ? "" : "No month selected — uses this month. "}` +
+    `One DTR per student with approved attendance in ${o.dtrMonthLabel}, ` +
+    "narrowed by the establishment, course, year level and status filters " +
+    "(not the search box).";
 
   return (
     <div className="mb-4 space-y-3">
@@ -112,6 +119,25 @@ export default function AttendanceFilterBar({
             Clear filters
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => {
+            void o.downloadDtrZip();
+          }}
+          disabled={o.isDownloading}
+          title={zipHint}
+          aria-label={zipHint}
+          className="sm:ml-auto inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 border border-blue-200 rounded-lg px-3 py-1.5 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {o.isDownloadingZip ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <FileArchive size={14} />
+          )}
+          {o.isDownloadingZip
+            ? "Preparing ZIP…"
+            : `Download all DTRs (ZIP) · ${o.dtrMonthLabel}`}
+        </button>
       </div>
     </div>
   );
