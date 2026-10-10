@@ -135,7 +135,7 @@ class DeclineAttendanceDto {
  * every item of *that evaluation's* template version, each an integer 1-5, and
  * rejects any key the template does not have.
  *
- * `totalRating`, `maxTotalRating` and the
+ * `totalRating`, `maxTotalRating`, the training dates and the
  * `evaluatorName`/`evaluatorPosition`/`trainingEmployedAt` snapshots are absent
  * on purpose: the server derives all of them, and `forbidNonWhitelisted`
  * rejects a body that tries to supply them.
@@ -145,15 +145,9 @@ class EvaluationSheetDto {
   @IsNotEmptyObject()
   scores!: Record<string, number>;
 
-  @IsOptional()
-  @EmptyToUndefined()
-  @IsDateString()
-  trainingStartedAt?: string;
-
-  @IsOptional()
-  @EmptyToUndefined()
-  @IsDateString()
-  trainingEndedAt?: string;
+  // No `trainingStartedAt` / `trainingEndedAt`: both are derived by the server
+  // on create (the student's startDate and last approved day) and kept as
+  // stored on edit, so a body carrying either is a 400.
 
   // EmptyToNull, not EmptyToUndefined: clearing the box on an edit has to
   // persist as cleared. Absent from the body still means "leave unchanged".

@@ -12,6 +12,7 @@ import {
   DAY_SELECT,
   HOURS_PUNCH_SELECT,
   PUNCH_LABEL,
+  lastApprovedDay,
   PUNCH_SELECT,
   summarizeDay,
   totalApprovedHours,
@@ -238,7 +239,17 @@ export class SupervisorService {
     }));
   }
 
-  /** Students assigned to this supervisor's establishment. */
+  /**
+   * Students assigned to this supervisor's establishment — the roster and the
+   * evaluation picker.
+   *
+   * Each row adds `completedHours` (the approved hours) and `lastApprovedDay`
+   * (the date the evaluation's Training Date Ended will take, or `null`), so
+   * the picker can show the gate and both derived dates without a request per
+   * student. One `findMany`: Prisma loads the nested attendances and punches
+   * with one query per relation level for the whole establishment, so the
+   * query count doesn't grow with the number of students.
+   */
   async getStudents(userId: string) {
     const supervisor = await this.getSupervisorByUserId(userId);
 
@@ -250,6 +261,7 @@ export class SupervisorService {
         // are not fetched.
         attendances: {
           select: {
+            date: true,
             punches: {
               where: { status: 'APPROVED' },
               select: HOURS_PUNCH_SELECT,
@@ -263,6 +275,7 @@ export class SupervisorService {
     return students.map(({ attendances, ...student }) => ({
       ...student,
       completedHours: totalApprovedHours(attendances),
+      lastApprovedDay: lastApprovedDay(attendances),
     }));
   }
 
@@ -420,13 +433,10 @@ export class SupervisorService {
     const student = await this.prisma.client.student.findUnique({
       where: { id: studentId },
     });
-    if (!student) {
+    // Another establishment's student is the same 404 as an unknown id, so
+    // this route can't be used to discover which student ids exist elsewhere.
+    if (!student || student.establishmentId !== supervisor.establishmentId) {
       throw new NotFoundException('Student not found');
-    }
-    if (student.establishmentId !== supervisor.establishmentId) {
-      throw new ForbiddenException(
-        'This student is not under your establishment',
-      );
     }
 
     return this.prisma.client.student.update({
@@ -533,12 +543,28 @@ export class SupervisorService {
    * (studentId, supervisorId), because a student is evaluated more than once
    * over a placement.
    */
+  /**
+   * A new evaluation — only for a student whose OJT is COMPLETED.
+   *
+   * Order: ownership first (403 for a student outside this establishment, as
+   * before), then the COMPLETED gate (409, naming the approved hours against
+   * the requirement so the supervisor sees how far off it is). The gate is
+   * create-only: an existing evaluation of a student who is no longer
+   * COMPLETED stays editable and deletable.
+   *
+   * Training Date Started / Ended are derived here and snapshotted onto the
+   * row, never read from the request (the DTO has no such fields): the
+   * student's `startDate`, and the last day with an approved session
+   * (`lastApprovedDay`). Either is `null` when there is nothing to derive it
+   * from — never today's date.
+   */
   async createEvaluation(userId: string, data: EvaluationInput) {
     const supervisor = await this.getSupervisorWithHeaderFields(userId);
     const student = await this.verifyStudentUnderSupervisor(
       data.studentId,
       supervisor.establishmentId,
     );
+    const training = await this.completedTraining(data.studentId);
 
     // A new sheet is always written on the currently published version, and
     // keeps that version for good.
@@ -557,7 +583,9 @@ export class SupervisorService {
         // Frozen with the sheet: a later version with more or fewer items must
         // not change what this one was scored out of.
         maxTotalRating: templateMaxTotalRating(template),
-        ...this.headerFields(data, supervisor, student),
+        ...this.headerFields(supervisor, student),
+        trainingStartedAt: training.startedAt,
+        trainingEndedAt: training.endedAt,
         comments: data.comments,
         recommendations: data.recommendations,
       },
@@ -608,13 +636,12 @@ export class SupervisorService {
           // `maxTotalRating` is deliberately not rewritten: it was frozen with
           // a template version that is immutable, so it cannot have moved.
           //
-          // Only the two editable header dates below. `trainingEmployedAt`,
-          // `evaluatorName` and `evaluatorPosition` are write-time snapshots
-          // and are deliberately NOT recomputed here: re-deriving them from the
-          // student's *current* placement would blank the establishment on a
-          // sheet whose student has since been unassigned, which is the same
-          // placement-governs-the-sheet coupling this change removes.
-          ...trainingDates(data),
+          // No header field is touched. The training dates,
+          // `trainingEmployedAt`, `evaluatorName` and `evaluatorPosition` are
+          // all write-time snapshots and are deliberately NOT recomputed here:
+          // re-deriving them from the student's *current* record would let
+          // later attendance or a reassignment rewrite a signed sheet. The
+          // dates are not accepted from the request either (DTO).
           comments: data.comments,
           recommendations: data.recommendations,
         },
@@ -641,7 +668,7 @@ export class SupervisorService {
   }
 
   /**
-   * The form's header fields.
+   * The form's header fields other than the training dates.
    *
    * `trainingEmployedAt`, `evaluatorName` and `evaluatorPosition` are
    * snapshotted from the current rows rather than joined on read, so renaming
@@ -649,15 +676,54 @@ export class SupervisorService {
    * signed off.
    */
   private headerFields(
-    data: Omit<EvaluationInput, 'studentId'>,
     supervisor: { position: string | null; user: { name: string } },
     student: { establishment: { name: string } | null },
   ) {
     return {
-      ...trainingDates(data),
       trainingEmployedAt: student.establishment?.name ?? null,
       evaluatorName: supervisor.user.name,
       evaluatorPosition: supervisor.position,
+    };
+  }
+
+  /**
+   * The COMPLETED gate and the derived training dates, for a student already
+   * known to be at this supervisor's establishment.
+   *
+   * One query: the student with only their APPROVED punches (nothing else can
+   * form a counted session), from which the shared rules in
+   * `common/attendance-hours.ts` give both the approved hours and the last
+   * approved day — the same definitions every dashboard uses.
+   */
+  private async completedTraining(studentId: string) {
+    const student = await this.prisma.client.student.findUniqueOrThrow({
+      where: { id: studentId },
+      select: {
+        status: true,
+        startDate: true,
+        requiredHours: true,
+        attendances: {
+          select: {
+            date: true,
+            punches: {
+              where: { status: 'APPROVED' },
+              select: HOURS_PUNCH_SELECT,
+            },
+          },
+        },
+      },
+    });
+
+    if (student.status !== 'COMPLETED') {
+      const approved = totalApprovedHours(student.attendances);
+      throw new ConflictException(
+        `This student has not completed OJT yet (${approved} / ${student.requiredHours} hrs)`,
+      );
+    }
+
+    return {
+      startedAt: student.startDate,
+      endedAt: lastApprovedDay(student.attendances),
     };
   }
 
@@ -790,25 +856,6 @@ export class SupervisorService {
   }
 }
 
-/**
- * The sheet's two editable header dates. Absent or emptied becomes `null` — on
- * an edit the client always sends the whole sheet, so a missing date here means
- * the supervisor cleared it.
- */
-function trainingDates(data: {
-  trainingStartedAt?: string;
-  trainingEndedAt?: string;
-}) {
-  return {
-    trainingStartedAt: data.trainingStartedAt
-      ? new Date(data.trainingStartedAt)
-      : null,
-    trainingEndedAt: data.trainingEndedAt
-      ? new Date(data.trainingEndedAt)
-      : null,
-  };
-}
-
 /** What both create and update accept, before the server derives the rest. */
 export type EvaluationInput = {
   studentId: string;
@@ -822,8 +869,6 @@ export type EvaluationInput = {
    * this evaluation belongs to.
    */
   scores: Record<string, unknown>;
-  trainingStartedAt?: string;
-  trainingEndedAt?: string;
   /** `null` = explicitly cleared; `undefined` = not supplied, leave unchanged. */
   comments?: string | null;
   recommendations?: string | null;

@@ -13,6 +13,8 @@ import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 import { SupervisorStudent } from "@/lib/api/supervisorApi";
 import type { Evaluation, EvaluationSheet } from "@/lib/api/evaluationApi";
+import { formatDateOnly } from "@/lib/format";
+import { canEvaluate } from "../hooks/use-evaluations";
 
 interface IncompleteSection {
   key: string;
@@ -26,8 +28,6 @@ export interface EvaluationFormProps {
   sheetLoading: boolean;
   form: {
     studentId: string;
-    trainingStartedAt: string;
-    trainingEndedAt: string;
     comments: string;
     recommendations: string;
     scores: Record<string, string>;
@@ -37,6 +37,13 @@ export interface EvaluationFormProps {
   isEditing: boolean;
   traineeName: string;
   employedAt: string;
+  /**
+   * Server-derived, display only (date-only ISO, `null` = dash): on create
+   * the selected trainee's start date and last approved day, on edit the
+   * dates stored with the sheet.
+   */
+  trainingStartedAt: string | null;
+  trainingEndedAt: string | null;
   evaluator: { name: string; position: string };
   sectionTotals: Record<string, number>;
   totalRating: number;
@@ -48,7 +55,7 @@ export interface EvaluationFormProps {
   isSubmitting: boolean;
   setStudentId: (id: string) => void;
   setHeaderField: (
-    key: "trainingStartedAt" | "trainingEndedAt" | "comments" | "recommendations",
+    key: "comments" | "recommendations",
   ) => (e: { target: { value: string } }) => void;
   setScore: (itemKey: string, value: number) => void;
   onSubmit: (e: React.FormEvent) => void;
@@ -89,6 +96,8 @@ export default function EvaluationForm({
   isEditing,
   traineeName,
   employedAt,
+  trainingStartedAt,
+  trainingEndedAt,
   evaluator,
   sectionTotals,
   totalRating,
@@ -109,6 +118,9 @@ export default function EvaluationForm({
   }
 
   const canSubmit = allScored && (isEditing || form.studentId !== "");
+  // A new sheet only for a COMPLETED trainee; the rest are listed, disabled,
+  // with their approved against required hours.
+  const hasEvaluable = students.some(canEvaluate);
 
   return (
     <form onSubmit={onSubmit} className="space-y-6">
@@ -156,9 +168,21 @@ export default function EvaluationForm({
               options={students.map((s) => ({
                 label: `${s.user.name} — ${s.studentIdNumber}${s.course ? ` (${s.course})` : ""}`,
                 value: s.id,
+                disabled: !canEvaluate(s),
+                hint: canEvaluate(s)
+                  ? undefined
+                  : `OJT not completed (${s.completedHours} / ${s.requiredHours} hrs)`,
               }))}
               className="w-full"
             />
+            {!hasEvaluable && (
+              <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                {students.length === 0
+                  ? "No trainees are assigned to your establishment yet."
+                  : "No trainee can be evaluated yet. Evaluation unlocks once a trainee's OJT is marked completed."}
+              </p>
+            )}
           </div>
         )}
 
@@ -175,34 +199,18 @@ export default function EvaluationForm({
             value={employedAt}
             icon={Building2}
           />
-          <div>
-            <label className="block text-[11px] uppercase tracking-wide text-gray-500 mb-1">
-              Training Date Started
-            </label>
-            <div className="flex items-center gap-1.5 border-b border-gray-400 pb-1">
-              <CalendarDays size={14} className="text-gray-400 shrink-0" />
-              <input
-                type="date"
-                value={form.trainingStartedAt}
-                onChange={setHeaderField("trainingStartedAt")}
-                className="w-full bg-transparent text-sm text-gray-900 focus:outline-none"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-[11px] uppercase tracking-wide text-gray-500 mb-1">
-              Training Date Ended
-            </label>
-            <div className="flex items-center gap-1.5 border-b border-gray-400 pb-1">
-              <CalendarDays size={14} className="text-gray-400 shrink-0" />
-              <input
-                type="date"
-                value={form.trainingEndedAt}
-                onChange={setHeaderField("trainingEndedAt")}
-                className="w-full bg-transparent text-sm text-gray-900 focus:outline-none"
-              />
-            </div>
-          </div>
+          {/* Read-only: derived by the server (start date, last approved
+              day) and frozen on the sheet when it is written. */}
+          <FormFieldValue
+            label="Training Date Started"
+            value={formatDateOnly(trainingStartedAt, "")}
+            icon={CalendarDays}
+          />
+          <FormFieldValue
+            label="Training Date Ended"
+            value={formatDateOnly(trainingEndedAt, "")}
+            icon={CalendarDays}
+          />
         </div>
       </div>
 

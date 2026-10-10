@@ -185,6 +185,23 @@ export function totalApprovedHours(
   );
 }
 
+/**
+ * The latest day with at least one approved session (In and Out both
+ * APPROVED — `hasApprovedSession`), or `null` when there is none. This is the
+ * evaluation sheet's Training Date Ended: the last day that counted, never
+ * today. Like `totalApprovedHours`, callers may pre-filter to APPROVED punches.
+ */
+export function lastApprovedDay(
+  days: readonly { date: Date; punches: readonly PunchLike[] }[],
+): Date | null {
+  let latest: Date | null = null;
+  for (const day of days) {
+    if (!hasApprovedSession(day.punches)) continue;
+    if (!latest || day.date > latest) latest = day.date;
+  }
+  return latest;
+}
+
 /** Pending hours across many days, rounded to two decimals. */
 export function totalPendingHours(
   days: readonly { punches: readonly PunchLike[] }[],

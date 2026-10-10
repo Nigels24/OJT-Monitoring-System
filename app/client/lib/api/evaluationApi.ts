@@ -114,12 +114,12 @@ export interface Evaluation {
  * `scores` is keyed by the item keys the sheet defines and is sent as a nested
  * object: the server validates it against the template version the evaluation
  * belongs to, which a DTO of fixed fields could not do. `totalRating`,
- * `maxTotalRating` and the evaluator/establishment snapshots are absent on
- * purpose: the server derives them and rejects a body that supplies them.
+ * `maxTotalRating`, the training dates and the evaluator/establishment
+ * snapshots are absent on purpose: the server derives them (the dates from the
+ * student's start date and last approved day, on create only) and rejects a
+ * body that supplies them.
  */
 export interface EvaluationSheetPayload {
-  trainingStartedAt?: string;
-  trainingEndedAt?: string;
   /** `null` clears the field on an edit; omitting it leaves it unchanged. */
   comments?: string | null;
   recommendations?: string | null;

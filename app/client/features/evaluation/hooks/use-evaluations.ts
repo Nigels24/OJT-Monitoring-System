@@ -19,8 +19,6 @@ type ScoreDraft = Record<string, string>;
 
 interface FormState {
   studentId: string;
-  trainingStartedAt: string;
-  trainingEndedAt: string;
   comments: string;
   recommendations: string;
   scores: ScoreDraft;
@@ -28,8 +26,6 @@ interface FormState {
 
 const EMPTY_FORM: FormState = {
   studentId: "",
-  trainingStartedAt: "",
-  trainingEndedAt: "",
   comments: "",
   recommendations: "",
   scores: {},
@@ -37,9 +33,13 @@ const EMPTY_FORM: FormState = {
 
 const PAGE_SIZE = 10;
 
-/** An ISO timestamp as `<input type="date">` wants it. */
-function toDateInput(iso: string | null): string {
-  return iso ? iso.slice(0, 10) : "";
+/**
+ * A new evaluation is allowed only once the trainee's OJT is COMPLETED — the
+ * server enforces it (409); the picker mirrors it so it isn't discovered by
+ * submitting.
+ */
+export function canEvaluate(student: SupervisorStudent): boolean {
+  return student.status === "COMPLETED";
 }
 
 /** Every item key on the sheet, in printed order. */
@@ -63,31 +63,18 @@ function useEvaluationDraft(
   const [error, setError] = useState("");
 
   const setHeaderField =
-    (
-      key: "trainingStartedAt" | "trainingEndedAt" | "comments" | "recommendations",
-    ) =>
+    (key: "comments" | "recommendations") =>
     (e: { target: { value: string } }) => {
       setForm((f) => ({ ...f, [key]: e.target.value }));
     };
 
   /**
-   * Picking the student also prefills Training Date Started from their record,
-   * which is what the paper form's header expects. Done here rather than in an
-   * effect — deriving state from a change is not a synchronisation problem, and
-   * `react-hooks/set-state-in-effect` rules the effect version out anyway.
-   *
-   * Training Date Ended has no prefill: the expected end date it used to read
-   * is retired, and the real end date is a later step. It is reset to blank
-   * per student so one student's typed date never carries over to another.
+   * The training dates are not form state: the server derives them from the
+   * selected student (start date, last approved day) and the form displays
+   * them read-only, off `selectedStudent` below.
    */
   const setStudentId = (studentId: string) => {
-    const student = (students ?? []).find((s) => s.id === studentId);
-    setForm((f) => ({
-      ...f,
-      studentId,
-      trainingStartedAt: toDateInput(student?.startDate ?? null),
-      trainingEndedAt: "",
-    }));
+    setForm((f) => ({ ...f, studentId }));
   };
 
   const setScore = (itemKey: string, value: number) => {
@@ -152,8 +139,6 @@ function useEvaluationDraft(
     setError("");
     setForm({
       studentId: evaluation.studentId,
-      trainingStartedAt: toDateInput(evaluation.trainingStartedAt),
-      trainingEndedAt: toDateInput(evaluation.trainingEndedAt),
       comments: evaluation.comments ?? "",
       recommendations: evaluation.recommendations ?? "",
       scores: Object.fromEntries(
@@ -168,12 +153,10 @@ function useEvaluationDraft(
    * The whole sheet, every time — `PATCH` is not a partial update. Emptied
    * free-text goes as `null`, not omitted: the server reads an absent field as
    * "leave unchanged", so omitting it would silently restore the text the
-   * supervisor just deleted. `totalRating` is never sent; the server computes
-   * it.
+   * supervisor just deleted. `totalRating` and the training dates are never
+   * sent; the server derives them (and keeps the stored dates on an edit).
    */
   const payload = () => ({
-    trainingStartedAt: form.trainingStartedAt || undefined,
-    trainingEndedAt: form.trainingEndedAt || undefined,
     comments: form.comments || null,
     recommendations: form.recommendations || null,
     scores: Object.fromEntries(keys.map((k) => [k, Number(form.scores[k])])),
@@ -330,6 +313,10 @@ export function useEvaluations() {
     isEditing: false,
     traineeName: create.selectedStudent?.user.name ?? "",
     employedAt: sheet?.employedAt ?? "",
+    // What the server will stamp: the trainee's start date and last approved
+    // day, off the roster row. `null` shows a dash — never today.
+    trainingStartedAt: create.selectedStudent?.startDate ?? null,
+    trainingEndedAt: create.selectedStudent?.lastApprovedDay ?? null,
     evaluator: {
       name: sheet?.evaluator.name ?? "",
       position: sheet?.evaluator.position ?? "",
@@ -355,6 +342,9 @@ export function useEvaluations() {
     isEditing: true,
     traineeName: editTarget?.student.user.name ?? "",
     employedAt: editTarget?.trainingEmployedAt ?? "",
+    // The dates stored when the sheet was written; an edit never changes them.
+    trainingStartedAt: editTarget?.trainingStartedAt ?? null,
+    trainingEndedAt: editTarget?.trainingEndedAt ?? null,
     evaluator: {
       name: editTarget?.evaluatorName ?? "",
       position: editTarget?.evaluatorPosition ?? "",
@@ -436,8 +426,13 @@ export function useEvaluations() {
       total: all.length,
       averageRating: average,
       maxTotalRating: sheet?.maxTotalRating ?? null,
-      /** Students at this establishment with no evaluation at all yet. */
-      pending: (students ?? []).filter((s) => !evaluatedIds.has(s.id)).length,
+      /**
+       * COMPLETED students at this establishment with no evaluation yet — only
+       * those can be evaluated, so the count never promises locked work.
+       */
+      pending: (students ?? []).filter(
+        (s) => canEvaluate(s) && !evaluatedIds.has(s.id),
+      ).length,
     };
   }, [evaluations, students, sheet]);
 

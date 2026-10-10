@@ -59,9 +59,18 @@ export interface SupervisorStudent {
   yearLevel: string | null;
   requiredHours: number;
   status: string;
+  /** Approved hours: sessions with both punches APPROVED. */
   completedHours: number;
-  /** The evaluation sheet's Training Date Started prefill. */
+  /**
+   * Date-only. What a new evaluation's Training Date Started will be — the
+   * server derives and stores it; the form only displays it.
+   */
   startDate: string | null;
+  /**
+   * Date-only: the latest day with an approved session, or `null`. What a new
+   * evaluation's Training Date Ended will be (server-derived, display only).
+   */
+  lastApprovedDay: string | null;
   user: { id: string; email: string; name: string };
 }
 

@@ -71,7 +71,7 @@ export default function SupervisorEvaluationPage() {
             label="Awaiting Evaluation"
             value={stats.pending}
             icon={Hourglass}
-            subtext="trainees not yet evaluated"
+            subtext="completed trainees not yet evaluated"
           />
           <StatCard
             label="Average Total Rating"

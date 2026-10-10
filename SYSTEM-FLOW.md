@@ -161,6 +161,7 @@ Every hour figure goes through src/common/attendance-hours.ts
     - Student dashboard:        stats.completedHours / requiredHours; counts are punches
     - Supervisor dashboard:     totalApprovedHours; pending/declined/approvedThisWeek are punches
     - Supervisor roster + coordinator student list: completedHours per student
+                                 (the roster also lastApprovedDay — the evaluation's end date)
     - Coordinator dashboard:    totalHoursLogged; pendingApprovals + weekly trend count punches
     - Attendance oversight:     presentDays (days with an approved session, within
                                  [startDate, today]) ÷ totalDays (calendar days since
@@ -203,6 +204,13 @@ client (where they would drift from the sheet the school issues), it is SERVED:
             them off /supervisor/dashboard, which blanked the footer when that failed)
 
 POST /supervisor/evaluations   (19 items, 1–5 each)
+  → ownership (student at the caller's establishment, else 403)
+  → GATE: student.status must be COMPLETED, else 409 "…not completed OJT yet (x / y hrs)"
+      (x = totalApprovedHours). Create only — never applied to PATCH/DELETE.
+  → trainingStartedAt = Student.startDate, trainingEndedAt = lastApprovedDay(attendance)
+      ──STORED SNAPSHOTS──▶ derived here, NOT in the DTO (a body date is a 400);
+      null when there is nothing to derive from, never today. The picker shows the same
+      two values in advance from the roster row (startDate, lastApprovedDay).
   → totalRating = raw sum, 19–95  ──STORED on the row──▶ survives a later rubric change
       never accepted from the body; forbidNonWhitelisted rejects an attempt to supply it
   → trainingEmployedAt / evaluatorName / evaluatorPosition  ──STORED SNAPSHOTS──▶
@@ -212,10 +220,10 @@ POST /supervisor/evaluations   (19 items, 1–5 each)
       Excellent/Very Good/Good/Fair/Poor labels were retired with the old rubric.
 
 PATCH /supervisor/evaluations/:id   (the whole sheet again, not a partial)
-  → recomputes totalRating and rewrites the two editable header DATES only.
-      The three snapshots above are NOT recomputed — re-deriving them from the
-      student's current placement would blank the establishment on a sheet whose
-      student has since been unassigned.
+  → recomputes totalRating; comments/recommendations. NO header field is rewritten:
+      the training dates and the three snapshots above stay as stored — re-deriving
+      them from the student's current record would let later attendance or a
+      reassignment rewrite a signed sheet. No COMPLETED gate on an edit.
 
 ← on every READ: withSectionTotals() recomputes each section's total and attaches
     its items WITH their scores, so the coordinator's read-only view renders the whole

@@ -7,6 +7,10 @@ import { Z_LAYERS } from "./Overlay";
 interface SelectOption {
   label: string;
   value: string;
+  /** Shown but not selectable — e.g. a trainee whose OJT isn't finished. */
+  disabled?: boolean;
+  /** A second, smaller line under the label (why it is disabled, say). */
+  hint?: string;
 }
 
 interface SelectProps {
@@ -78,12 +82,22 @@ export default function SelectField({
             <button
               key={option.value}
               type="button"
-              onClick={() => handleSelect(option.value)}
-              className={`w-full px-4 py-2.5 text-sm text-left hover:bg-blue-50 transition-colors ${
-                option.value === value ? "bg-blue-100 text-blue-700 font-medium" : "text-gray-700"
+              disabled={option.disabled}
+              onClick={() => !option.disabled && handleSelect(option.value)}
+              className={`w-full px-4 py-2.5 text-sm text-left transition-colors ${
+                option.disabled
+                  ? "text-gray-400 cursor-not-allowed"
+                  : option.value === value
+                    ? "bg-blue-100 text-blue-700 font-medium hover:bg-blue-50"
+                    : "text-gray-700 hover:bg-blue-50"
               }`}
             >
               {option.label}
+              {option.hint && (
+                <span className="block text-xs text-gray-400">
+                  {option.hint}
+                </span>
+              )}
             </button>
           ))}
         </div>

@@ -386,7 +386,9 @@ and makes required create fields optional.
 - **`src/common/attendance-hours.ts`** — the only place that turns a day's
   `AttendancePunch` rows into anything a person reads: `summarizeDay` (punches keyed by
   kind, `dayStatus`, `approvedHours`, `pendingHours`), `totalApprovedHours`/
-  `totalPendingHours`, `hasApprovedSession`, `punchAvailability` (the punch rules) and the
+  `totalPendingHours`, `hasApprovedSession`, `lastApprovedDay` (latest day with an approved
+  session, or `null` — the evaluation's Training Date Ended), `punchAvailability` (the
+  punch rules) and the
   shared `PUNCH_SELECT`/`DAY_SELECT`/`HOURS_PUNCH_SELECT`. **A session (AM or PM) counts
   toward hours only when both its In and Out punches are APPROVED** — nothing else ever
   does. `pendingHours` = both punches present, neither DECLINED, not both APPROVED.
@@ -641,15 +643,15 @@ table; never derive one from the other.
 | PATCH | `/student/profile` | STUDENT | `{ contactNumber?, address? }` — the only two fields a student may self-edit |
 | POST | `/student/documents` | STUDENT | multipart; `type` field (a `DocumentType`) + `file` part (PDF/PNG/JPEG, 10MB max). **Upsert** on `(studentId, type)`: a second upload of a type replaces the file. Returns the same shape as the list |
 | DELETE | `/student/documents/:id` | STUDENT | own document; no status guard (there is no status) |
-| GET | `/supervisor/dashboard` · `/supervisor/students` | SUPERVISOR | scoped to own establishment. Dashboard counts **punches** (`pendingApprovals`, `declinedCount`, `approvedThisWeek` by `decidedAt`); `totalApprovedHours`/roster `completedHours` from approved sessions |
+| GET | `/supervisor/dashboard` · `/supervisor/students` | SUPERVISOR | scoped to own establishment. Dashboard counts **punches** (`pendingApprovals`, `declinedCount`, `approvedThisWeek` by `decidedAt`); `totalApprovedHours`/roster `completedHours` (= approved hours) from approved sessions. Each roster row also carries **`lastApprovedDay`** (date-only or `null`) and `startDate` — the evaluation picker's gate and both derived dates, no request per student. One `findMany` with nested attendances: the query count doesn't grow with the roster |
 | GET | `/supervisor/attendance` | SUPERVISOR | `?status=&includeCompleted=` — **days** with nested punches (the history shape plus `student`), own establishment, COMPLETED students hidden by default. `status=PENDING` = days with at least one PENDING punch |
 | POST | `/supervisor/students` | SUPERVISOR | **Creates a student at the caller's own establishment.** `{ studentIdNumber, firstName, middleInitial?, lastName, email, course, contactNumber?, address?, startDate? }`. `establishmentId` is taken from the caller's `Supervisor` row (via `req.user.userId`), **never the body**: `establishmentId`, `username`, `password`, `yearLevel`, `requiredHours`, `status`, `school` in the body are each a 400. `course` must be an offered label; `yearLevel`/`requiredHours` derived (F1), `school` = `SCHOOL_NAME`, `status` ACTIVE. Generated login via `issueNewAccount`, `mustChangePassword` set; User + Student in **one `$transaction`** (`CASCADE_TRANSACTION_OPTIONS`). Response: the roster row (explicit select, `user: { id, email, username, name }`, `completedHours: 0`) + `credentials`. Taken student ID → 409 `"This student ID is already registered"` (fixed text — names no student or establishment); taken email → 409. Both pre-checked and caught again as P2002 |
-| PATCH | `/supervisor/students/:id/status` | SUPERVISOR | `{ status: ACTIVE \| COMPLETED }`. 404 unknown, **403** another establishment's (pre-existing; left as is) |
+| PATCH | `/supervisor/students/:id/status` | SUPERVISOR | `{ status: ACTIVE \| COMPLETED }`. Unknown id **and** another establishment's student are the same **404** `"Student not found"` (F6 — was 403, which leaked existence) |
 | PATCH | `/supervisor/punches/:id/approve` | SUPERVISOR | one punch. Sets `decidedById`/`decidedAt`. **Decisions are final: 409 unless PENDING.** 404 unknown, 403 another establishment's. Returns the punch + `attendanceId` |
 | PATCH | `/supervisor/punches/:id/decline` | SUPERVISOR | `{ reason }`, 3–500 chars, required; same rules as approve. There is deliberately **no bulk approve** — each punch is its own approval |
 | GET | `/supervisor/evaluations/form` | SUPERVISOR | the **currently PUBLISHED template**: `templateId`, `version`, `title`, sections with item keys, printed letters and wording, the 1–5 legend and `maxTotalRating` — plus `evaluator` and `employedAt`, the header/footer blanks as they will be stamped for this supervisor. **409 if the school has published no sheet.** The client renders the whole form from this one endpoint instead of keeping its own copy of the form text or reading the dashboard |
-| GET/POST | `/supervisor/evaluations` | SUPERVISOR | POST takes `scores` as **one nested object** keyed by the template's item keys (`{ scores: { courtesy: 5, … } }`), not top-level fields — see §8 item 23. Written against the published version; repeatable — a student is evaluated more than once |
-| PATCH | `/supervisor/evaluations/:id` | SUPERVISOR | the whole sheet again, not a partial (every item is required on the form); same nested `scores`, validated against **that evaluation's own template version**, not the published one; recomputes `totalRating`. 403 unless the caller **wrote** it |
+| GET/POST | `/supervisor/evaluations` | SUPERVISOR | POST takes `scores` as **one nested object** keyed by the template's item keys (`{ scores: { courtesy: 5, … } }`), not top-level fields — see §8 item 23. Written against the published version; repeatable — a student is evaluated more than once. **POST only for a COMPLETED student** (after the 403 ownership check): otherwise 409 `"This student has not completed OJT yet (<approved> / <required> hrs)"`. `trainingStartedAt` = the student's `startDate`, `trainingEndedAt` = `lastApprovedDay`, both server-derived and snapshotted on the row, `null` when there is nothing to derive from (never today). Neither date is on the DTO — sending one is a 400 |
+| PATCH | `/supervisor/evaluations/:id` | SUPERVISOR | the whole sheet again, not a partial (every item is required on the form); same nested `scores`, validated against **that evaluation's own template version**, not the published one; recomputes `totalRating`. 403 unless the caller **wrote** it. **No COMPLETED gate** — an existing sheet stays editable whatever the student's status. The stored training dates are kept; sending either is a 400 |
 | DELETE | `/supervisor/evaluations/:id` | SUPERVISOR | hard delete, same authorship check |
 | GET | `/messages/contacts` | any signed-in | who the caller may message, scoped by role (§7) |
 | GET | `/messages/conversations` | any signed-in | caller's conversations, most recent first, with unread count |
@@ -963,9 +965,8 @@ recoverable, a half-deleted database is not.
   **Retired student fields** — `age`, `dateOfBirth`, `gender`, `endDate` (expected end
   date) are gone from every DTO, response and screen. The columns **stay in
   `schema.prisma`, unused** (no migration); `PrismaService`'s global `omit` hides them.
-  Drop them in a later cleanup migration, after a `pg_dump`. The evaluation form no
-  longer prefills Training Date Ended (it read `endDate`); the real end date is a later
-  step.
+  Drop them in a later cleanup migration, after a `pg_dump`. The evaluation's Training
+  Date Ended is now server-derived from approved attendance (F6), not from `endDate`.
 - **Bulk delete (Coordinator Students)** — checkbox column, only COMPLETED rows selectable
   (others disabled with a tooltip); header box selects every COMPLETED row matching the
   search + status filter across all pages; "Select all completed" switches the filter to
@@ -1072,6 +1073,27 @@ recoverable, a half-deleted database is not.
 - **Password recovery** — self-service change for everyone, coordinator "Resend login"
   for students and supervisors (generated, shown once, forced change), CLI for the
   coordinator.
+- **Evaluation only after COMPLETED, server-derived training dates (final-defense F6)**
+  — `createEvaluation` checks ownership (403), then requires `status === COMPLETED`
+  (409 with approved/required hours, from `totalApprovedHours`), then snapshots
+  `trainingStartedAt` = `Student.startDate` and `trainingEndedAt` = `lastApprovedDay` onto
+  the row (both columns were already nullable — no migration). The gate is **create
+  only**: existing evaluations of students who are not (or no longer) COMPLETED stay
+  editable and deletable, and an edit never touches the stored dates. The old
+  `trainingStartedAt`/`trainingEndedAt` fields are gone from the evaluation DTO (they
+  were optional `IsDateString` on both create and update, and the old edit nulled a
+  date the client didn't send). How COMPLETED is set is unchanged (supervisor toggle,
+  coordinator edit); auto-COMPLETED is a later paid step.
+  Client: the picker lists every roster student but only COMPLETED ones are selectable;
+  the rest are disabled with "OJT not completed (x / y hrs)" (`SelectField` options now
+  take optional `disabled` and `hint`), and with none selectable an amber note says
+  evaluation unlocks once OJT is completed. Training Date Started/Ended are read-only
+  `FormFieldValue`s — on create off the roster row (`startDate`, `lastApprovedDay`), on
+  edit off the stored sheet — "—" when null; the date inputs and their form state are
+  gone. "Awaiting Evaluation" counts **COMPLETED** students with no evaluation
+  (`canEvaluate` in `use-evaluations.ts`, shared with the picker); it is shown only on
+  `/supervisor/evaluation`. The PDF already printed both stored dates with "—" for null
+  (`printDateOnly`), unchanged.
 - **Supervisor creates students (final-defense F5)** — `POST /supervisor/students` and
   `POST /supervisor/students/:id/resend-credentials` (§5). **A new student's establishment
   always equals the creating supervisor's**, derived server-side; the coordinator's create
@@ -1186,6 +1208,18 @@ recoverable, a half-deleted database is not.
 **All three roles land on a real page after login. No role 404s.**
 
 ### Needs live verification
+
+**Final-defense step F6** (COMPLETED gate on new evaluations, server-derived training
+dates, status toggle 404). Verified in-process only — real `AppModule`,
+`ValidationPipe`, `RolesGuard` and `SupervisorService` against a faked Prisma, with
+`EvaluationTemplateService` stubbed (11 cases: 409 with hours for ACTIVE/INACTIVE/PENDING;
+COMPLETED stores `startDate` and the last approved-session day, skipping a later day with
+only one approved punch; both dates `null` with no start date and no approved session;
+either date in the body 400 on create and update; edit of a now-ACTIVE student's sheet
+succeeds and keeps the stored dates; another establishment's student 403 on create;
+status toggle cross-establishment 404 = unknown; roster `lastApprovedDay`/`completedHours`
+and the same 2 queries for 5 or 45 students). No live request; the client was
+typechecked, never rendered.
 
 **Final-defense step F5** (supervisor creates students; coordinator create removed).
 Verified in-process only — real `AppModule`, `ValidationPipe`, `RolesGuard` and services
@@ -1350,7 +1384,8 @@ Ordered roughly by how likely each is to bite.
     with `age` and `dateOfBirth` (§7 "Course decides year level and hours"); the columns
     remain, unused and omitted from every read. Completion was always by hours — only
     `status: COMPLETED` closes attendance — so nothing depended on `endDate` but a
-    non-blocking notice and the evaluation's Training Date Ended prefill, both removed.
+    non-blocking notice and the evaluation's Training Date Ended prefill, both removed
+    (that date is now derived from approved attendance — F6).
 13. `getMyDocuments` mints a signed URL per row on every request (at most six; the
     coordinator's checklist deliberately mints none) (`Promise.all(rows.map(withSignedUrl))`) — an extra Supabase round trip per
     row, same scaling shape as item 4. Fine at current volume; revisit alongside item 3 if
