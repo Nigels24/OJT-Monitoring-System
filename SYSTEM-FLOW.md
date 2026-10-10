@@ -76,8 +76,22 @@ Supervisor:  POST /supervisor/students   (establishmentId = the caller's Supervi
          or  POST /supervisor/students/:id/resend-credentials   (own establishment, else 404)
   → generatePassword() → bcrypt.hash → user row (username via usernameBase +
     nextFreeUsername, retried on a P2002 race), mustChangePassword = true
-  ← { …, credentials: { username, tempPassword } }  — the only time the plaintext exists
-  → CredentialsDialog shows it once; closing drops it
+  → the transaction COMMITS (resend: the new hash is saved first, outside any transaction)
+  → deliverCredentials (common/accounts.ts) — after commit, never throws, never rolls back
+      no email → "No email address on file"
+      MailService.sendCredentials (src/mail):
+        log mode (default)  → full message + password to the server LOG, nothing sent,
+                              status untouched
+        smtp mode           → smtp.gmail.com:465, 10 s timeouts, 25 s cap
+                              (MAIL_REDIRECT_TO → one test inbox, subject prefixed)
+      sent   → User.credentialsSentAt = now, credentialsEmailError = null
+      failed → User.credentialsEmailError = safe reason (from the error CODE only)
+  ← { …, credentials: { username, tempPassword }, emailSent, emailError?, emailedTo? }
+      — the only time the plaintext reaches the client
+  → CredentialsDialog shows "emailed to …" or "Email failed: … give these yourself",
+    then the password once; closing drops it
+  → lists show EmailStatusBadge from the stored columns (survives a reload)
+  A failed RESEND has already replaced the old password — the dialog is the fallback.
 
 User signs in with it → token has mcp → stored user mustChangePassword: true
   → Sidebar (every role page) opens ChangePasswordDialog in forced mode
@@ -366,6 +380,7 @@ POST /establishments/:id/supervisor
 |---|---|
 | Wrong/missing data for one student but not others | Ownership check in the service (§2) — is it filtering by the right profile id? |
 | "An establishment named … already exists" for names that look different, or a duplicate got through | The keys, not the names: `establishmentKeys` in `common/establishment-identity.ts` (§6b). Rows that existed before P4 have SQL-backfilled keys, which can differ from `normalizeKey` for non-ASCII spaces/letters (CLAUDE.md §8 item 32) — editing that row's name recomputes its key |
+| Login email didn't arrive / dialog says "Email failed" | The reason in the dialog or the badge's title (from the error code). Boot log says the mode: `log` sends nothing (the message is in the log); `smtp` logs whether the App Password worked. Check `MAIL_REDIRECT_TO` isn't still set. A host blocking SMTP shows as "Could not reach the mail server" — CLAUDE.md §4 describes the Gmail API fallback |
 | A student is missing from the DTR ZIP, or the ZIP 404s | They have no APPROVED punch on a day of that month (by `Attendance.date`), or a filter excludes them — the ZIP never applies the page's search box. Same select as the single DTR: `coordinator/dtr-data.ts` |
 | An establishment shows without its branch somewhere | That call site prints `.name` instead of `establishmentLabel` (server for flattened strings, `lib/establishment.ts` on the client) |
 | A student didn't auto-complete (or completed when they shouldn't) | `decidePunch` in `supervisor.service.ts`: only the approval that crosses from below `requiredHours` to at/above it, ACTIVE only, `requiredHours > 0` (§4 of this file, CLAUDE.md §6). A student already past the line and reset to ACTIVE by hand is meant to stay ACTIVE; a course change lowering the requirement never completes anyone |

@@ -6,6 +6,8 @@ import type {
   Punch,
 } from "./studentPortalApi";
 import type {
+  CredentialsEmailStatus,
+  EmailOutcome,
   GeneratedCredentials,
   ResendCredentialsResponse,
 } from "./studentApi";
@@ -72,7 +74,7 @@ export interface SupervisorStudent {
    * evaluation's Training Date Ended will be (server-derived, display only).
    */
   lastApprovedDay: string | null;
-  user: { id: string; email: string; name: string };
+  user: { id: string; email: string; name: string } & CredentialsEmailStatus;
 }
 
 /**
@@ -95,9 +97,10 @@ export interface CreateSupervisorStudentRequest {
 }
 
 /** The roster row, plus the one-time login. */
-export type CreateSupervisorStudentResponse = SupervisorStudent & {
-  credentials: GeneratedCredentials;
-};
+export type CreateSupervisorStudentResponse = SupervisorStudent &
+  EmailOutcome & {
+    credentials: GeneratedCredentials;
+  };
 
 /**
  * The decided punch, plus whether this approval took the student's approved
@@ -163,8 +166,8 @@ export const supervisorApi = createApi({
       },
     }),
     /**
-     * "Resend login" for one of this establishment's students. Invalidates
-     * nothing — no list shows the password or the must-change flag.
+     * "Resend login" for one of this establishment's students, emailed.
+     * Invalidates the roster for the row's email badge.
      */
     resendSupervisorStudentCredentials: builder.mutation<
       ResendCredentialsResponse,
@@ -174,6 +177,7 @@ export const supervisorApi = createApi({
         url: `/supervisor/students/${id}/resend-credentials`,
         method: "POST",
       }),
+      invalidatesTags: ["SupervisorStudent"],
     }),
     /**
      * Marks an OJT finished, or reopens it.

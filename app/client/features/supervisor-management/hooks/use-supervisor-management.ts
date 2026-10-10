@@ -6,7 +6,10 @@ import {
   useResendSupervisorCredentialsMutation,
   CoordinatorSupervisor,
 } from "@/lib/api/supervisorManagementApi";
-import type { IssuedCredentials } from "@/features/account/CredentialsDialog";
+import {
+  emailOutcomeOf,
+  type IssuedCredentials,
+} from "@/features/account/CredentialsDialog";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
 import { optionalEstablishmentLabel } from "@/lib/establishment";
 
@@ -112,6 +115,7 @@ export function useSupervisorManagement() {
         username: result.credentials.username,
         tempPassword: result.credentials.tempPassword,
         reason: "resent",
+        ...emailOutcomeOf(result),
       });
     } catch (err: unknown) {
       showError(readError(err, "Failed to issue a new login."));

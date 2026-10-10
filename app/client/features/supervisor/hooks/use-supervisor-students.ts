@@ -5,7 +5,10 @@ import {
   useGetSupervisorStudentsQuery,
   useResendSupervisorStudentCredentialsMutation,
 } from "@/lib/api/supervisorApi";
-import type { IssuedCredentials } from "@/features/account/CredentialsDialog";
+import {
+  emailOutcomeOf,
+  type IssuedCredentials,
+} from "@/features/account/CredentialsDialog";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
 import { COURSES, findCourse } from "@/lib/courses";
 
@@ -119,6 +122,7 @@ export function useSupervisorStudents() {
         username: result.credentials.username,
         tempPassword: result.credentials.tempPassword,
         reason: "created",
+        ...emailOutcomeOf(result),
       });
     } catch (err: unknown) {
       const message = readError(err, "Failed to add student.");
@@ -139,6 +143,7 @@ export function useSupervisorStudents() {
         username: result.credentials.username,
         tempPassword: result.credentials.tempPassword,
         reason: "resent",
+        ...emailOutcomeOf(result),
       });
     } catch (err: unknown) {
       showError(readError(err, "Failed to issue a new login."));

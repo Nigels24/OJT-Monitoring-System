@@ -8,7 +8,10 @@ import {
   Student,
   StudentStatus,
 } from "@/lib/api/studentApi";
-import type { IssuedCredentials } from "@/features/account/CredentialsDialog";
+import {
+  emailOutcomeOf,
+  type IssuedCredentials,
+} from "@/features/account/CredentialsDialog";
 import { useGetEstablishmentsQuery } from "@/lib/api/establishmentApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
 import { COURSES, findCourse, isOfferedCourse } from "@/lib/courses";
@@ -159,6 +162,7 @@ export function useStudents() {
         username: result.credentials.username,
         tempPassword: result.credentials.tempPassword,
         reason: "resent",
+        ...emailOutcomeOf(result),
       });
     } catch (err: unknown) {
       showError(readError(err, "Failed to issue a new login."));

@@ -1,6 +1,8 @@
 import { ConflictException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { Logger } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
+import type { MailService } from '../mail/mail.service';
 import {
   createWithGeneratedUsername,
   generatePassword,
@@ -152,7 +154,98 @@ export const RESEND_ACCOUNT_SELECT = {
   name: true,
   email: true,
   username: true,
+  role: true,
 } as const;
+
+/** Where an issued login's delivery stands — added to every create/resend response. */
+export interface EmailOutcome {
+  emailSent: boolean;
+  /** Present when not sent: the short, safe reason. */
+  emailError?: string;
+  /** The inbox it actually went to (MAIL_REDIRECT_TO when set). */
+  emailedTo?: string;
+}
+
+/** Anything that can write the two status columns — the client, not a transaction. */
+type StatusWriter = {
+  user: {
+    update(args: {
+      where: { id: string };
+      data: {
+        credentialsSentAt?: Date | null;
+        credentialsEmailError: string | null;
+      };
+      select: { id: true };
+    }): Promise<{ id: string }>;
+  };
+};
+
+const NO_EMAIL = 'No email address on file';
+const logger = new Logger('Credentials');
+
+/**
+ * Emails a freshly issued login and records how it went — the one place any
+ * flow sends credentials.
+ *
+ * **Call it only after the account's write has committed**, never inside a
+ * transaction: an email can't be unsent, so it must describe a password that
+ * really is stored, and its failure must never roll the account back. It
+ * never throws: the account exists either way, and the response still
+ * carries `credentials` for the one-time dialog.
+ *
+ * On success `credentialsSentAt = now` and the error is cleared; on failure
+ * the short, safe reason is stored in `credentialsEmailError` (and
+ * `credentialsSentAt` keeps the last success, if any). Log mode records
+ * neither — nothing was delivered, and nothing failed.
+ */
+export async function deliverCredentials(
+  db: StatusWriter,
+  mail: MailService,
+  account: {
+    id: string;
+    name: string;
+    email: string | null;
+    role: 'STUDENT' | 'SUPERVISOR';
+  },
+  credentials: { username: string | null; tempPassword: string },
+): Promise<EmailOutcome> {
+  const to = account.email?.trim();
+  const result = to
+    ? await mail.sendCredentials({
+        to,
+        name: account.name,
+        role: account.role,
+        username: credentials.username,
+        tempPassword: credentials.tempPassword,
+      })
+    : { sent: false as const, error: NO_EMAIL };
+
+  if (!result.sent && 'logOnly' in result && result.logOnly) {
+    return { emailSent: false, emailError: result.error };
+  }
+
+  try {
+    await db.user.update({
+      where: { id: account.id },
+      data: result.sent
+        ? { credentialsSentAt: new Date(), credentialsEmailError: null }
+        : { credentialsEmailError: result.error },
+      select: { id: true },
+    });
+  } catch (err: unknown) {
+    // The email (or its failure) already happened; a status write that fails
+    // must not turn the request into an error. No credentials in this line.
+    logger.error(
+      `Could not record email status for user ${account.id}: ${
+        err instanceof Error ? err.name : 'unknown error'
+      }`,
+    );
+  }
+
+  return result.sent
+    ? { emailSent: true, emailedTo: result.deliveredTo }
+    : { emailSent: false, emailError: result.error };
+}
 
 /** Anything with `user.update` — the client itself or a transaction. */
 type UserWriter = {
@@ -173,10 +266,23 @@ type UserWriter = {
  *
  * The caller has already decided the account may be reset (the coordinator
  * for anyone, a supervisor only for their own establishment's students).
+ *
+ * **Order: save, then send.** The new hash is written (and committed — `db` is
+ * the client, not a transaction) before the email goes out, so what was
+ * emailed always matches what is stored. The consequence: a failed send has
+ * already invalidated the old password, which is why the response still
+ * carries `credentials` for the one-time dialog.
  */
 export async function reissuePassword(
-  db: UserWriter,
-  user: { id: string; name: string; email: string; username: string | null },
+  db: UserWriter & StatusWriter,
+  mail: MailService,
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    username: string | null;
+    role: string;
+  },
 ) {
   const tempPassword = generatePassword();
   await db.user.update({
@@ -187,9 +293,24 @@ export async function reissuePassword(
     },
     select: { id: true },
   });
+  const credentials = { username: user.username, tempPassword };
+  const outcome = await deliverCredentials(
+    db,
+    mail,
+    {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      // Resend stops short of COORDINATOR accounts (the callers look up
+      // students and supervisors only), so this is one of the two.
+      role: user.role === 'SUPERVISOR' ? 'SUPERVISOR' : 'STUDENT',
+    },
+    credentials,
+  );
   return {
     name: user.name,
     email: user.email,
-    credentials: { username: user.username, tempPassword },
+    credentials,
+    ...outcome,
   };
 }

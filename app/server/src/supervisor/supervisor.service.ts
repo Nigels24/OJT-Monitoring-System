@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 import {
   DAY_SELECT,
   HOURS_PUNCH_SELECT,
@@ -35,6 +36,7 @@ import {
   buildPersonName,
   isEmailClash,
   isUniqueClashOn,
+  deliverCredentials,
   issueNewAccount,
   reissuePassword,
 } from '../common/accounts';
@@ -74,7 +76,16 @@ const NEW_STUDENT_SELECT = {
   startDate: true,
   status: true,
   establishmentId: true,
-  user: { select: { id: true, email: true, username: true, name: true } },
+  user: {
+    select: {
+      id: true,
+      email: true,
+      username: true,
+      name: true,
+      credentialsSentAt: true,
+      credentialsEmailError: true,
+    },
+  },
 } as const;
 
 /**
@@ -90,6 +101,7 @@ export class SupervisorService {
   constructor(
     private prisma: PrismaService,
     private templates: EvaluationTemplateService,
+    private mail: MailService,
   ) {}
 
   private async getSupervisorByUserId(userId: string) {
@@ -258,7 +270,16 @@ export class SupervisorService {
     const students = await this.prisma.client.student.findMany({
       where: { establishmentId: supervisor.establishmentId },
       include: {
-        user: { select: { id: true, email: true, name: true } },
+        user: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            // The credentials email's last outcome, for the roster's badge.
+            credentialsSentAt: true,
+            credentialsEmailError: true,
+          },
+        },
         // Only APPROVED punches can ever form a counted session, so the rest
         // are not fetched.
         attendances: {
@@ -331,55 +352,51 @@ export class SupervisorService {
       throw new ConflictException(STUDENT_ID_TAKEN);
     }
 
-    try {
-      const { result, credentials } = await issueNewAccount(
-        this.prisma.client,
-        firstName,
-        lastName,
-        (username, passwordHash) =>
-          this.prisma.client.$transaction(async (tx) => {
-            const user = await tx.user.create({
-              data: {
-                email: data.email,
-                username,
-                password: passwordHash,
-                mustChangePassword: true,
-                name: buildPersonName({
-                  firstName,
-                  middleInitial: data.middleInitial,
-                  lastName,
-                }),
-                role: 'STUDENT',
-              },
-              select: { id: true },
-            });
-            return tx.student.create({
-              data: {
-                userId: user.id,
-                studentIdNumber,
+    const { result, credentials } = await issueNewAccount(
+      this.prisma.client,
+      firstName,
+      lastName,
+      (username, passwordHash) =>
+        this.prisma.client.$transaction(async (tx) => {
+          const user = await tx.user.create({
+            data: {
+              email: data.email,
+              username,
+              password: passwordHash,
+              mustChangePassword: true,
+              name: buildPersonName({
                 firstName,
-                middleInitial: data.middleInitial?.trim() || null,
+                middleInitial: data.middleInitial,
                 lastName,
-                contactNumber: data.contactNumber,
-                address: data.address,
-                course: data.course,
-                yearLevel: derived.yearLevel,
-                requiredHours: derived.requiredHours,
-                // Date-only: "2026-10-12" parses as UTC midnight of that day,
-                // the convention every date-only column follows (§4 dates.ts).
-                startDate: data.startDate ? new Date(data.startDate) : null,
-                school: SCHOOL_NAME,
-                // Always the caller's — never from the request.
-                establishmentId: supervisor.establishmentId,
-                status: 'ACTIVE',
-              },
-              select: NEW_STUDENT_SELECT,
-            });
-          }, CASCADE_TRANSACTION_OPTIONS),
-      );
-      // Nothing approved yet; the field keeps the roster's row shape.
-      return { ...result, completedHours: 0, credentials };
-    } catch (err) {
+              }),
+              role: 'STUDENT',
+            },
+            select: { id: true },
+          });
+          return tx.student.create({
+            data: {
+              userId: user.id,
+              studentIdNumber,
+              firstName,
+              middleInitial: data.middleInitial?.trim() || null,
+              lastName,
+              contactNumber: data.contactNumber,
+              address: data.address,
+              course: data.course,
+              yearLevel: derived.yearLevel,
+              requiredHours: derived.requiredHours,
+              // Date-only: "2026-10-12" parses as UTC midnight of that day,
+              // the convention every date-only column follows (§4 dates.ts).
+              startDate: data.startDate ? new Date(data.startDate) : null,
+              school: SCHOOL_NAME,
+              // Always the caller's — never from the request.
+              establishmentId: supervisor.establishmentId,
+              status: 'ACTIVE',
+            },
+            select: NEW_STUDENT_SELECT,
+          });
+        }, CASCADE_TRANSACTION_OPTIONS),
+    ).catch((err: unknown) => {
       if (isUniqueClashOn(err, 'studentIdNumber')) {
         throw new ConflictException(STUDENT_ID_TAKEN);
       }
@@ -387,7 +404,23 @@ export class SupervisorService {
         throw new ConflictException('Email already in use');
       }
       throw err;
-    }
+    });
+
+    // After the commit — issueNewAccount resolves only once the transaction
+    // has — and never able to undo it.
+    const outcome = await deliverCredentials(
+      this.prisma.client,
+      this.mail,
+      {
+        id: result.user.id,
+        name: result.user.name,
+        email: result.user.email,
+        role: 'STUDENT',
+      },
+      credentials,
+    );
+    // Nothing approved yet; the field keeps the roster's row shape.
+    return { ...result, completedHours: 0, credentials, ...outcome };
   }
 
   /**
@@ -413,7 +446,7 @@ export class SupervisorService {
     }
     return {
       id: student.id,
-      ...(await reissuePassword(this.prisma.client, student.user)),
+      ...(await reissuePassword(this.prisma.client, this.mail, student.user)),
     };
   }
 

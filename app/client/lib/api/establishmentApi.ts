@@ -7,7 +7,7 @@ import { attendanceOversightApi } from "./attendanceOversightApi";
 import { documentApi } from "./documentApi";
 import { evaluationApi } from "./evaluationApi";
 import { messagesApi } from "./messagesApi";
-import type { GeneratedCredentials } from "./studentApi";
+import type { EmailOutcome, GeneratedCredentials } from "./studentApi";
 
 /**
  * The establishment's supervisor. At most one per establishment — enforced by
@@ -100,12 +100,14 @@ export interface CreateEstablishmentRequest {
   supervisor?: NewSupervisorRequest;
 }
 
-/** `credentials` is present only when a supervisor was created. */
-export type CreateEstablishmentResponse = Establishment & {
-  credentials?: GeneratedCredentials;
-};
+/** `credentials` (and the email outcome) only when a supervisor was created. */
+export type CreateEstablishmentResponse = Establishment &
+  Partial<EmailOutcome> & {
+    credentials?: GeneratedCredentials;
+  };
 
-export interface AddSupervisorResponse extends EstablishmentSupervisor {
+export interface AddSupervisorResponse
+  extends EstablishmentSupervisor, EmailOutcome {
   establishmentId: string;
   credentials: GeneratedCredentials;
 }

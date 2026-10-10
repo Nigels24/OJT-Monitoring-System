@@ -11,6 +11,7 @@ import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import SearchInput from "@/components/ui/SearchInput";
 import { CoordinatorSupervisor } from "@/lib/api/supervisorManagementApi";
 import { optionalEstablishmentLabel } from "@/lib/establishment";
+import EmailStatusBadge from "@/features/account/EmailStatusBadge";
 
 interface SupervisorListProps {
   isLoading: boolean;
@@ -72,7 +73,12 @@ export default function SupervisorList({
     {
       key: "email",
       label: "Email",
-      render: (r) => r.user.email,
+      render: (r) => (
+        <div>
+          <div>{r.user.email}</div>
+          <EmailStatusBadge status={r.user} />
+        </div>
+      ),
     },
     {
       key: "establishment",

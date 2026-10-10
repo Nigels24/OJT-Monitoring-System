@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 import {
   CASCADE_TRANSACTION_OPTIONS,
   deleteSupervisorCascade,
@@ -12,6 +13,7 @@ import {
 import {
   assertEmailAvailable,
   buildPersonName,
+  deliverCredentials,
   isUniqueClashOn,
   issueNewAccount,
 } from '../common/accounts';
@@ -120,13 +122,15 @@ const ASSIGNED_STUDENT_SELECT = {
 const SUPERVISOR_SUMMARY_SELECT = {
   id: true,
   position: true,
-  user: { select: { name: true, email: true } },
+  // `id` is for recording the credentials email's outcome; the summary sent
+  // to the client (`toSupervisorSummary`) leaves it out.
+  user: { select: { id: true, name: true, email: true } },
 } as const;
 
 type SupervisorSummaryRow = {
   id: string;
   position: string | null;
-  user: { name: string; email: string };
+  user: { id: string; name: string; email: string };
 };
 
 /** Flattened to `{ id, name, email, position }` for the client. */
@@ -183,7 +187,10 @@ function rethrowNameClash(
 
 @Injectable()
 export class EstablishmentService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private mail: MailService,
+  ) {}
 
   /**
    * Creates an establishment, and its supervisor when one is given.
@@ -252,11 +259,33 @@ export class EstablishmentService {
       // leaves the retry loop untouched and is mapped here.
     ).catch((err: unknown) => rethrowNameClash(err, fields));
 
+    // After the commit (issueNewAccount resolves only once its transaction
+    // has), and never able to undo it.
+    const outcome = await this.emailCredentials(result.supervisor, credentials);
     return {
       ...result.establishment,
       supervisor: toSupervisorSummary(result.supervisor),
       credentials,
+      ...outcome,
     };
+  }
+
+  /** The new supervisor's login, emailed after commit — see deliverCredentials. */
+  private emailCredentials(
+    supervisor: SupervisorSummaryRow,
+    credentials: { username: string; tempPassword: string },
+  ) {
+    return deliverCredentials(
+      this.prisma.client,
+      this.mail,
+      {
+        id: supervisor.user.id,
+        name: supervisor.user.name,
+        email: supervisor.user.email,
+        role: 'SUPERVISOR',
+      },
+      credentials,
+    );
   }
 
   /**
@@ -329,10 +358,12 @@ export class EstablishmentService {
       throw err;
     });
 
+    const outcome = await this.emailCredentials(result, credentials);
     return {
       ...toSupervisorSummary(result),
       establishmentId,
       credentials,
+      ...outcome,
     };
   }
 

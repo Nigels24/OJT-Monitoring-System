@@ -9,6 +9,7 @@ import {
   useSetStudentStatusMutation,
 } from "@/lib/api/supervisorApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
+import EmailStatusBadge from "@/features/account/EmailStatusBadge";
 
 interface StudentRosterProps {
   students: SupervisorStudent[];
@@ -76,6 +77,8 @@ export default function StudentRoster({
         <div>
           <div className="font-semibold text-gray-900">{r.user.name}</div>
           <div className="text-xs text-gray-500">{r.user.email}</div>
+          {/* Only where the roster can Resend login (the Students page). */}
+          {onResendLogin && <EmailStatusBadge status={r.user} />}
         </div>
       ),
     },

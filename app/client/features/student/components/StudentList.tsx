@@ -17,6 +17,7 @@ import SelectField from "@/components/ui/SelectField";
 import StatusBadge, { BadgeVariant } from "@/components/ui/StatusBadge";
 import { Student, StudentStatus } from "@/lib/api/studentApi";
 import { optionalEstablishmentLabel } from "@/lib/establishment";
+import EmailStatusBadge from "@/features/account/EmailStatusBadge";
 
 interface StudentListProps {
   isLoading: boolean;
@@ -163,6 +164,7 @@ export default function StudentList({
         <div>
           <div className="font-semibold text-gray-900">{r.user.name}</div>
           <div className="text-xs text-gray-500">{r.user.email}</div>
+          <EmailStatusBadge status={r.user} />
         </div>
       ),
     },

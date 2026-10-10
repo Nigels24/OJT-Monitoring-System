@@ -40,7 +40,7 @@ export interface Student {
     username: string | null;
     name: string;
     createdAt: string;
-  };
+  } & CredentialsEmailStatus;
   establishment?: { id: string; name: string; branch?: string | null } | null;
   /**
    * Dependent-row counts. The delete confirmation spells these out, since
@@ -87,8 +87,31 @@ export interface GeneratedCredentials {
   tempPassword: string;
 }
 
+/**
+ * How emailing a just-issued login went. On every response that carries
+ * `credentials`. The email is sent after the account is saved and never undoes
+ * it, so `credentials` is there either way for the one-time dialog.
+ */
+export interface EmailOutcome {
+  emailSent: boolean;
+  /** When not sent: a short reason ("No email address on file", …). */
+  emailError?: string;
+  /** Where it went — the MAIL_REDIRECT_TO test inbox when one is set. */
+  emailedTo?: string;
+}
+
+/**
+ * The stored outcome of the last credentials email, on list rows' `user`:
+ * survives a reload, unlike `EmailOutcome`. Both null = never sent (an
+ * account from before emails, or log mode).
+ */
+export interface CredentialsEmailStatus {
+  credentialsSentAt: string | null;
+  credentialsEmailError: string | null;
+}
+
 /** "Resend login": a new temporary password for an existing account. */
-export interface ResendCredentialsResponse {
+export interface ResendCredentialsResponse extends EmailOutcome {
   id: string;
   name: string;
   email: string;
@@ -181,10 +204,9 @@ export const studentApi = createApi({
       },
     }),
     /**
-     * "Resend login": the server generates a new temporary password and forces
-     * a change at next sign-in. Invalidates nothing — no query this slice
-     * serves shows the password or the must-change flag, and the username is
-     * never changed.
+     * "Resend login": the server generates a new temporary password, forces a
+     * change at next sign-in and emails it. Invalidates the list because the
+     * row's email badge (credentialsSentAt / credentialsEmailError) changed.
      */
     resendStudentCredentials: builder.mutation<
       ResendCredentialsResponse,
@@ -194,6 +216,7 @@ export const studentApi = createApi({
         url: `/coordinator/students/${id}/resend-credentials`,
         method: "POST",
       }),
+      invalidatesTags: ["Student"],
     }),
   }),
 });

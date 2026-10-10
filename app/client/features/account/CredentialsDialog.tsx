@@ -1,9 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Copy, KeyRound, ShieldAlert, UserCheck } from "lucide-react";
+import {
+  Check,
+  Copy,
+  KeyRound,
+  MailCheck,
+  MailWarning,
+  ShieldAlert,
+  UserCheck,
+} from "lucide-react";
 import Button from "@/components/ui/Button";
 import Overlay from "@/components/ui/Overlay";
+import type { EmailOutcome } from "@/lib/api/studentApi";
 
 /**
  * Login details the server just generated: a new account, or a "Resend
@@ -18,6 +27,24 @@ export interface IssuedCredentials {
   tempPassword: string;
   /** "created" for a new account, "resent" for a Resend login. */
   reason: "created" | "resent";
+  /** Whether the login was emailed. Required, so no opener can forget it. */
+  emailSent: boolean;
+  emailError?: string;
+  emailedTo?: string;
+}
+
+/**
+ * The email fields of a create/resend response, for spreading into
+ * `IssuedCredentials`. A response without them counts as not emailed.
+ */
+export function emailOutcomeOf(
+  response: Partial<EmailOutcome>,
+): Pick<IssuedCredentials, "emailSent" | "emailError" | "emailedTo"> {
+  return {
+    emailSent: response.emailSent ?? false,
+    emailError: response.emailError,
+    emailedTo: response.emailedTo,
+  };
 }
 
 interface CredentialsDialogProps {
@@ -35,6 +62,10 @@ interface CredentialsDialogProps {
  * dismissal would lose the password for good — and why the caller holds the
  * credentials in transient state and drops them on close: there is no list
  * action that could reopen it. A lost password means another Resend login.
+ *
+ * Shown whether or not the login was emailed: the line above the password
+ * says which, and when the email failed (or there is no address) this dialog
+ * is the only way the details reach the user.
  */
 export default function CredentialsDialog({
   credentials,
@@ -90,8 +121,29 @@ export default function CredentialsDialog({
         </div>
 
         <div className="p-4 md:p-6 space-y-4">
+          {credentials.emailSent ? (
+            <p className="text-sm text-green-800 bg-green-50 border border-green-200 rounded-lg px-3 py-2 flex items-start gap-2">
+              <MailCheck size={16} className="shrink-0 mt-0.5" />
+              <span>
+                Login details were emailed to{" "}
+                <span className="font-semibold break-all">
+                  {credentials.emailedTo ?? credentials.email}
+                </span>
+                .
+              </span>
+            </p>
+          ) : (
+            <p className="text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
+              <MailWarning size={16} className="shrink-0 mt-0.5" />
+              <span>
+                Email failed: {credentials.emailError ?? "not sent"}. Give
+                these details to the user yourself.
+              </span>
+            </p>
+          )}
+
           <p className="text-sm text-gray-700">
-            Give these login details to{" "}
+            Login details for{" "}
             <span className="font-semibold">{credentials.name}</span>. They
             will be asked to choose their own password the first time they sign
             in.

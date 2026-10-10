@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 import {
   HOURS_PUNCH_SELECT,
   hasApprovedSession,
@@ -99,6 +100,8 @@ const SUPERVISOR_ROW_SELECT = {
       username: true,
       name: true,
       createdAt: true,
+      credentialsSentAt: true,
+      credentialsEmailError: true,
     },
   },
   establishment: { select: { id: true, name: true, branch: true } },
@@ -160,7 +163,10 @@ function dtrZipEntryNames(
 export class CoordinatorService {
   private readonly logger = new Logger(CoordinatorService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private mail: MailService,
+  ) {}
 
   async listStudents() {
     const students = await this.prisma.client.student.findMany({
@@ -172,6 +178,9 @@ export class CoordinatorService {
             username: true,
             name: true,
             createdAt: true,
+            // The credentials email's last outcome, for the list's badge.
+            credentialsSentAt: true,
+            credentialsEmailError: true,
           },
         },
         establishment: { select: { id: true, name: true, branch: true } },
@@ -213,6 +222,9 @@ export class CoordinatorService {
             username: true,
             name: true,
             createdAt: true,
+            // The credentials email's last outcome, for the list's badge.
+            credentialsSentAt: true,
+            credentialsEmailError: true,
           },
         },
         establishment: { select: { id: true, name: true, branch: true } },
@@ -899,7 +911,7 @@ export class CoordinatorService {
     }
     return {
       id: student.id,
-      ...(await reissuePassword(this.prisma.client, student.user)),
+      ...(await reissuePassword(this.prisma.client, this.mail, student.user)),
     };
   }
 
@@ -913,7 +925,11 @@ export class CoordinatorService {
     }
     return {
       id: supervisor.id,
-      ...(await reissuePassword(this.prisma.client, supervisor.user)),
+      ...(await reissuePassword(
+        this.prisma.client,
+        this.mail,
+        supervisor.user,
+      )),
     };
   }
 

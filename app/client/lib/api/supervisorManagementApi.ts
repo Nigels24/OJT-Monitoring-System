@@ -1,6 +1,9 @@
 import { createApi } from "@reduxjs/toolkit/query/react";
 import { baseQueryWithAuth } from "./baseQuery";
-import type { ResendCredentialsResponse } from "./studentApi";
+import type {
+  CredentialsEmailStatus,
+  ResendCredentialsResponse,
+} from "./studentApi";
 import { dashboardApi } from "./dashboardApi";
 import { evaluationApi } from "./evaluationApi";
 import { messagesApi } from "./messagesApi";
@@ -26,7 +29,7 @@ export interface CoordinatorSupervisor {
     username: string | null;
     name: string;
     createdAt: string;
-  };
+  } & CredentialsEmailStatus;
   establishment?: { id: string; name: string; branch?: string | null } | null;
   /**
    * What deleting this supervisor would destroy (`evaluations`) versus merely
@@ -88,9 +91,9 @@ export const supervisorManagementApi = createApi({
       },
     }),
     /**
-     * "Resend login": a new generated temporary password and a forced change
-     * at next sign-in. Invalidates nothing — the supervisor list shows neither
-     * the password nor the flag, and the username never changes.
+     * "Resend login": a new generated temporary password, a forced change at
+     * next sign-in, and an email. Invalidates the list for the row's email
+     * badge.
      */
     resendSupervisorCredentials: builder.mutation<
       ResendCredentialsResponse,
@@ -100,6 +103,7 @@ export const supervisorManagementApi = createApi({
         url: `/coordinator/supervisors/${id}/resend-credentials`,
         method: "POST",
       }),
+      invalidatesTags: ["CoordinatorSupervisor"],
     }),
     deleteSupervisor: builder.mutation<{ id: string; deleted: boolean }, string>(
       {

@@ -61,6 +61,7 @@ OJT-Monitoring-System/
     │   │   ├── coordinator/    # student + supervisor management, dashboard, attendance oversight
     │   │   ├── establishment/  # CRUD — open reads, COORDINATOR writes
     │   │   ├── evaluation-template/  # the versioned evaluation sheet — COORDINATOR writes, SupervisorService reads
+    │   │   ├── mail/           # MailService (nodemailer: Gmail SMTP or log mode) + templates.ts — credentials emails
     │   │   ├── messages/       # 1:1 conversations, all three roles
     │   │   ├── student/        # the student's own dashboard + attendance
     │   │   ├── supervisor/     # approve/decline attendance, evaluations
@@ -165,6 +166,14 @@ end-to-end vertical slices — **copy their shape when building a new domain.**
    Supabase project's Storage, created once by hand, not by a migration).
    Loaded via `import 'dotenv/config'` in **both** `main.ts` and `app.module.ts` — the
    latter because e2e tests boot `AppModule` directly. There is no `@nestjs/config`.
+   **Optional, for credential emails (P2)** — the server boots without any of them, in
+   log mode (§4 "Credentials email"): `MAIL_TRANSPORT` (`smtp` | `log`, default `log`),
+   `SMTP_USER` (the Gmail address), `SMTP_PASS` (a Gmail **App Password**, not the account
+   password; needs 2-Step Verification), `SMTP_FROM` (defaults to `SMTP_USER`; Gmail
+   rewrites From to the signed-in account unless it is a verified "Send mail as" alias),
+   `APP_LOGIN_URL` (the link in the email; default `http://localhost:3001/login`),
+   `MAIL_REDIRECT_TO` (testing: every email goes to this one inbox, subject prefixed).
+   There is no server `.env.example`; this list is the documentation.
 3. `cd app/client && npm install`. `.env.example` documents the single optional var
    (`NEXT_PUBLIC_API_URL`, defaults to `http://localhost:3000`).
 4. `npm run seed` in `app/server` to create the coordinator account.
@@ -279,10 +288,10 @@ no idea whose data is being touched. Every service re-derives ownership per requ
 check 2 is a cross-tenant data leak — e.g. a supervisor approving another
 establishment's attendance punch just by knowing its id.
 
-### Generated credentials and recovery — no email step yet
+### Generated credentials and recovery — shown once, and emailed (P2)
 
-No mail library, no SMTP yet (a later step); `@supabase/supabase-js` is installed but
-unused. Students and supervisors never choose their first password.
+Students and supervisors never choose their first password. Since P2 the login is also
+emailed (next subsection); the one-time dialog stays as the fallback in every case.
 
 - **`src/common/credentials.ts`** (no Nest/Prisma imports, so it tests in isolation):
   `usernameBase(first, last)` = first initial + last name, lowercase, accents stripped
@@ -299,22 +308,75 @@ unused. Students and supervisors never choose their first password.
   hash, pick a username, run `create(username, hash)` (retried whole on a username race,
   so everything it writes belongs in one transaction), return `{ result, credentials }`.
   Used by the supervisor's student create, establishment create and add-supervisor.
-  Also **`reissuePassword(db, user)`** + `RESEND_ACCOUNT_SELECT` — the one Resend-login
-  implementation (coordinator for students and supervisors, supervisor for their own
-  students) — and `isUniqueClashOn(err, field)` for a P2002 on a named column.
+  Also **`reissuePassword(db, mail, user)`** + `RESEND_ACCOUNT_SELECT` (now with `role`)
+  — the one Resend-login implementation (coordinator for students and supervisors,
+  supervisor for their own students), which saves the hash and then calls
+  `deliverCredentials` — **`deliverCredentials(db, mail, account, credentials)`**, the one
+  place a login is emailed (next subsection), and `isUniqueClashOn(err, field)` for a
+  P2002 on a named column.
 - The create/resend response carries **`credentials: { username, tempPassword }`** — the
   **only** place the plaintext exists. It is hashed (`bcrypt`, 10) before Prisma sees it,
   never logged, never stored; the client shows it once in `CredentialsDialog` (closes only
   on Done, held in transient hook state, cannot be reopened from the list).
 - Every generated or resent password sets **`User.mustChangePassword = true`** → `mcp` in
   the next login's token → Check 1b above. The seeded coordinator is never flagged.
-- `User.credentialsSentAt` / `credentialsEmailError` exist (same migration) but are
-  **unused until the email step**.
+- `User.credentialsSentAt` / `credentialsEmailError` (same migration, still **not
+  applied**) hold the last email's outcome — written by `deliverCredentials` since P2.
+
+#### Credentials email (P2)
+
+- **`src/mail/`**: `MailModule` (imported by the establishment, supervisor and
+  coordinator modules), `MailService.sendCredentials({ to, name, role, username,
+  tempPassword })` → `{ sent: true, deliveredTo } | { sent: false, error, logOnly? }` —
+  **never throws**; `templates.ts` — pure `credentialsEmail(...)` → `{ subject, text,
+  html }` (name, Student/Supervisor, username — or "Email" for a pre-username account —
+  temporary password, login URL, "you will be asked to change it"), every value
+  `escapeHtml`'d, subject fixed (nothing user-typed in a header). nodemailer **10.x**
+  (ships a CommonJS build, so unlike archiver 8 it works here) + `@types/nodemailer`.
+- **Modes** (read once at boot, `readMailConfig`): **`log`** — the default, and the
+  fallback (with a warning) when `smtp` is asked for without `SMTP_USER`/`SMTP_PASS`; a
+  `jsonTransport` builds the full message and **writes it to the server log, temporary
+  password included, on purpose** — nothing is sent, and neither status column is
+  touched (`emailSent: false`, the reason says log mode). **`smtp`** —
+  `smtp.gmail.com:465`, `secure`, App Password; connection/greeting/socket timeouts
+  10 s each plus a 25 s cap on the whole send, so a request can't hang;
+  `transporter.verify()` runs in the background at boot and only logs OK/warning.
+  **Emails are opt-in**: SMTP vars alone don't send — `MAIL_TRANSPORT=smtp` must say so.
+  **`MAIL_REDIRECT_TO`**: every message goes to that inbox, subject
+  `[TEST → <real address>] …`, a line naming the real recipient on top; the response's
+  `emailedTo` is the redirect inbox.
+- **The password is never logged in smtp mode** — success logs "sent to <address>",
+  failure logs only the error's `code`/`responseCode`/`command` (nodemailer's own message
+  and the server's reply can echo content). `credentialsEmailError` and the response's
+  `emailError` are built from the error **code** alone (`safeMailError`, ≤ 200 chars):
+  "The mail server rejected the sign-in …", "Could not reach the mail server", "… did not
+  respond in time", "No email address on file", ….
+- **After commit, never rolling back.** Every create flow calls `deliverCredentials`
+  only after `issueNewAccount` resolves — i.e. after its `$transaction` committed — and
+  it never throws, so a failed email leaves the account created. Success:
+  `credentialsSentAt = now`, error cleared. Failure: error stored (`credentialsSentAt`
+  keeps the last success). Blank email: no send, "No email address on file" (`User.email`
+  is NOT NULL, so only an empty string). A failing status write is logged (no
+  credentials) and swallowed.
+- **Resend ordering: save, then send.** `reissuePassword` commits the new hash before
+  emailing, so the email always matches what is stored. **Consequence: a failed resend
+  has already invalidated the old password** — which is why the response still carries
+  `credentials` and the dialog always opens.
+- **Response**: every create/resend response with `credentials` adds `emailSent`, and
+  `emailError` when not sent, `emailedTo` when sent. List rows (coordinator students,
+  coordinator supervisors, supervisor roster) carry `user.credentialsSentAt` /
+  `user.credentialsEmailError` (explicit select).
+- **Gmail limits**: a personal account sends to about **500 recipients a day** — far more
+  than this programme issues. **Host risk**: some hosts block outbound SMTP (465/587).
+  The fallback, **not built**, is the Gmail API over HTTPS (`users.messages.send` with an
+  OAuth2 refresh token): a second implementation of `MailService.sendCredentials` with
+  the same signature and result, chosen by `MAIL_TRANSPORT=gmail-api` — no caller,
+  template or status code changes, because nothing outside `MailService` knows SMTP.
 
 | Route / command | Who | Notes |
 |---|---|---|
 | `PATCH /auth/password` | any signed-in user, **including a must-change session** | `{ currentPassword, newPassword }` (≥ 8) — the current password is required even with a valid JWT (in forced mode it is the temporary one). Clears `mustChangePassword` and returns a **fresh session** `{ changed, accessToken, user }`, since the caller's token may carry `mcp` |
-| `POST /coordinator/students/:id/resend-credentials` | COORDINATOR | "Resend login": new generated password, flag set, `{ id, name, email, credentials }`. Username never regenerated (`null` for a pre-username account → sign in by email) |
+| `POST /coordinator/students/:id/resend-credentials` | COORDINATOR | "Resend login": new generated password, flag set, emailed, `{ id, name, email, credentials, emailSent, emailError?, emailedTo? }`. Username never regenerated (`null` for a pre-username account → sign in by email) |
 | `POST /coordinator/supervisors/:id/resend-credentials` | COORDINATOR | same |
 | `POST /supervisor/students/:id/resend-credentials` | SUPERVISOR | same, own establishment's students only — any other id is a **404** (not 403) |
 | `POST /establishments` (with `supervisor`) · `POST /establishments/:id/supervisor` | COORDINATOR | how a supervisor account is created — see §5 |
@@ -1432,9 +1494,52 @@ the database: `Establishment.nameKey String` + `branchKey String @default("")` +
   other (`AttendanceOversightTable` takes `isDownloading`). No filter or paging state
   changed.
 
+- **Credentials emailed via Gmail (paid step P2, item 5)** — §4 "Credentials email" has
+  the rules. Server: `src/mail/` (module, service, templates); `accounts.ts`
+  `deliverCredentials` + `reissuePassword(db, mail, user)`; wired into the establishment
+  create with a supervisor, `POST /establishments/:id/supervisor`, the supervisor's
+  student create and all three resends; `MailService` injected into
+  `EstablishmentService`, `SupervisorService`, `CoordinatorService`. The supervisor's
+  student create now maps its P2002s in a `.catch` on `issueNewAccount` (same mapping),
+  so the send sits after it. `SUPERVISOR_SUMMARY_SELECT` selects the user's `id` (for the
+  status write; `toSupervisorSummary` still leaves it out). No schema change, no
+  migration. Client: `EmailOutcome` / `CredentialsEmailStatus` in `studentApi.ts`, used by
+  the four slices; `CredentialsDialog` shows "Login details were emailed to <address>"
+  or "Email failed: <reason>. Give these details to the user yourself." above the
+  one-time password — `IssuedCredentials` requires `emailSent`, so every opener passes
+  `...emailOutcomeOf(result)` (six: establishment create, add supervisor, supervisor's
+  student create and resend, coordinator student and supervisor resend; the two in
+  `use-establishment.ts` are one spread line each, nowhere near `isPopulatingRef`).
+  `features/account/EmailStatusBadge.tsx`: "Email failed" (red) while an error is
+  stored, "Emailed" (grey) once sent, nothing otherwise; title = reason and time. On the
+  coordinator Students list (under the email), Supervisors list (Email column) and the
+  supervisor's Students page (the roster shows it only where it offers Resend login, so
+  the dashboard roster is unchanged). The three resend mutations now invalidate their
+  list (`Student`, `CoordinatorSupervisor`, `SupervisorStudent`) so the badge updates.
+  **Blocked on the same unapplied migration as F3** (`20261010090000_user_credential_flags`
+  adds `credentialsSentAt`/`credentialsEmailError`): every list select and status write
+  touching them fails until it is applied.
+
 **All three roles land on a real page after login. No role 404s.**
 
 ### Needs live verification
+
+**Paid step P2** (credentials email). Verified in-process only — real `MailService`,
+`EstablishmentService`, `SupervisorService` and `CoordinatorService` against a faked
+Prisma that logs event order, fake nodemailer transports, and all stdout/stderr/console
+captured (33 checks: template escaping and content, fixed subject; config — no env and
+`smtp` without creds → log, SMTP vars without `MAIL_TRANSPORT` → log; the real
+`AppModule` boots with no mail env (Prisma replaced, no DB) and with `smtp` but no creds
+(warning); nested create and add-supervisor success → `credentialsSentAt` set, error
+cleared, send after `tx:commit`, Student/Supervisor wording; transport failure (EAUTH
+whose message echoed the body) → account kept, no rollback, short error stored and
+returned with the credentials, password in no log line and not in the stored error;
+resend → password write before send, emailed password matches the stored hash, a failed
+resend still saved the new hash; no email → no send, stored reason; `MAIL_REDIRECT_TO` →
+redirect inbox and prefixed subject; log mode → nothing sent, status untouched, full
+message with the password in the log; a transport that never answers → 25 s cap; the
+service's real SMTP transport against a silent local server → its own 10 s timeout).
+No real email was sent; the dialog and badges were typechecked, never rendered.
 
 **Paid step P5** (monthly DTR ZIP). Verified in-process only — real
 `CoordinatorController` + `CoordinatorService`, real `RolesGuard` and the global
@@ -1668,7 +1773,8 @@ Ordered roughly by how likely each is to bite.
 7. Password change and Resend login don't invalidate already-issued JWTs — matters if a
    reset is because of a leak. Corollary: `mcp` lives in the **token**, so flagging a user
    (Resend login) only bites at their next sign-in; a session they already hold carries
-   on unflagged until it expires.
+   on unflagged until it expires. Since P2 a resend also emails the new password — and has
+   already replaced the old one even when that email fails (§4 "Credentials email").
 8. `AttendancePunch.decidedById` is set on approve **and** decline ("who actioned this"),
    and is nulled outright when that supervisor is deleted — so an APPROVED punch with
    `decidedById: null` is normal, not corruption. `decidedAt` is null on the punches the
@@ -1905,6 +2011,15 @@ Ordered roughly by how likely each is to bite.
     every key written after the migration comes from `normalizeKey`, and editing a row's
     name or branch recomputes it. So a mismatch can only matter for a pre-existing name
     containing such characters — check those by eye before migrating.
+33. **`@nestjs/testing` mutes the logger for the whole process.** `compile()` installs a
+    `TestingLogger` that prints only errors, and it stays installed after the app closes.
+    A verification that asserts on log output (P2's "the password is never logged") must
+    call `.setLogger(new ConsoleLogger())` on the testing module, or every capture is empty
+    and a "never logged" check passes vacuously.
+34. **Credential emails: the temporary password may appear in the server log only in log
+    mode.** Anything new that logs around mail must log the error's code, never
+    `err.message` or `err.response` (nodemailer's can carry server replies), and anything
+    stored or returned goes through `safeMailError`.
 
 ---
 

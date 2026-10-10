@@ -9,7 +9,10 @@ import {
 } from "@/lib/api/establishmentApi";
 import { establishmentLabel } from "@/lib/establishment";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
-import type { IssuedCredentials } from "@/features/account/CredentialsDialog";
+import {
+  emailOutcomeOf,
+  type IssuedCredentials,
+} from "@/features/account/CredentialsDialog";
 import { useSupervisorFields } from "./use-supervisor-fields";
 import {
   getAllRegions,
@@ -233,6 +236,7 @@ export function useEstablishment() {
             username: result.credentials.username,
             tempPassword: result.credentials.tempPassword,
             reason: "created",
+            ...emailOutcomeOf(result),
           });
         }
       }
@@ -456,6 +460,7 @@ export function useEstablishment() {
         username: result.credentials.username,
         tempPassword: result.credentials.tempPassword,
         reason: "created",
+        ...emailOutcomeOf(result),
       });
     } catch (err: unknown) {
       const data = (err as { data?: { message?: string | string[] } })?.data;
