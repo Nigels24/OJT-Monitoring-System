@@ -47,6 +47,29 @@ export interface Establishment {
 }
 
 /**
+ * A student placed at an establishment, as `GET /establishments/:id` lists one
+ * — and only for the coordinator. Deliberately just these six fields: the
+ * endpoint used to return every column of every student (contact number,
+ * address, …) to any signed-in role.
+ */
+export interface AssignedStudent {
+  id: string;
+  name: string;
+  studentIdNumber: string;
+  course: string | null;
+  yearLevel: string | null;
+  status: "ACTIVE" | "PENDING" | "COMPLETED" | "INACTIVE";
+}
+
+/**
+ * `GET /establishments/:id`: the list row's fields plus, for the COORDINATOR
+ * only, `students`. The key is absent for every other role.
+ */
+export type EstablishmentDetail = Establishment & {
+  students?: AssignedStudent[];
+};
+
+/**
  * A supervisor created with an establishment, or added to one later. No
  * username or password: the server generates both and returns them once.
  */
@@ -101,7 +124,7 @@ export const establishmentApi = createApi({
       query: () => "/establishments",
       providesTags: ["Establishment"],
     }),
-    getEstablishment: builder.query<Establishment, string>({
+    getEstablishment: builder.query<EstablishmentDetail, string>({
       query: (id) => `/establishments/${id}`,
       providesTags: ["Establishment"],
     }),

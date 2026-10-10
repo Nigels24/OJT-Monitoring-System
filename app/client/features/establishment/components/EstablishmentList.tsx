@@ -18,6 +18,10 @@ interface EstablishmentListProps {
   onDelete: (establishment: Establishment) => void;
   /** Offered only on a row with no supervisor. */
   onAddSupervisor: (establishment: Establishment) => void;
+  /** The filter bar, rendered under the search box. */
+  toolbar?: React.ReactNode;
+  /** Shown with the empty state when filters hide every row. */
+  onClearFilters?: () => void;
 }
 
 export default function EstablishmentList({
@@ -33,6 +37,8 @@ export default function EstablishmentList({
   onEdit,
   onDelete,
   onAddSupervisor,
+  toolbar,
+  onClearFilters,
 }: EstablishmentListProps) {
   const [localSearch, setLocalSearch] = useState(search);
 
@@ -164,13 +170,32 @@ export default function EstablishmentList({
           onChange={(e) => {
             setLocalSearch(e.target.value);
           }}
-          placeholder="Search by establishment name, industry, supervisor..."
+          placeholder="Search by establishment or supervisor name..."
           className="w-full h-10 md:h-12 pl-9 md:pl-11 pr-3 md:pr-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-900 placeholder-gray-400"
         />
       </div>
 
+      {toolbar}
+
       {isLoading ? (
         <p className="text-gray-400 text-sm">Loading...</p>
+      ) : paged.length === 0 ? (
+        <div className="py-8 text-center space-y-2">
+          <p className="text-gray-500 text-sm">
+            {establishments.length === 0
+              ? "No establishments yet."
+              : "No establishments match your filters."}
+          </p>
+          {establishments.length > 0 && onClearFilters && (
+            <button
+              type="button"
+              onClick={onClearFilters}
+              className="text-sm font-medium text-blue-600 underline hover:text-blue-800"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
       ) : (
         <>
           <DataTable

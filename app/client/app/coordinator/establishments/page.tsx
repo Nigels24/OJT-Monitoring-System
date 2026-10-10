@@ -17,6 +17,9 @@ import EstablishmentList from "../../../features/establishment/components/Establ
 import EstablishmentViewDialog from "../../../features/establishment/components/EstablishmentViewDialog";
 import EstablishmentEditDialog from "../../../features/establishment/components/EstablishmentEditDialog";
 import AddSupervisorDialog from "../../../features/establishment/components/AddSupervisorDialog";
+import EstablishmentFilterBar from "../../../features/establishment/components/EstablishmentFilterBar";
+import { useEstablishmentFilters } from "../../../features/establishment/hooks/use-establishment-filters";
+import { useEstablishmentDetail } from "../../../features/establishment/hooks/use-establishment-detail";
 import CredentialsDialog from "@/features/account/CredentialsDialog";
 
 
@@ -30,16 +33,10 @@ export default function EstablishmentManagementPage() {
     viewTarget,
     setViewTarget,
     editTarget,
-    search,
-    setSearch,
-    page,
-    setPage,
     establishments,
     isLoading,
     isCreating,
     isUpdating,
-    paged,
-    totalPages,
     INDUSTRY_OPTIONS,
     newSupervisor,
     laterSupervisor,
@@ -73,6 +70,11 @@ export default function EstablishmentManagementPage() {
     handleAddSupervisorSubmit,
     closeIssuedCredentials,
   } = useEstablishment();
+  // Search, filters and pagination for the list live in their own hook, so
+  // nothing here touches useEstablishment's form or address cascade.
+  const filters = useEstablishmentFilters(establishments);
+  // The view dialog's assigned students (coordinator-only data).
+  const detail = useEstablishmentDetail(viewTarget?.id ?? null);
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -113,12 +115,14 @@ export default function EstablishmentManagementPage() {
           <EstablishmentList
             establishments={establishments || []}
             isLoading={isLoading}
-            search={search}
-            page={page}
-            totalPages={totalPages}
-            paged={paged}
-            onSearchChange={(value) => setSearch(value)}
-            onPageChange={(page) => setPage(page)}
+            search={filters.search}
+            page={filters.page}
+            totalPages={filters.totalPages}
+            paged={filters.paged}
+            onSearchChange={filters.setSearch}
+            onPageChange={filters.setPage}
+            toolbar={<EstablishmentFilterBar filters={filters} />}
+            onClearFilters={filters.clearFilters}
             onView={handleView}
             onEdit={handleEdit}
             onDelete={(establishment) => setDeleteTarget(establishment)}
@@ -149,6 +153,9 @@ export default function EstablishmentManagementPage() {
       <EstablishmentViewDialog
         open={!!viewTarget}
         establishment={viewTarget}
+        students={detail.students}
+        studentsLoading={detail.isLoading}
+        studentsError={detail.isError}
         onClose={() => {
           setViewTarget(null);
         }}

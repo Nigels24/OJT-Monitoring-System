@@ -6,6 +6,7 @@ import {
   Delete,
   Param,
   Body,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -23,6 +24,7 @@ import {
 } from 'class-validator';
 import { EstablishmentService } from './establishment.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
+import { AuthedRequest } from '../auth/authed-request';
 import { EmptyToUndefined } from '../common/transforms';
 
 /**
@@ -161,9 +163,13 @@ export class EstablishmentController {
     return this.establishmentService.findAll();
   }
 
+  /**
+   * Open to every signed-in role, like the list. Only the COORDINATOR gets
+   * the assigned-students list (reduced to six fields); see the service.
+   */
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.establishmentService.findOne(id);
+  findOne(@Param('id') id: string, @Req() req: AuthedRequest) {
+    return this.establishmentService.findOne(id, req.user.role);
   }
 
   @Patch(':id')

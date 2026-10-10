@@ -279,6 +279,24 @@ first response header so a storage failure is a 503, not a truncated download. M
 school's official sheet, backend and client (§5). Every module in the graph is built; what
 remains is the hand-verification pass listed in CLAUDE.md §7.
 
+## 6b. Establishment reads and the list's filters
+
+```
+GET /establishments        any signed-in role
+  → explicit select: ESTABLISHMENT_FIELDS + _count + earliest supervisor {id,name,email,position}
+  ← coordinator page loads it once; useEstablishmentFilters filters it IN THE CLIENT
+      (search name/supervisor, industry, province → city, status, has/no supervisor),
+      options = distinct values in the loaded rows — no PSGC, no request, and none of
+      useEstablishment's form/cascade state is read or written
+
+GET /establishments/:id    any signed-in role
+  → the same fields
+  → role === COORDINATOR ? + second query: students {id, name, studentIdNumber,
+                                            course, yearLevel, status}
+                         : no `students` key, no student query
+  ← only the coordinator's view dialog calls it (refetch on every open)
+```
+
 ## 7. Where to look for a given bug
 
 | Symptom | Start here |
@@ -288,7 +306,7 @@ remains is the hand-verification pass listed in CLAUDE.md §7.
 | A field silently became `0` instead of blank | Missing `ToOptionalNumber()`/`EmptyToUndefined()` on that DTO field (CLAUDE.md §4, "Validation and DTOs") |
 | 400 on a request that looks right | An undeclared body property (`forbidNonWhitelisted`) — check the DTO lists every field the form sends |
 | User stuck bounced to `/login` in a loop | Cookie `Max-Age` vs JWT `expiresIn` drift, or a stale token past its 1-day expiry (§3) |
-| A role sees another role's/establishment's data | Missing or wrong ownership re-derivation in the service — never trust a body/param id directly |
+| A role sees another role's/establishment's data | Missing or wrong ownership re-derivation in the service — never trust a body/param id directly. Also check for an `include` on a parent row (returns **every** column of it) on an endpoint other roles can reach: `GET /establishments/:id` leaked classmates' rows that way until F7 (CLAUDE.md §8 item 30) |
 | Percentage/aggregate shows `0%`/`0` instead of blank | Should probably be `null`/absent — see "no data vs zero", CLAUDE.md §4. **But** a real `0` is correct once that field has a backend; the absent-not-zero half applies only while the module is unbuilt |
 | Emptying a field and saving silently restores the old value | The DTO used `EmptyToUndefined()` on a nullable column — Prisma reads `undefined` as "leave unchanged". Nullable update fields need `EmptyToNull()`/`ToNullableNumber()`, and the client must send `null`, not omit the key (CLAUDE.md §4) |
 | A date renders one day off, or a weekday doesn't match its date | A date-only column read in local time. Client: use `formatDateOnly`/`formatWeekdayOnly` (`lib/format.ts`). Server: `manilaToday()`, never `startOfUtcDay(new Date())` (§4) |

@@ -614,7 +614,7 @@ table; never derive one from the other.
 |---|---|---|---|
 | POST | `/auth/login` | public | `{ identifier, password }` |
 | PATCH | `/auth/password` | any signed-in (also must-change) | `{ currentPassword, newPassword }` → `{ changed, accessToken, user }`, clears `mustChangePassword` |
-| GET | `/establishments` · `/establishments/:id` | any signed-in | reads are open |
+| GET | `/establishments` · `/establishments/:id` | any signed-in | reads are open. Both return **only** the explicit `ESTABLISHMENT_FIELDS` (id, name, industryType, streetAddress, region, barangay, city, province, zipCode, status, createdAt) + `_count { students, supervisors }` + `supervisor { id, name, email, position } \| null`. `/:id` adds **`students: [{ id, name, studentIdNumber, course, yearLevel, status }]` for the COORDINATOR only** (a second, coordinator-only query); for every other role the key is absent. Until F7 it was `include: { students: true }` to any role — see §8 item 30 |
 | POST/PATCH/DELETE | `/establishments` · `/establishments/:id` | COORDINATOR | POST always creates **ACTIVE** — `status` is only on the update DTO (400 on create). The `coordinator*` contact fields are a **400** on both. POST takes an optional nested **`supervisor: { firstName, middleInitial?, lastName, email, position? }`** (no `username`/`password`/`establishmentId` — 400): Establishment + User + Supervisor in **one `$transaction`** (`CASCADE_TRANSACTION_OPTIONS`), generated login, `mustChangePassword` set, 409 on a taken email; the response is the establishment plus `supervisor: { id, name, email, position }` and `credentials`. PATCH rejects `supervisor` (400). `GET /establishments` rows carry `supervisor: { id, name, email, position } \| null` (earliest-created if several) |
 | POST | `/establishments/:id/supervisor` | COORDINATOR | same body as the nested `supervisor`; `{ id, name, email, position, establishmentId, credentials }`. 404 unknown establishment, 409 taken email. **A second supervisor is not refused** (paid item 3, pending) — the client offers this only when there is none |
 | POST | `/coordinator/students` | — | **Removed (F5).** The coordinator no longer creates students; their supervisor does (`POST /supervisor/students`). (`POST /coordinator/supervisors` was removed in F4 — supervisors are created through `/establishments`.) |
@@ -904,6 +904,28 @@ recoverable, a half-deleted database is not.
 
 - **Auth** — `POST /auth/login`, JWT bearer, role-based routing.
 - **Establishment (Coordinator)** — full CRUD, PSGC cascading address dropdowns.
+- **Establishment filters, assigned students, and the detail leak (final-defense F7)**
+  — server: `establishment.service.ts` selects explicitly everywhere (no `include`), and
+  `GET /establishments/:id` gives the student list to the coordinator only (§5, §8 item
+  30). Client, without touching `useEstablishment`, the form or the cascade:
+  `hooks/use-establishment-filters.ts` owns the list's search (establishment **or**
+  supervisor name), industry, province, city (disabled until a province is picked;
+  changing province clears it), status and has/no supervisor filters, page (5), "Showing X
+  of Y", Clear filters — all client-side over the already-loaded list, options = the
+  distinct values in that list (never PSGC, so no calls and no shared state with the
+  form). `components/EstablishmentFilterBar.tsx` renders it through `EstablishmentList`'s
+  new `toolbar` slot; the list now has an empty state ("No establishments match your
+  filters" + Clear filters). The page feeds the list from this hook, not from
+  `useEstablishment`'s own `search`/`page`/`paged`, which stay in that hook unused by the
+  page. The hook hands the list stable `useState` setters. The page used to pass inline
+  arrows, which change identity every render and so re-arm the list's debounce effect
+  (whose deps include them) — by reading the code, that would reset to page 1 ~300 ms
+  after a page click. Not observed on screen; worth confirming in the hand test. `hooks/use-establishment-detail.ts` fetches `/:id` for the
+  view dialog with `refetchOnMountOrArgChange` (a student's move happens in `studentApi`,
+  which can't invalidate this slice without an import cycle); `EstablishmentViewDialog`
+  lists the assigned students (name, ID, course, year level, status badge), "No students
+  assigned yet" when empty. Branch (item 14) and one-supervisor (item 3) remain paid and
+  pending.
 - **Student Management (Coordinator)** — list, view, **edit**, delete, bulk delete and
   Resend login, computed hours, progress, stats — **no create since F5** (next item);
   the edit can still move a student to another establishment or unassign them,
@@ -1208,6 +1230,16 @@ recoverable, a half-deleted database is not.
 **All three roles land on a real page after login. No role 404s.**
 
 ### Needs live verification
+
+**Final-defense step F7** (establishment detail leak, filters, assigned students).
+Server verified in-process only — real `AppModule`, `ValidationPipe`, `RolesGuard` and
+`EstablishmentService` against a faked Prisma that **throws on any `include` or
+select-less query** and projects `select` field by field (7 cases: STUDENT and
+SUPERVISOR get exactly the 13 establishment keys, no `students`, no student query, no
+classmate name/ID/contact/address/hash; COORDINATOR gets the same plus the six-field
+`students`; unknown id 404; `GET /establishments` rows for all three roles carry exactly
+the 13 keys, no hash, no student data, no retired `coordinator*` column). The filters
+and dialog were typechecked, never rendered.
 
 **Final-defense step F6** (COMPLETED gate on new evaluations, server-derived training
 dates, status toggle 404). Verified in-process only — real `AppModule`,
@@ -1556,6 +1588,28 @@ Ordered roughly by how likely each is to bite.
     subtext, the supervisor's queue and roster, and the coordinator's views. A handoff once
     asked for the column back by mistake and it was removed again — don't re-add it
     without the user saying the client changed their mind.
+30. **Fixed (F7): `GET /establishments/:id` leaked every placed student's row to any
+    signed-in role** via `include: { students: true, supervisors: true }` — contact
+    number, address, school, dates, `userId` of every classmate, to a student who knew an
+    establishment id. Now explicit `select` throughout `establishment.service.ts`, and the
+    student list (six fields, name via `user: { select: { name } }`) only for the
+    COORDINATOR. No client called `/:id` before F7. **Other places still using `include`
+    on a parent row** (every relation to `User` already selects explicitly — there is no
+    `user: true` anywhere; these return all *scalar* columns of the parent model), not
+    changed in F7:
+    - `SupervisorService.getStudents` (roster) and `setStudentStatus`: every `Student`
+      column (contact number, address, `userId`, …) of the supervisor's **own**
+      establishment's students — same tenant, but more than the roster renders.
+    - `CoordinatorService.listStudents`, the dashboard's recent-students query,
+      `getAttendanceOversight`'s student query and `updateStudent`: full `Student` rows
+      to the coordinator only (over-fetch, not a cross-role leak; oversight and the
+      dashboard need only names).
+    - `SupervisorService.getDashboard`: the caller's own `Supervisor` row. `StudentService`
+      `getDashboard`/profile (`PROFILE_INCLUDE`): the caller's own `Student` row. Fine.
+    - `GET /establishments` (open to any role) returns each establishment's supervisor
+      **email**; only coordinator pages call it today, but a student could list every
+      establishment's supervisor email. Not changed (reads are open by design); restrict
+      the summary to COORDINATOR if that matters.
 
 ---
 

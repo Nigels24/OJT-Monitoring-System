@@ -65,6 +65,40 @@ type EstablishmentUpdate = Partial<EstablishmentFields> & {
 };
 
 /**
+ * The establishment's own columns, named one by one. Every read and write in
+ * this service selects exactly these (plus explicitly selected relations) —
+ * never `include`, which returns every scalar of whatever it touches. The
+ * retired `coordinator*` columns are absent (and globally omitted anyway).
+ */
+const ESTABLISHMENT_FIELDS = {
+  id: true,
+  name: true,
+  industryType: true,
+  streetAddress: true,
+  region: true,
+  barangay: true,
+  city: true,
+  province: true,
+  zipCode: true,
+  status: true,
+  createdAt: true,
+} as const;
+
+/**
+ * An assigned student as the coordinator's view dialog lists one — and
+ * nothing more. Name from User via an explicit select (no password hash, no
+ * email); no contact number, address, dates or ids beyond the row's own.
+ */
+const ASSIGNED_STUDENT_SELECT = {
+  id: true,
+  studentIdNumber: true,
+  course: true,
+  yearLevel: true,
+  status: true,
+  user: { select: { name: true } },
+} as const;
+
+/**
  * The supervisor as the establishment list shows it. Explicit `select` on the
  * User relation — `user: true` would return the password hash.
  */
@@ -117,6 +151,7 @@ export class EstablishmentService {
     if (!supervisor) {
       return this.prisma.client.establishment.create({
         data: establishmentData,
+        select: ESTABLISHMENT_FIELDS,
       });
     }
 
@@ -130,6 +165,7 @@ export class EstablishmentService {
         this.prisma.client.$transaction(async (tx) => {
           const establishment = await tx.establishment.create({
             data: establishmentData,
+            select: ESTABLISHMENT_FIELDS,
           });
           const created = await tx.supervisor.create({
             data: {
@@ -206,7 +242,8 @@ export class EstablishmentService {
    */
   async findAll() {
     const establishments = await this.prisma.client.establishment.findMany({
-      include: {
+      select: {
+        ...ESTABLISHMENT_FIELDS,
         _count: {
           select: { students: true, supervisors: true },
         },
@@ -225,22 +262,76 @@ export class EstablishmentService {
     }));
   }
 
-  async findOne(id: string) {
+  /**
+   * One establishment: its own columns, `_count`, the supervisor summary (the
+   * list row's shape), and — for the COORDINATOR only — `students`, each
+   * reduced to `{ id, name, studentIdNumber, course, yearLevel, status }`.
+   *
+   * This used to `include: { students: true }` for any signed-in role, i.e.
+   * every column of every student placed there (contact number, address, …):
+   * a student could read classmates' details by id. Reads stay open to every
+   * role, as the rest of this controller's reads are; the student list is
+   * what is restricted, because only the coordinator's view dialog needs it.
+   * For anyone else the key is absent, not an empty array, so it can't be
+   * mistaken for "no students".
+   */
+  async findOne(id: string, role: string) {
     const establishment = await this.prisma.client.establishment.findUnique({
       where: { id },
-      include: { students: true, supervisors: true },
+      select: {
+        ...ESTABLISHMENT_FIELDS,
+        _count: { select: { students: true, supervisors: true } },
+        supervisors: {
+          select: SUPERVISOR_SUMMARY_SELECT,
+          orderBy: { user: { createdAt: 'asc' } },
+          take: 1,
+        },
+      },
     });
     if (!establishment) {
       throw new NotFoundException('Establishment not found');
     }
-    return establishment;
+
+    const { supervisors, ...rest } = establishment;
+    const detail = {
+      ...rest,
+      supervisor: supervisors[0] ? toSupervisorSummary(supervisors[0]) : null,
+    };
+    // Everyone else: no `students` key at all, and no query for them.
+    if (role !== 'COORDINATOR') return detail;
+
+    // A second query rather than a conditional nested select, which would
+    // lose its types; Prisma loads a relation with its own query anyway.
+    const students = await this.prisma.client.student.findMany({
+      where: { establishmentId: id },
+      select: ASSIGNED_STUDENT_SELECT,
+      orderBy: { user: { name: 'asc' } },
+    });
+    return {
+      ...detail,
+      students: students.map(({ user, ...student }) => ({
+        id: student.id,
+        name: user.name,
+        studentIdNumber: student.studentIdNumber,
+        course: student.course,
+        yearLevel: student.yearLevel,
+        status: student.status,
+      })),
+    };
   }
 
   async update(id: string, data: EstablishmentUpdate) {
-    await this.findOne(id);
+    const existing = await this.prisma.client.establishment.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Establishment not found');
+    }
     return this.prisma.client.establishment.update({
       where: { id },
       data,
+      select: ESTABLISHMENT_FIELDS,
     });
   }
 
