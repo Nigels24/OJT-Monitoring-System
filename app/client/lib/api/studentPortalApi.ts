@@ -95,6 +95,7 @@ export interface StudentDashboard {
   establishment: {
     id: string;
     name: string;
+    branch: string | null;
     industryType: string | null;
     /**
      * The contact card: the establishment's supervisor. All three `null`
@@ -135,7 +136,7 @@ export interface StudentProfile {
   startDate: string | null;
   status: string;
   user: { id: string; email: string; name: string };
-  establishment: { id: string; name: string } | null;
+  establishment: { id: string; name: string; branch?: string | null } | null;
 }
 
 /** The only two fields a student may edit on their own record. */

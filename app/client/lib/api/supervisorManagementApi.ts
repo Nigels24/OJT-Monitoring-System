@@ -27,7 +27,7 @@ export interface CoordinatorSupervisor {
     name: string;
     createdAt: string;
   };
-  establishment?: { id: string; name: string } | null;
+  establishment?: { id: string; name: string; branch?: string | null } | null;
   /**
    * What deleting this supervisor would destroy (`evaluations`) versus merely
    * un-attribute (`approvedPunches` — the punches they approved are kept and

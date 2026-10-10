@@ -2,6 +2,7 @@ import { UserPlus } from "lucide-react";
 import FormDialog from "@/components/ui/FormDialog";
 import Button from "@/components/ui/Button";
 import type { Establishment } from "@/lib/api/establishmentApi";
+import { establishmentLabel } from "@/lib/establishment";
 import SupervisorFields from "./SupervisorFields";
 import type { SupervisorFields as SupervisorFieldsState } from "../hooks/use-supervisor-fields";
 
@@ -32,7 +33,7 @@ export default function AddSupervisorDialog({
     <FormDialog
       open={!!establishment}
       title="Add Supervisor"
-      subtitle={establishment?.name}
+      subtitle={establishment ? establishmentLabel(establishment) : undefined}
       icon={UserPlus}
       onClose={onClose}
     >

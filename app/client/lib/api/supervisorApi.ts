@@ -36,6 +36,7 @@ export interface SupervisorDashboard {
   establishment: {
     id: string;
     name: string;
+    branch: string | null;
     industryType: string | null;
   } | null;
   stats: {

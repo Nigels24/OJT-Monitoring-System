@@ -80,7 +80,10 @@ model User {
 
 model Establishment {
   id                       String              @id @default(cuid())
+  // Shown as typed (trimmed). Identity is name + optional branch, compared
+  // through the two key columns below, never through these.
   name                     String
+  branch                   String?
   industryType             String?
   streetAddress            String?
   region                   String?
@@ -100,11 +103,24 @@ model Establishment {
   coordinatorEmail         String?
   createdAt                DateTime            @default(now())
 
+  // Normalised copies of name and branch (lower case, trimmed, inner
+  // whitespace runs collapsed to one space) — common/establishment-identity.ts
+  // computes them; the client never sends them. Plain stored columns rather
+  // than an expression index on lower(name): Prisma can't describe an
+  // expression index, so a later `migrate diff` would drop it. branchKey is
+  // "" (not NULL) for no branch, because Postgres treats NULLs in a unique
+  // index as all different — two "Jollibee" with no branch would both pass.
+  nameKey   String
+  branchKey String @default("")
+
   // At most one supervisor per establishment (Supervisor.establishmentId is
   // @unique). Replacing one means deleting the old supervisor (their
   // evaluations go with them, as before) and adding the new one.
   supervisor Supervisor?
   students   Student[]
+
+  // Two establishments may not share a name AND a branch (P4, item 14).
+  @@unique([nameKey, branchKey])
 }
 
 model Supervisor {

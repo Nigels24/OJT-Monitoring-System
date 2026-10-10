@@ -23,6 +23,7 @@ import {
 import { useGetMyDashboardQuery } from "@/lib/api/studentPortalApi";
 import { STUDENT_NAV } from "@/features/student-portal/nav";
 import AttendanceTable from "@/features/student-portal/components/AttendanceTable";
+import { establishmentLabel } from "@/lib/establishment";
 
 export default function StudentDashboardPage() {
   const { data, isLoading, error } = useGetMyDashboardQuery();
@@ -145,7 +146,7 @@ export default function StudentDashboardPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <DetailItem
                       label="Establishment"
-                      value={data.establishment.name}
+                      value={establishmentLabel(data.establishment)}
                       icon={Building2}
                     />
                     <DetailItem

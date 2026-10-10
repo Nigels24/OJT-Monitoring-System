@@ -7,6 +7,7 @@ import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { deleteEstablishmentMessage } from "@/lib/format";
+import { establishmentLabel } from "@/lib/establishment";
 import Button from "@/components/ui/Button";
 import {
   Building2,
@@ -27,6 +28,8 @@ export default function EstablishmentManagementPage() {
   const currentUser = useCurrentUser();
   const {
     form,
+    branch,
+    setBranch,
     error,
     deleteTarget,
     setDeleteTarget,
@@ -136,7 +139,7 @@ export default function EstablishmentManagementPage() {
         title="Delete Establishment?"
         message={
           deleteTarget
-            ? deleteEstablishmentMessage(deleteTarget.name, {
+            ? deleteEstablishmentMessage(establishmentLabel(deleteTarget), {
                 supervisorName: deleteTarget.supervisor?.name ?? null,
                 students: deleteTarget._count?.students ?? 0,
               })
@@ -168,6 +171,8 @@ export default function EstablishmentManagementPage() {
         isCreating={isCreating}
         isUpdating={isUpdating}
         error={error}
+        branch={branch}
+        onBranchChange={setBranch}
         industryOptions={INDUSTRY_OPTIONS}
         supervisor={newSupervisor}
         regions={regions}

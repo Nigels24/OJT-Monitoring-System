@@ -10,6 +10,7 @@ import {
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import SearchInput from "@/components/ui/SearchInput";
 import { CoordinatorSupervisor } from "@/lib/api/supervisorManagementApi";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 interface SupervisorListProps {
   isLoading: boolean;
@@ -76,7 +77,7 @@ export default function SupervisorList({
     {
       key: "establishment",
       label: "Establishment",
-      render: (r) => r.establishment?.name || "Unassigned",
+      render: (r) => optionalEstablishmentLabel(r.establishment) || "Unassigned",
     },
     {
       key: "position",

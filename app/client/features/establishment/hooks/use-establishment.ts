@@ -7,6 +7,7 @@ import {
   useAddEstablishmentSupervisorMutation,
   Establishment,
 } from "@/lib/api/establishmentApi";
+import { establishmentLabel } from "@/lib/establishment";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
 import type { IssuedCredentials } from "@/features/account/CredentialsDialog";
 import { useSupervisorFields } from "./use-supervisor-fields";
@@ -55,6 +56,10 @@ interface LocationOption {
 
 export function useEstablishment() {
   const [form, setForm] = useState(EMPTY_FORM);
+  // The optional branch, in its own state rather than in `form`: nothing in
+  // the address cascade below reads or writes it, and keeping it out of
+  // `form` means no existing setForm call had to change for it.
+  const [branch, setBranch] = useState("");
   const [error, setError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Establishment | null>(null);
   const [viewTarget, setViewTarget] = useState<Establishment | null>(null);
@@ -201,6 +206,7 @@ export function useEstablishment() {
         }
         const result = await createEstablishment({
           name: form.name,
+          branch: branch.trim() || undefined,
           industryType: form.industryType || undefined,
           streetAddress: form.streetAddress || undefined,
           region: form.region || undefined,
@@ -214,6 +220,7 @@ export function useEstablishment() {
             : undefined,
         }).unwrap();
         setForm(EMPTY_FORM);
+        setBranch("");
         newSupervisor.reset();
         setIsDialogOpen(false);
         showSuccess(`"${form.name}" has been created successfully.`);
@@ -248,6 +255,8 @@ export function useEstablishment() {
       await updateEstablishment({
         id: editTarget.id,
         name: form.name,
+        // null, not undefined: a cleared branch must clear (CLAUDE.md §4).
+        branch: branch.trim() || null,
         industryType: form.industryType || undefined,
         streetAddress: form.streetAddress || undefined,
         region: form.region || undefined,
@@ -274,7 +283,9 @@ export function useEstablishment() {
     try {
       await deleteEstablishment(deleteTarget.id).unwrap();
       setDeleteTarget(null);
-      showSuccess(`"${deleteTarget.name}" has been deleted successfully.`);
+      showSuccess(
+        `"${establishmentLabel(deleteTarget)}" has been deleted successfully.`,
+      );
     } catch (err: any) {
       const errorMessage =
         err?.data?.message || err?.message || "Failed to delete establishment.";
@@ -383,12 +394,14 @@ export function useEstablishment() {
       zipCode: establishment.zipCode || "",
       status: establishment.status || "ACTIVE",
     });
+    setBranch(establishment.branch || "");
     setIsDialogOpen(true);
   };
 
   const resetForm = () => {
     setEditTarget(null);
     setForm(EMPTY_FORM);
+    setBranch("");
     newSupervisor.reset();
     setSelectedRegion("");
     setSelectedProvince("");
@@ -399,6 +412,7 @@ export function useEstablishment() {
   const handleOpenAddDialog = () => {
     setEditTarget(null);
     setForm(EMPTY_FORM);
+    setBranch("");
     newSupervisor.reset();
     setError("");
     setSelectedRegion("");
@@ -472,6 +486,8 @@ export function useEstablishment() {
 
   return {
     form,
+    branch,
+    setBranch,
     error,
     deleteTarget,
     viewTarget,

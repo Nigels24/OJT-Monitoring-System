@@ -8,6 +8,7 @@ import {
 } from "@/lib/api/supervisorManagementApi";
 import type { IssuedCredentials } from "@/features/account/CredentialsDialog";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 // Edit only: supervisors are created inside an establishment (the
 // Establishments page). No username (generated once, never changed), no
@@ -146,7 +147,7 @@ export function useSupervisorManagement() {
         s.user.username,
         s.user.email,
         s.position,
-        s.establishment?.name,
+        optionalEstablishmentLabel(s.establishment),
       ]
         .filter(Boolean)
         .join(" ")

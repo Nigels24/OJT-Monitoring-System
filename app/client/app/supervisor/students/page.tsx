@@ -12,6 +12,7 @@ import StudentRoster from "@/features/supervisor/components/StudentRoster";
 import AddStudentDialog from "@/features/supervisor/components/AddStudentDialog";
 import { useSupervisorStudents } from "@/features/supervisor/hooks/use-supervisor-students";
 import { useGetSupervisorDashboardQuery } from "@/lib/api/supervisorApi";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 export default function SupervisorStudentsPage() {
   // Only for the sidebar's establishment name and the signed-in name — the
@@ -40,7 +41,7 @@ export default function SupervisorStudentsPage() {
   return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar
-        orgName={dashboard?.establishment?.name ?? "Establishment"}
+        orgName={optionalEstablishmentLabel(dashboard?.establishment) ?? "Establishment"}
         orgSubtitle="Barangay San Francisco Pag. City ZDS"
         items={SUPERVISOR_NAV}
         userName={dashboard?.supervisor.name ?? "Supervisor"}

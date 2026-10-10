@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CASCADE_TRANSACTION_OPTIONS,
@@ -14,6 +15,10 @@ import {
   isUniqueClashOn,
   issueNewAccount,
 } from '../common/accounts';
+import {
+  duplicateEstablishmentMessage,
+  establishmentKeys,
+} from '../common/establishment-identity';
 
 const ALREADY_HAS_SUPERVISOR = 'This establishment already has a supervisor';
 
@@ -57,6 +62,8 @@ interface NewSupervisorInput {
  */
 interface EstablishmentFields {
   name: string;
+  /** Trimmed by the DTO; `null` = no branch (on an update: clear it). */
+  branch?: string | null;
   industryType?: string;
   streetAddress?: string;
   region?: string;
@@ -80,6 +87,7 @@ type EstablishmentUpdate = Partial<EstablishmentFields> & {
 const ESTABLISHMENT_FIELDS = {
   id: true,
   name: true,
+  branch: true,
   industryType: true,
   streetAddress: true,
   region: true,
@@ -131,6 +139,48 @@ function toSupervisorSummary(row: SupervisorSummaryRow) {
   };
 }
 
+/** The client itself or an interactive transaction — both can run this read. */
+type EstablishmentReader = Pick<Prisma.TransactionClient, 'establishment'>;
+
+/**
+ * 409 when another establishment already has these keys. `excludeId` is the
+ * row being edited, which may of course keep its own name. The unique index
+ * is what actually guarantees it; this read is what gives the common case a
+ * message that says what to do.
+ */
+async function assertNameAvailable(
+  db: EstablishmentReader,
+  keys: { nameKey: string; branchKey: string },
+  display: { name: string; branch?: string | null },
+  excludeId?: string,
+) {
+  const clash = await db.establishment.findFirst({
+    where: { ...keys, ...(excludeId ? { id: { not: excludeId } } : {}) },
+    select: { id: true },
+  });
+  if (clash) {
+    throw new ConflictException(
+      duplicateEstablishmentMessage(display.name, display.branch),
+    );
+  }
+}
+
+/**
+ * A P2002 on the (nameKey, branchKey) index — two requests that both passed
+ * the read above at once — becomes the same 409. Anything else is rethrown.
+ */
+function rethrowNameClash(
+  err: unknown,
+  display: { name: string; branch?: string | null },
+): never {
+  if (isUniqueClashOn(err, 'nameKey')) {
+    throw new ConflictException(
+      duplicateEstablishmentMessage(display.name, display.branch),
+    );
+  }
+  throw err;
+}
+
 @Injectable()
 export class EstablishmentService {
   constructor(private prisma: PrismaService) {}
@@ -152,14 +202,22 @@ export class EstablishmentService {
     data: EstablishmentFields & { supervisor?: NewSupervisorInput },
   ) {
     const { supervisor, ...fields } = data;
+    const keys = establishmentKeys(fields.name, fields.branch);
     // Every new establishment starts ACTIVE; the DTO has no status field.
-    const establishmentData = { ...fields, status: 'ACTIVE' as const };
+    const establishmentData = {
+      ...fields,
+      ...keys,
+      status: 'ACTIVE' as const,
+    };
+
+    // Before anything else — in particular before a password is generated
+    // and hashed for a supervisor who would never be created.
+    await assertNameAvailable(this.prisma.client, keys, fields);
 
     if (!supervisor) {
-      return this.prisma.client.establishment.create({
-        data: establishmentData,
-        select: ESTABLISHMENT_FIELDS,
-      });
+      return this.prisma.client.establishment
+        .create({ data: establishmentData, select: ESTABLISHMENT_FIELDS })
+        .catch((err: unknown) => rethrowNameClash(err, fields));
     }
 
     await assertEmailAvailable(this.prisma.client, supervisor.email);
@@ -170,6 +228,10 @@ export class EstablishmentService {
       supervisor.lastName,
       (username, passwordHash) =>
         this.prisma.client.$transaction(async (tx) => {
+          // Again inside the transaction, right before the insert. A 409
+          // here — or the index's P2002 on the insert itself — aborts the
+          // transaction, so no User or Supervisor row is left behind.
+          await assertNameAvailable(tx, keys, fields);
           const establishment = await tx.establishment.create({
             data: establishmentData,
             select: ESTABLISHMENT_FIELDS,
@@ -186,7 +248,9 @@ export class EstablishmentService {
           });
           return { establishment, supervisor: created };
         }, CASCADE_TRANSACTION_OPTIONS),
-    );
+      // isUsernameClash retries only a `username` P2002, so a `nameKey` one
+      // leaves the retry loop untouched and is mapped here.
+    ).catch((err: unknown) => rethrowNameClash(err, fields));
 
     return {
       ...result.establishment,
@@ -348,19 +412,43 @@ export class EstablishmentService {
     };
   }
 
+  /**
+   * An edit that touches `name` or `branch` recomputes both keys from the
+   * resulting pair (a field left out keeps its stored value) and is a 409 if
+   * another establishment already has them. Keeping its own name is fine —
+   * the check excludes the row itself.
+   */
   async update(id: string, data: EstablishmentUpdate) {
     const existing = await this.prisma.client.establishment.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, name: true, branch: true },
     });
     if (!existing) {
       throw new NotFoundException('Establishment not found');
     }
-    return this.prisma.client.establishment.update({
-      where: { id },
-      data,
-      select: ESTABLISHMENT_FIELDS,
-    });
+
+    if (data.name === undefined && data.branch === undefined) {
+      return this.prisma.client.establishment.update({
+        where: { id },
+        data,
+        select: ESTABLISHMENT_FIELDS,
+      });
+    }
+
+    const display = {
+      name: data.name ?? existing.name,
+      branch: data.branch === undefined ? existing.branch : data.branch,
+    };
+    const keys = establishmentKeys(display.name, display.branch);
+    await assertNameAvailable(this.prisma.client, keys, display, id);
+
+    return this.prisma.client.establishment
+      .update({
+        where: { id },
+        data: { ...data, ...keys },
+        select: ESTABLISHMENT_FIELDS,
+      })
+      .catch((err: unknown) => rethrowNameClash(err, display));
   }
 
   /**

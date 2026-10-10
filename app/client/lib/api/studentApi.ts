@@ -41,7 +41,7 @@ export interface Student {
     name: string;
     createdAt: string;
   };
-  establishment?: { id: string; name: string } | null;
+  establishment?: { id: string; name: string; branch?: string | null } | null;
   /**
    * Dependent-row counts. The delete confirmation spells these out, since
    * deleting a student now cascades through all four (see the server's

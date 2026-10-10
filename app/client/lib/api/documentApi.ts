@@ -24,7 +24,7 @@ export interface StudentDocumentChecklist {
   id: string;
   name: string;
   studentIdNumber: string;
-  establishment: { id: string; name: string } | null;
+  establishment: { id: string; name: string; branch?: string | null } | null;
   submittedCount: number;
   /** Every type is present as a key; `null` means not submitted. */
   documents: Record<DocumentType, ChecklistDocument | null>;

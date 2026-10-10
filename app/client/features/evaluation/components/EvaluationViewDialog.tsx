@@ -3,6 +3,7 @@ import ViewDialog from "@/components/ui/ViewDialog";
 import DetailItem from "@/components/ui/DetailItem";
 import { Evaluation } from "@/lib/api/evaluationApi";
 import { formatDateOnly } from "@/lib/format";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 interface EvaluationViewDialogProps {
   open: boolean;
@@ -63,7 +64,7 @@ export default function EvaluationViewDialog({
               label="Training Employed at"
               value={
                 evaluation.trainingEmployedAt ??
-                evaluation.student.establishment?.name
+                optionalEstablishmentLabel(evaluation.student.establishment)
               }
               icon={Building2}
             />

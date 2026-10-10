@@ -20,6 +20,7 @@ import type {
   StudentForm as StudentFormValues,
   StudentPlacement,
 } from "../hooks/use-students";
+import { establishmentLabel } from "@/lib/establishment";
 
 /** The coordinator's edit form — students are created by their supervisor. */
 interface StudentFormProps {
@@ -222,7 +223,7 @@ export default function StudentForm({
               options={[
                 { label: "Unassigned", value: "" },
                 ...establishments.map((e) => ({
-                  label: e.name,
+                  label: establishmentLabel(e),
                   value: e.id,
                 })),
               ]}

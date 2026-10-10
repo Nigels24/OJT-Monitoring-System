@@ -24,6 +24,7 @@ import { useEvaluationDownload } from "@/features/evaluation/hooks/use-evaluatio
 import EvaluationViewDialog from "@/features/evaluation/components/EvaluationViewDialog";
 import { useEvaluationTemplate } from "@/features/evaluation-template/hooks/use-evaluation-template";
 import EvaluationSheetTab from "@/features/evaluation-template/components/EvaluationSheetTab";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 const PAGE_SIZE = 10;
 
@@ -56,7 +57,7 @@ export default function CoordinatorEvaluationsPage() {
         ev.student.studentIdNumber,
         ev.student.course,
         ev.trainingEmployedAt,
-        ev.student.establishment?.name,
+        optionalEstablishmentLabel(ev.student.establishment),
         ev.evaluatorName,
       ]
         .filter(Boolean)

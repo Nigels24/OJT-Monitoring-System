@@ -306,7 +306,7 @@ GET /establishments        any signed-in role
   → explicit select: ESTABLISHMENT_FIELDS + _count {students} + THE supervisor {id,name,email,position} | null
       (one per establishment since P1 — unique index on Supervisor.establishmentId)
   ← coordinator page loads it once; useEstablishmentFilters filters it IN THE CLIENT
-      (search name/supervisor, industry, province → city, status, has/no supervisor),
+      (search name/branch/supervisor, industry, province → city, status, has/no supervisor),
       options = distinct values in the loaded rows — no PSGC, no request, and none of
       useEstablishment's form/cascade state is read or written
 
@@ -316,6 +316,27 @@ GET /establishments/:id    any signed-in role
                                             course, yearLevel, status}
                          : no `students` key, no student query
   ← only the coordinator's view dialog calls it (refetch on every open)
+```
+
+### Establishment identity: name + optional branch (P4)
+
+```
+POST /establishments { name, branch?, …, supervisor? }   PATCH /establishments/:id { name?, branch?, … }
+  DTO: name Trim → IsNotEmpty; branch TrimToNull ("" / spaces → null); nameKey/branchKey → 400
+  keys = establishmentKeys(name, branch)          (PATCH: from the resulting pair, only
+         nameKey  = normalizeKey(name)              when name or branch is in the body)
+         branchKey = branch ? normalizeKey(branch) : ""
+  assertNameAvailable: findFirst { nameKey, branchKey, id ≠ self }  found → 409
+  write (+ keys)  ── P2002 on nameKey (a race) → the same 409
+  with supervisor: check → email → issueNewAccount($transaction(
+        check again → establishment.create → supervisor.create(+User) ))
+        any 409/P2002 there → whole transaction rolled back, never retried as a username clash
+DB: @@unique([nameKey, branchKey]) — the guarantee; the reads above only give the message
+
+Printing: establishmentLabel({ name, branch }) → "Name (Branch)" | "Name"
+  server  → flattened strings (establishmentName, recentStudents.establishment, DTR,
+            trainingEmployedAt snapshot on create, employedAt, messaging contacts)
+  client  → lib/establishment.ts wherever the response carries { name, branch }
 ```
 
 ### Adding a supervisor (one per establishment)
@@ -336,6 +357,8 @@ POST /establishments/:id/supervisor
 | Symptom | Start here |
 |---|---|
 | Wrong/missing data for one student but not others | Ownership check in the service (§2) — is it filtering by the right profile id? |
+| "An establishment named … already exists" for names that look different, or a duplicate got through | The keys, not the names: `establishmentKeys` in `common/establishment-identity.ts` (§6b). Rows that existed before P4 have SQL-backfilled keys, which can differ from `normalizeKey` for non-ASCII spaces/letters (CLAUDE.md §8 item 32) — editing that row's name recomputes its key |
+| An establishment shows without its branch somewhere | That call site prints `.name` instead of `establishmentLabel` (server for flattened strings, `lib/establishment.ts` on the client) |
 | A student didn't auto-complete (or completed when they shouldn't) | `decidePunch` in `supervisor.service.ts`: only the approval that crosses from below `requiredHours` to at/above it, ACTIVE only, `requiredHours > 0` (§4 of this file, CLAUDE.md §6). A student already past the line and reset to ACTIVE by hand is meant to stay ACTIVE; a course change lowering the requirement never completes anyone |
 | Hours don't match across two pages | `src/common/attendance-hours.ts` usage — is one call site bypassing `totalApprovedHours()`/`summarizeDay()`, or counting a session with only one punch approved? |
 | A field silently became `0` instead of blank | Missing `ToOptionalNumber()`/`EmptyToUndefined()` on that DTO field (CLAUDE.md §4, "Validation and DTOs") |

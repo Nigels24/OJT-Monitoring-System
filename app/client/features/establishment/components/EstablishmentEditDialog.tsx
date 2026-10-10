@@ -10,6 +10,8 @@ interface EstablishmentEditDialogProps {
   isCreating: boolean;
   isUpdating: boolean;
   error: string;
+  branch: string;
+  onBranchChange: (value: string) => void;
   industryOptions: string[];
   supervisor: SupervisorFields;
   regions: { code: string; name: string }[];
@@ -37,6 +39,8 @@ export default function EstablishmentEditDialog({
   isCreating,
   isUpdating,
   error,
+  branch,
+  onBranchChange,
   industryOptions,
   supervisor,
   regions,
@@ -91,6 +95,8 @@ export default function EstablishmentEditDialog({
             isCreating={isCreating}
             isUpdating={isUpdating}
             error={error}
+            branch={branch}
+            onBranchChange={onBranchChange}
             industryOptions={industryOptions}
             supervisor={supervisor}
             setField={setField}

@@ -62,6 +62,11 @@ export default function EstablishmentViewDialog({
               icon={Building2}
             />
             <DetailItem
+              label="Branch"
+              value={establishment.branch || "—"}
+              icon={MapPin}
+            />
+            <DetailItem
               label="Industry Type"
               value={establishment.industryType}
               icon={Building2}

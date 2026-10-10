@@ -14,6 +14,7 @@ import {
 import { DOCUMENT_TYPES } from "@/lib/api/studentPortalApi";
 import { DOCUMENT_TYPE_LABEL } from "@/features/student-portal/components/documentType";
 import { TOTAL_DOCUMENT_TYPES } from "../hooks/use-coordinator-documents";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 interface StudentDocumentsDialogProps {
   student: StudentDocumentChecklist | null;
@@ -59,7 +60,7 @@ export default function StudentDocumentsDialog({
         <div>
           <p className="text-sm text-gray-500 mb-4">
             {student.studentIdNumber} ·{" "}
-            {student.establishment?.name ?? "No establishment"} ·{" "}
+            {optionalEstablishmentLabel(student.establishment) ?? "No establishment"} ·{" "}
             <span className="font-semibold text-gray-700">
               {submittedCount} of {TOTAL_DOCUMENT_TYPES} submitted
             </span>

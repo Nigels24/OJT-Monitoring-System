@@ -25,6 +25,7 @@ export type AttendanceTrendPoint = {
 export interface TopEstablishment {
   id: string;
   name: string;
+  branch: string | null;
   studentCount: number;
 }
 

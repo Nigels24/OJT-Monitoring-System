@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Establishment } from "@/lib/api/establishmentApi";
+import { establishmentLabel } from "@/lib/establishment";
 
 /**
  * The Establishments list's search, filters and pagination.
@@ -82,7 +83,8 @@ export function useEstablishmentFilters(
     return all.filter((e) => {
       if (
         term &&
-        !e.name.toLowerCase().includes(term) &&
+        // The label is "Name (Branch)", so this matches either.
+        !establishmentLabel(e).toLowerCase().includes(term) &&
         !(e.supervisor?.name.toLowerCase().includes(term) ?? false)
       ) {
         return false;

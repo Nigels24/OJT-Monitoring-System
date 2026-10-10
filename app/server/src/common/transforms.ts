@@ -57,3 +57,25 @@ export const ToNullableNumber = () =>
     if (value === undefined) return undefined;
     return Number(value);
   });
+
+/**
+ * Trims a string; anything else passes through for the validators to reject.
+ * Goes above `@IsNotEmpty()`, so a value of only spaces is refused as empty
+ * rather than stored as "   ".
+ */
+export const Trim = () =>
+  Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  );
+
+/**
+ * Trims, then `""` (or only spaces) becomes `null`. For an optional,
+ * **nullable** text field shared by a create and an update DTO: blank means
+ * "none" on both, and on an update it clears — `EmptyToNull` plus the trim.
+ */
+export const TrimToNull = () =>
+  Transform(({ value }: { value: unknown }) => {
+    if (value === null) return null;
+    if (typeof value !== 'string') return value;
+    return value.trim() === '' ? null : value.trim();
+  });

@@ -7,6 +7,7 @@ import {
 import { DOCUMENT_TYPES } from "@/lib/api/studentPortalApi";
 import { downloadFile, openFileInNewTab } from "@/lib/api/fileDownload";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
+import { establishmentLabel, optionalEstablishmentLabel } from "@/lib/establishment";
 
 const PAGE_SIZE = 10;
 
@@ -56,7 +57,7 @@ export function useCoordinatorDocuments() {
   const establishmentOptions = useMemo(() => {
     const byId = new Map<string, string>();
     for (const r of rows) {
-      if (r.establishment) byId.set(r.establishment.id, r.establishment.name);
+      if (r.establishment) byId.set(r.establishment.id, establishmentLabel(r.establishment));
     }
     const named = [...byId]
       .sort((a, b) => a[1].localeCompare(b[1]))
@@ -85,7 +86,7 @@ export function useCoordinatorDocuments() {
       }
 
       if (!term) return true;
-      return [r.name, r.studentIdNumber, r.establishment?.name]
+      return [r.name, r.studentIdNumber, optionalEstablishmentLabel(r.establishment)]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()

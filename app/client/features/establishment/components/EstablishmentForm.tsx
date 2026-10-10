@@ -16,6 +16,9 @@ interface EstablishmentFormProps {
   isCreating: boolean;
   isUpdating: boolean;
   error: string;
+  /** Optional; its own state, outside `form` and the address cascade. */
+  branch: string;
+  onBranchChange: (value: string) => void;
   industryOptions: string[];
   /** The optional supervisor section — create only. */
   supervisor: SupervisorFieldsState;
@@ -43,6 +46,8 @@ export default function EstablishmentForm({
   isCreating,
   isUpdating,
   error,
+  branch,
+  onBranchChange,
   industryOptions,
   supervisor,
   setField,
@@ -80,6 +85,15 @@ export default function EstablishmentForm({
             value={form.name}
             onChange={setField("name")}
             placeholder="e.g., Tech Solutions Inc."
+          />
+          <TextField
+            label="Branch (optional)"
+            labelIcon={MapPin}
+            fieldIcon={MapPin}
+            value={branch}
+            onChange={(e) => onBranchChange(e.target.value)}
+            placeholder="e.g., Pagadian — to tell same-name places apart"
+            maxLength={200}
           />
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">

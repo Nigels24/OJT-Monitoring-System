@@ -57,7 +57,7 @@ OJT-Monitoring-System/
     ├── server/             # NestJS 11 API — port 3000
     │   ├── src/
     │   │   ├── auth/           # AuthModule, JwtStrategy, RolesGuard, authed-request.ts, jwt.constants.ts
-    │   │   ├── common/         # accounts.ts, attendance-hours.ts, cascade-delete.ts, courses.ts, credentials.ts, dates.ts, document-types.ts, dtr-pdf.ts, evaluation-pdf.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
+    │   │   ├── common/         # accounts.ts, attendance-hours.ts, cascade-delete.ts, courses.ts, credentials.ts, dates.ts, document-types.ts, dtr-pdf.ts, establishment-identity.ts, evaluation-pdf.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
     │   │   ├── coordinator/    # student + supervisor management, dashboard, attendance oversight
     │   │   ├── establishment/  # CRUD — open reads, COORDINATOR writes
     │   │   ├── evaluation-template/  # the versioned evaluation sheet — COORDINATOR writes, SupervisorService reads
@@ -343,6 +343,8 @@ an update DTO**, because Prisma reads `undefined` as "leave this column alone" �
 | `ToOptionalNumber()` | `undefined` | optional numbers where blank must mean "absent", never 0 (`limit` on `GET /messages/conversations/:id`) |
 | `EmptyToNull()` | `null` | **nullable** columns on an update DTO |
 | `ToNullableNumber()` | `null` | **nullable** numbers on an update DTO (no caller since `Student.age` was retired) |
+| `Trim()` | `""` (then `@IsNotEmpty()` refuses it) | a required string that must not be only spaces (`Establishment.name`) |
+| `TrimToNull()` | `null` (also for only spaces) | an optional nullable string shared by create and update, where blank means "none"/"clear" (`Establishment.branch`) |
 
 A field **absent** from the body is `undefined` either way and always means "leave
 unchanged" — only an explicit `""`/`null` clears. The client must therefore send `null`
@@ -454,6 +456,14 @@ and makes required create fields optional.
 - **`src/common/courses.ts`** — the course table (`COURSES`: `code`, `label`,
   `yearLevel`, `requiredHours`), `COURSE_LABELS`, `isOfferedCourse`,
   `deriveFromCourse`. The only source of a student's year level and required hours.
+- **`src/common/establishment-identity.ts`** — `normalizeKey` (collapse whitespace
+  runs, trim, lower-case), `establishmentKeys(name, branch)` → `{ nameKey, branchKey }`
+  (`branchKey` `""` for no branch), `establishmentLabel({ name, branch })` → "Name
+  (Branch)" or "Name", and the 409 text. **Every printed establishment name goes through
+  `establishmentLabel`** — server-side wherever the response flattens to a string,
+  client-side (`lib/establishment.ts`: `establishmentLabel`, `optionalEstablishmentLabel`,
+  deliberately duplicated like `SCHOOL_NAME`) wherever the response carries
+  `{ name, branch }`. See §6 "Establishment identity".
 
 ### "No data" vs "zero" — a repeated convention
 
@@ -614,8 +624,8 @@ table; never derive one from the other.
 |---|---|---|---|
 | POST | `/auth/login` | public | `{ identifier, password }` |
 | PATCH | `/auth/password` | any signed-in (also must-change) | `{ currentPassword, newPassword }` → `{ changed, accessToken, user }`, clears `mustChangePassword` |
-| GET | `/establishments` · `/establishments/:id` | any signed-in | reads are open. Both return **only** the explicit `ESTABLISHMENT_FIELDS` (id, name, industryType, streetAddress, region, barangay, city, province, zipCode, status, createdAt) + `_count { students }` + `supervisor { id, name, email, position } \| null` (P1: `_count.supervisors` is **gone** — Prisma only counts list relations, and `supervisor !== null` says it). `/:id` adds **`students: [{ id, name, studentIdNumber, course, yearLevel, status }]` for the COORDINATOR only** (a second, coordinator-only query); for every other role the key is absent. Until F7 it was `include: { students: true }` to any role — see §8 item 30 |
-| POST/PATCH/DELETE | `/establishments` · `/establishments/:id` | COORDINATOR | POST always creates **ACTIVE** — `status` is only on the update DTO (400 on create). The `coordinator*` contact fields are a **400** on both. POST takes an optional nested **`supervisor: { firstName, middleInitial?, lastName, email, position? }`** (no `username`/`password`/`establishmentId` — 400): Establishment + User + Supervisor in **one `$transaction`** (`CASCADE_TRANSACTION_OPTIONS`), generated login, `mustChangePassword` set, 409 on a taken email; the response is the establishment plus `supervisor: { id, name, email, position }` and `credentials`. PATCH rejects `supervisor` (400). `GET /establishments` rows carry `supervisor: { id, name, email, position } \| null` — the one supervisor (P1) |
+| GET | `/establishments` · `/establishments/:id` | any signed-in | reads are open. Both return **only** the explicit `ESTABLISHMENT_FIELDS` (id, name, **branch**, industryType, streetAddress, region, barangay, city, province, zipCode, status, createdAt) + `_count { students }` + `supervisor { id, name, email, position } \| null` (P1: `_count.supervisors` is **gone** — Prisma only counts list relations, and `supervisor !== null` says it). `/:id` adds **`students: [{ id, name, studentIdNumber, course, yearLevel, status }]` for the COORDINATOR only** (a second, coordinator-only query); for every other role the key is absent. Until F7 it was `include: { students: true }` to any role — see §8 item 30 |
+| POST/PATCH/DELETE | `/establishments` · `/establishments/:id` | COORDINATOR | **P4:** both take an optional **`branch`** (≤ 200, trimmed, blank = none; on PATCH blank/`null` clears it); `name` is trimmed and a name of only spaces is a 400. **Name + branch must be unique** (§6 "Establishment identity"): **409** `An establishment named "X" already exists. Add a branch to tell them apart.` (or `… with branch "Y" already exists.`), from a pre-check and from the index's P2002 alike; a PATCH that keeps its own name is fine. `nameKey`/`branchKey` in a body are a 400. POST always creates **ACTIVE** — `status` is only on the update DTO (400 on create). The `coordinator*` contact fields are a **400** on both. POST takes an optional nested **`supervisor: { firstName, middleInitial?, lastName, email, position? }`** (no `username`/`password`/`establishmentId` — 400): Establishment + User + Supervisor in **one `$transaction`** (`CASCADE_TRANSACTION_OPTIONS`), generated login, `mustChangePassword` set, 409 on a taken email; the response is the establishment plus `supervisor: { id, name, email, position }` and `credentials`. PATCH rejects `supervisor` (400). `GET /establishments` rows carry `supervisor: { id, name, email, position } \| null` — the one supervisor (P1) |
 | POST | `/establishments/:id/supervisor` | COORDINATOR | same body as the nested `supervisor`; `{ id, name, email, position, establishmentId, credentials }`. 404 unknown establishment, 409 taken email. **409 `"This establishment already has a supervisor"`** (P1) at three levels: the establishment lookup reads its supervisor; the same check inside the create's `$transaction`; and a P2002 on `establishmentId` from the unique index (a race) mapped to the same 409. That P2002 is told apart from the username one by its target — `isUsernameClash` retries only `username`. Replacing a supervisor = delete the old one (evaluations go with them, as before), then add |
 | POST | `/coordinator/students` | — | **Removed (F5).** The coordinator no longer creates students; their supervisor does (`POST /supervisor/students`). (`POST /coordinator/supervisors` was removed in F4 — supervisors are created through `/establishments`.) |
 | POST | `/coordinator/students/bulk-delete` | COORDINATOR | `{ ids }`, 1–100. Every id must exist and be **COMPLETED**, else 400 with `offenders: [{ id, reason }]` and nothing deleted. Then `deleteStudentCascade` per student, **one `$transaction` each** (status re-checked inside), files after each commit. Returns `{ deleted: [ids], failed: [{ id, reason }] }` |
@@ -896,6 +906,7 @@ recoverable, a half-deleted database is not.
 | `20260905163310_official_evaluation_sheet` | **Rewrote `Evaluation` for the school's official form.** Dropped the 9 criteria, `overallRating`, `performanceLevel` and `periodStart`/`periodEnd`; added the 19 item columns, `totalRating`, `trainingStartedAt`/`trainingEndedAt`/`trainingEmployedAt`, `evaluatorName`/`evaluatorPosition` and `updatedAt`. Destructive — **the table was empty (verified: 0 rows)**, which is also why the new `NOT NULL` item columns could be added without defaults. Generated with `migrate diff` + `migrate deploy`, since `migrate dev` prompts on column drops. Touches no other table |
 | `20260914142544_evaluation_sheet_template` | **Moved the sheet into the database.** Added `EvaluationTemplate`, `EvaluationTemplateSection`, `EvaluationTemplateItem`, `EvaluationScore`; seeded template **version 1** PUBLISHED with the nineteen items' exact wording, keyed by the nineteen column names; added `Evaluation.templateId`/`maxTotalRating` backfilled to version 1 / 95; copied the nineteen columns into `EvaluationScore`; **then** dropped them. Hand-written in that order so it is one transaction and no signed sheet loses its scores — structural statements generated with `migrate diff --from-schema-datamodel <previous> --to-schema-datamodel <current> --script` (which never touches the DB), data steps added by hand |
 | `20261005011611_documents_typed_checklist` | **Documents became a typed checklist; Credentials folded in.** Added enum `DocumentType`, `Document.type` and `originalFileName`; deleted the two pre-existing free-text Document rows (test data, no type mapping); copied the two `Credential` rows into `Document` (same id and path, `createdAt` → `uploadedAt`); a `DO $$` guard aborts if any row is untyped; dedup keeps the newest per `(studentId, type)`; then `type` NOT NULL, `@@unique([studentId, type])`, and dropped `name`, `status`, `reviewedById`/FK, `reviewNote`, `reviewedAt` and the `Credential` table. Hand-ordered like the one above; applied with `migrate deploy`. `migrate dev --create-only` refuses to run non-interactively when it would warn about data loss, so `migrate diff` between schema files was used |
+| `20261013090000_establishment_branch_unique_names` | **Written, NOT yet applied.** Explicit `BEGIN`/`COMMIT`: adds `branch`, `branchKey NOT NULL DEFAULT ''`, `nameKey` (nullable); backfills `nameKey = lower(btrim(regexp_replace(name, '\s+', ' ', 'g')))`; sets it NOT NULL; a `DO $$` guard raises `Duplicate establishment names remain, resolve before migrating` (DETAIL lists each key with the names and ids) if any `(nameKey, branchKey)` repeats; then `CREATE UNIQUE INDEX "Establishment_nameKey_branchKey_key"`. Structure matches `migrate diff` between the schema files, except `nameKey` is added nullable and backfilled first (the diff adds it NOT NULL with no default, which fails on a non-empty table). If the guard fires, the migration is recorded as failed: fix the duplicates, `prisma migrate resolve --rolled-back 20261013090000_establishment_branch_unique_names`, deploy again |
 | `20261012090000_one_supervisor_per_establishment` | **Written, NOT yet applied.** A `DO $$` guard raises `An establishment has 2+ supervisors, resolve before migrating` (and changes nothing) if any establishment has two or more; then `CREATE UNIQUE INDEX "Supervisor_establishmentId_key"`, exactly what `migrate diff` between the schema files emits. Nothing is deleted or moved |
 | `20261010090000_user_credential_flags` | **Written, NOT yet applied** (apply with `migrate deploy` after a `pg_dump`). `User`: `mustChangePassword BOOLEAN NOT NULL DEFAULT false`, `credentialsSentAt TIMESTAMP(3)`, `credentialsEmailError TEXT`. Additive; every existing user gets `false`. Hand-written, three `ALTER TABLE` statements; matches `migrate diff` between the schema files |
 | `20261005015145_attendance_punches` | **Four separately approved punches per day.** Added enum `PunchKind` and table `AttendancePunch` (FK to `Attendance` RESTRICT, to `Supervisor` SET NULL, `@@unique([attendanceId, kind])`, index on `status`); copied each non-null `timeInAM`/`timeOutAM`/`timeInPM`/`timeOutPM` into a punch carrying the day's `status`, `approvedById` → `decidedById` and `declineReason`, `decidedAt` NULL (never recorded), ids from `gen_random_uuid()`; a `DO $$` guard aborts unless punches = non-null times (8 = 8 live: 2 APPROVED days); **then** dropped those four columns, `status`, `declineReason`, `approvedById` and its FK. Explicit `BEGIN`/`COMMIT`. Structural SQL from `migrate diff` between schema files, reordered so the drops come last (the diff emits them first); applied with `migrate deploy` after a `pg_dump` |
@@ -910,6 +921,32 @@ recoverable, a half-deleted database is not.
 > needing confirmation). When that happens, generate the SQL yourself:
 > `prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script`
 > into a new `prisma/migrations/<timestamp>_<name>/migration.sql`, then `prisma migrate deploy`.
+
+### Establishment identity: name + optional branch, unique (P4)
+
+Two establishments may not share a **name and a branch**, compared case-insensitively,
+with leading/trailing spaces ignored and inner whitespace runs collapsed: "Jollibee" and
+"Jollibee (Pagadian)" are different; "jollibee " and "JOLLIBEE" are the same. Enforced by
+the database: `Establishment.nameKey String` + `branchKey String @default("")` +
+`@@unique([nameKey, branchKey])` (`Establishment_nameKey_branchKey_key`).
+
+- **Why key columns, not an expression index on `lower(name)`:** Prisma can't describe an
+  expression index, so a later `migrate diff` would emit a DROP for it.
+- **Why `""`, not `NULL`, for no branch:** Postgres treats NULLs in a unique index as all
+  different, so two branchless "Jollibee" rows would both pass.
+- The keys are computed only by `establishmentKeys` (§4), on create and on every update
+  that touches `name` or `branch` (from the resulting pair — a field left out keeps its
+  stored value). Never accepted from a request (not on either DTO → 400), never returned.
+  `name`/`branch` are stored as typed, trimmed.
+- `EstablishmentService`: `assertNameAvailable` (a `findFirst` on the keys, excluding the
+  row itself on update) → 409; then the write, whose P2002 on `nameKey` (a race) maps to
+  the same 409 (`rethrowNameClash`). The nested create with a supervisor runs the
+  check **before** generating an account and **again inside its `$transaction`**; the
+  establishment insert is the transaction's first write, so a 409 or P2002 there rolls
+  everything back, and `isUsernameClash` never retries it (it matches `username` only).
+  `POST /establishments/:id/supervisor` is unchanged.
+- **Nothing is ever merged or deleted automatically.** Migration
+  `20261013090000_establishment_branch_unique_names` aborts if duplicates exist.
 
 ### Known schema gaps
 
@@ -943,7 +980,7 @@ recoverable, a half-deleted database is not.
   view dialog with `refetchOnMountOrArgChange` (a student's move happens in `studentApi`,
   which can't invalidate this slice without an import cycle); `EstablishmentViewDialog`
   lists the assigned students (name, ID, course, year level, status badge), "No students
-  assigned yet" when empty. Branch (item 14) remains paid and pending; one-supervisor
+  assigned yet" when empty. Branch (item 14) was done in P4; one-supervisor
   (item 3) was done in P1.
 - **Student Management (Coordinator)** — list, view, **edit**, delete, bulk delete and
   Resend login, computed hours, progress, stats — **no create since F5** (next item);
@@ -1047,8 +1084,8 @@ recoverable, a half-deleted database is not.
   `Evaluation` (the coordinator's list reads the supervisor's name live) and messages
   `Conversations`/`Contacts`. `supervisorManagementApi` ↔ `establishmentApi` import each
   other — safe, both only read the other inside `onQueryStarted`.
-  **Still pending, paid:** item 14 (Branch, unique establishment names). Item 3 (one
-  supervisor per establishment) was done in P1, below.
+  Item 14 (Branch, unique establishment names) was done in P4 and item 3 (one
+  supervisor per establishment) in P1, both below.
 - **One supervisor per establishment (paid step P1, item 3)** — `Supervisor.establishmentId`
   is `@unique`, so `Establishment.supervisors Supervisor[]` became `supervisor
   Supervisor?`. Enforced at three levels: the unique index (migration
@@ -1326,9 +1363,68 @@ recoverable, a half-deleted database is not.
   is being approved can deadlock; Postgres aborts one of the two (a 500 to that caller,
   nothing half-written). Rare enough to leave.
 
+- **Unique establishment names + optional Branch (paid step P4, item 14)** — rule, key
+  columns and 409 in §6 "Establishment identity"; migration
+  `20261013090000_establishment_branch_unique_names` **NOT yet applied** (see "Order"
+  below). Server: `common/establishment-identity.ts`; `Trim`/`TrimToNull` transforms;
+  `branch` on both establishment DTOs and in `ESTABLISHMENT_FIELDS`.
+  **Where the label is printed.** Server applies `establishmentLabel` to every flattened
+  string: the coordinator dashboard's `recentStudents[].establishment`, oversight's
+  `establishmentName`, the DTR's Establishment line, messaging contacts'
+  `establishmentName`, the evaluation's `trainingEmployedAt` **snapshot** (written on
+  create only — a sheet names the branch it was signed at; existing snapshots are not
+  rewritten) and the blank form's `employedAt`, and the evaluation PDF's fallback when
+  the snapshot is null. Every other read that returns an establishment object now selects
+  `branch` (student/supervisor dashboards, student profile, coordinator student and
+  supervisor lists, `updateStudent`, documents checklist, `EVALUATION_INCLUDE`,
+  `topEstablishments`) and the client labels it: Establishments list (name column,
+  "Add supervisor to …"), view dialog (separate **Branch** row), add-supervisor subtitle,
+  delete confirmation and snackbar, list search (matches the label, so name or branch);
+  coordinator dashboard top-establishments chart; coordinator Students list/search/view
+  and the edit form's establishment select; Supervisors list/search/edit subtitle;
+  Documents checklist (column, establishment filter options, search) and student
+  documents dialog; Evaluations list/search/view fallback; student dashboard card and
+  profile; supervisor dashboard (sidebar org name, card) and Students page sidebar.
+  **Deliberately left:** the establishment edit form's Name input (it edits `name`
+  alone; Branch is its own field) and the view dialog's Name row (Branch has its own row).
+  Client form: Branch is a plain `TextField` beside Name, in **its own `useState`** in
+  `useEstablishment` (not in `form`), passed down as `branch`/`onBranchChange`; it is set
+  in `handleEdit` next to `setForm` and cleared wherever `newSupervisor` is reset. The
+  cascade effects, `isPopulatingRef` and the reverse lookup are untouched. The 409 shows
+  in the form's existing error line (`handleSubmit` already put `err.data.message`
+  there). Create sends `branch || undefined`; update sends `branch || null` (§4 — a
+  cleared branch must clear).
+  **Order — the code needs the columns.** The regenerated client lists `branch`,
+  `nameKey`, `branchKey` among `Establishment`'s columns, so before the migration every
+  query that selects `branch` fails (column does not exist): all establishment
+  reads/writes, every coordinator list that shows an establishment, the coordinator
+  dashboard's two establishment sections (degrade via `failedSections`), oversight, DTR,
+  documents checklist, student dashboard/profile, supervisor dashboard, evaluation
+  list/create/form, messaging contacts. Establishment **delete** fails too: a
+  select-less `delete` returns every column. And the old code cannot run after the
+  migration (its create has no `nameKey`, which is NOT NULL). So: resolve duplicates →
+  `pg_dump` → `migrate deploy` (also applies the pending `20261010…` and `20261012…`
+  first) → restart the server on this code.
+
 **All three roles land on a real page after login. No role 404s.**
 
 ### Needs live verification
+
+**Paid step P4** (unique names + branch). Verified in-process only — real
+`EstablishmentController` + `EstablishmentService` under the global `ValidationPipe`
+(guards stubbed to a coordinator) against a faked Prisma that enforces the
+`(nameKey, branchKey)` index with a real `P2002` and rolls a transaction back on throw
+(33 checks: helpers; trimmed name, null branch, keys stored and never returned;
+same name twice, "jollibee ", "JOLLIBEE", blank branch → 409 "Add a branch…"; same
+name + different branch 201; same name + branch in other case/spaces 409 naming the
+branch; updates into a clash (name, name+branch, clearing the branch, `branch: null`)
+409; keeping its own keys 200; branch-only update recomputes `branchKey`; an update
+touching neither runs no check; `nameKey`/`branchKey` in a body 400; name of spaces
+400; 201-char branch 400; race (check misses, index fires) 409 on create and update;
+nested create: plain duplicate 409 before any transaction, in-transaction check 409
+rolled back, index race 409 rolled back and not retried, distinct branch 201 with
+credentials; add-supervisor 201 then 409 unchanged; list rows carry `branch`). The label
+call sites were typechecked only; no PDF was rendered. The migration was not run.
 
 **Paid step P3** (auto-COMPLETED). Verified in-process only — the real
 `SupervisorService` against a faked Prisma that models per-transaction uncommitted writes
@@ -1500,7 +1596,7 @@ signed URL's query string hides the extension.
 
 Ordered roughly by how likely each is to bite.
 
-1. **Client lint: 19 errors, 9 warnings, all pre-existing and all in the establishment
+1. **Client lint: 19 errors, 2 warnings, all pre-existing and all in the establishment
    feature** (`use-establishment.ts`, `EstablishmentForm/List/EditDialog`, plus one
    `any` in `app/login/page.tsx` and one setState-in-effect in `PageHeader.tsx`). They
    are `@typescript-eslint/no-explicit-any` and `react-hooks/set-state-in-effect` — the
@@ -1755,6 +1851,19 @@ Ordered roughly by how likely each is to bite.
     crossings or skip the rule entirely. And a new transaction that touches both a
     student and their punches should lock the **student first**, as `decidePunch` does,
     or it can deadlock against an approval (`deleteStudentCascade` doesn't — §7 P3).
+32. **`normalizeKey` (JS) and the migration's backfill (SQL) agree on ASCII, not on
+    every Unicode edge.** Same steps in the same order: collapse whitespace runs, trim,
+    lower-case. Identical for ASCII letters and ASCII whitespace (tab/newline runs too —
+    `regexp_replace` turns them into a space before `btrim`, which only strips spaces).
+    Where they can differ: JS `\s` also matches Unicode spaces (NBSP, U+3000, BOM …) and
+    Postgres' `\s` follows the database locale; JS `toLowerCase` is locale-free Unicode,
+    Postgres `lower()` follows `LC_CTYPE` (same result for accented Latin — É→é, Ñ→ñ — in
+    a UTF-8 locale; rare letters like Turkish İ differ). Neither applies Unicode
+    normalisation, so "José" typed with a combining accent is a different key from the
+    precomposed one. Only the **backfilled** keys of existing rows are SQL-computed;
+    every key written after the migration comes from `normalizeKey`, and editing a row's
+    name or branch recomputes it. So a mismatch can only matter for a pre-existing name
+    containing such characters — check those by eye before migrating.
 
 ---
 

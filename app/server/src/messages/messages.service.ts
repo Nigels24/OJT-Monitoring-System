@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { establishmentLabel } from '../common/establishment-identity';
 
 export const DEFAULT_MESSAGE_PAGE_SIZE = 50;
 
@@ -42,7 +43,7 @@ export class MessagesService {
               where: { establishmentId: student.establishmentId },
               select: {
                 user: { select: { id: true, name: true } },
-                establishment: { select: { name: true } },
+                establishment: { select: { name: true, branch: true } },
               },
             })
           : Promise.resolve([]),
@@ -69,7 +70,7 @@ export class MessagesService {
           where: { establishmentId: supervisor.establishmentId },
           select: {
             user: { select: { id: true, name: true } },
-            establishment: { select: { name: true } },
+            establishment: { select: { name: true, branch: true } },
           },
         }),
         this.getAllCoordinators(),
@@ -88,13 +89,13 @@ export class MessagesService {
       this.prisma.client.student.findMany({
         select: {
           user: { select: { id: true, name: true } },
-          establishment: { select: { name: true } },
+          establishment: { select: { name: true, branch: true } },
         },
       }),
       this.prisma.client.supervisor.findMany({
         select: {
           user: { select: { id: true, name: true } },
-          establishment: { select: { name: true } },
+          establishment: { select: { name: true, branch: true } },
         },
       }),
     ]);
@@ -412,25 +413,27 @@ export class MessagesService {
 
 function toStudentContact(s: {
   user: { id: string; name: string };
-  establishment: { name: string } | null;
+  establishment: { name: string; branch: string | null } | null;
 }): Contact {
   return {
     id: s.user.id,
     name: s.user.name,
     role: 'STUDENT',
-    establishmentName: s.establishment?.name ?? null,
+    establishmentName: s.establishment
+      ? establishmentLabel(s.establishment)
+      : null,
   };
 }
 
 function toSupervisorContact(s: {
   user: { id: string; name: string };
-  establishment: { name: string };
+  establishment: { name: string; branch: string | null };
 }): Contact {
   return {
     id: s.user.id,
     name: s.user.name,
     role: 'SUPERVISOR',
-    establishmentName: s.establishment.name,
+    establishmentName: establishmentLabel(s.establishment),
   };
 }
 

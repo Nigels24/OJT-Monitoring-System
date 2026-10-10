@@ -18,6 +18,7 @@ import {
   CompletionFilter,
   TOTAL_DOCUMENT_TYPES,
 } from "../hooks/use-coordinator-documents";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 interface DocumentsChecklistTableProps {
   rows: StudentDocumentChecklist[];
@@ -112,7 +113,7 @@ export default function DocumentsChecklistTable({
           <div className="font-semibold text-gray-900">{r.name}</div>
           <div className="text-xs text-gray-500">{r.studentIdNumber}</div>
           <div className="text-xs text-gray-400">
-            {r.establishment?.name ?? "No establishment"}
+            {optionalEstablishmentLabel(r.establishment) ?? "No establishment"}
           </div>
         </div>
       ),

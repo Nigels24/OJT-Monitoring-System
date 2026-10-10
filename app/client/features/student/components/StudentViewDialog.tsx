@@ -17,6 +17,7 @@ import { Student } from "@/lib/api/studentApi";
 import { DOCUMENT_TYPES } from "@/lib/api/studentPortalApi";
 import { formatDateOnly } from "@/lib/format";
 import { SCHOOL_NAME } from "@/lib/school";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 interface StudentViewDialogProps {
   open: boolean;
@@ -90,7 +91,7 @@ export default function StudentViewDialog({
               />
               <DetailItem
                 label="Establishment"
-                value={student.establishment?.name ?? "Unassigned"}
+                value={optionalEstablishmentLabel(student.establishment) ?? "Unassigned"}
                 icon={Building2}
               />
               <DetailItem

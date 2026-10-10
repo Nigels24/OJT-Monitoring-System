@@ -16,6 +16,7 @@ import ProgressBar from "@/components/ui/ProgressBar";
 import SelectField from "@/components/ui/SelectField";
 import StatusBadge, { BadgeVariant } from "@/components/ui/StatusBadge";
 import { Student, StudentStatus } from "@/lib/api/studentApi";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 interface StudentListProps {
   isLoading: boolean;
@@ -180,7 +181,7 @@ export default function StudentList({
     {
       key: "establishment",
       label: "Establishment",
-      render: (r) => r.establishment?.name || "Unassigned",
+      render: (r) => optionalEstablishmentLabel(r.establishment) || "Unassigned",
     },
     {
       key: "contactNumber",

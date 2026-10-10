@@ -22,6 +22,7 @@ import { useProfile } from "@/features/student-portal/hooks/use-profile";
 import ProfileEditForm from "@/features/student-portal/components/ProfileEditForm";
 import { formatDateOnly } from "@/lib/format";
 import { SCHOOL_NAME } from "@/lib/school";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 export default function StudentProfilePage() {
   const {
@@ -101,7 +102,7 @@ export default function StudentProfilePage() {
               <div className="space-y-3">
                 <DetailItem
                   label="Establishment"
-                  value={data.establishment?.name}
+                  value={optionalEstablishmentLabel(data.establishment)}
                   icon={Building2}
                 />
                 <DetailItem

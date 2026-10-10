@@ -25,7 +25,7 @@ import {
 import { EstablishmentService } from './establishment.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { AuthedRequest } from '../auth/authed-request';
-import { EmptyToUndefined } from '../common/transforms';
+import { EmptyToUndefined, Trim, TrimToNull } from '../common/transforms';
 
 /**
  * A supervisor created inside an establishment — nested in POST
@@ -65,10 +65,23 @@ class NewSupervisorDto {
 }
 
 class CreateEstablishmentDto {
+  // Stored as typed, trimmed. Uniqueness is on name + branch, compared through
+  // the server-computed nameKey/branchKey — which are not on either DTO, so
+  // sending one is a 400 (forbidNonWhitelisted).
+  @Trim()
   @IsString()
   @IsNotEmpty()
   @MaxLength(200)
   name!: string;
+
+  // Optional: tells two establishments of the same name apart ("Jollibee",
+  // "Jollibee (Pagadian)"). Trimmed; blank is null — on an update, blank
+  // clears it. Same length limit as the name.
+  @TrimToNull()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  branch?: string | null;
 
   @IsOptional()
   @IsString()

@@ -23,6 +23,7 @@ import {
 import { SUPERVISOR_NAV } from "@/features/supervisor/nav";
 import StudentRoster from "@/features/supervisor/components/StudentRoster";
 import SectionError from "@/components/ui/SectionError";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 export default function SupervisorDashboardPage() {
   const { data, isLoading, error, refetch, isFetching } =
@@ -35,7 +36,7 @@ export default function SupervisorDashboardPage() {
   return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar
-        orgName={data?.establishment?.name ?? "Establishment"}
+        orgName={optionalEstablishmentLabel(data?.establishment) ?? "Establishment"}
         orgSubtitle="Barangay San Francisco Pag. City ZDS"
         items={SUPERVISOR_NAV}
         userName={displayName}
@@ -114,7 +115,7 @@ export default function SupervisorDashboardPage() {
                 <div className="space-y-3">
                   <DetailItem
                     label="Name"
-                    value={data.establishment?.name}
+                    value={optionalEstablishmentLabel(data.establishment)}
                     icon={Building2}
                   />
                   <DetailItem

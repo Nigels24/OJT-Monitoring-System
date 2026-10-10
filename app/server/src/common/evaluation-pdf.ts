@@ -19,6 +19,7 @@
 import PDFDocument from 'pdfkit';
 import { SCHOOL_NAME } from './school';
 import { MAX_SCORE, MIN_SCORE, SCORE_LABELS } from './evaluation-scoring';
+import { establishmentLabel } from './establishment-identity';
 
 /* ---------------------------------------------------------------------------
  * Input. Structural, not Prisma types: this takes the shape
@@ -59,7 +60,7 @@ export interface EvaluationPdfData {
     studentIdNumber: string;
     course: string | null;
     user: { name: string };
-    establishment: { name: string } | null;
+    establishment: { name: string; branch: string | null } | null;
   };
 }
 
@@ -263,7 +264,10 @@ export function renderEvaluationPdf(data: EvaluationPdfData): Promise<Buffer> {
       'Training Employed at',
       // The snapshot first: it is what the sheet was signed with, and the
       // student may have been moved or unassigned since.
-      data.trainingEmployedAt ?? data.student.establishment?.name ?? '—',
+      data.trainingEmployedAt ??
+        (data.student.establishment
+          ? establishmentLabel(data.student.establishment)
+          : '—'),
     ],
   );
   fieldRow(

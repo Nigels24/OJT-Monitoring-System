@@ -12,6 +12,7 @@ import {
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import { Evaluation } from "@/lib/api/evaluationApi";
 import { formatDateOnly } from "@/lib/format";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 interface EvaluationListProps {
   rows: Evaluation[];
@@ -95,7 +96,7 @@ export default function EvaluationList({
             key: "establishment",
             label: "Establishment",
             render: (r: Evaluation) =>
-              r.trainingEmployedAt ?? r.student.establishment?.name ?? "—",
+              r.trainingEmployedAt ?? optionalEstablishmentLabel(r.student.establishment) ?? "—",
           },
         ]
       : []),

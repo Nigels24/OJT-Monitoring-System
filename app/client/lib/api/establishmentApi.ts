@@ -29,6 +29,8 @@ export interface EstablishmentSupervisor {
 export interface Establishment {
   id: string;
   name: string;
+  /** Tells two establishments of the same name apart; `null` = none. */
+  branch?: string | null;
   industryType?: string | null;
   streetAddress?: string | null;
   region?: string | null;
@@ -82,6 +84,11 @@ export interface NewSupervisorRequest {
 
 export interface CreateEstablishmentRequest {
   name: string;
+  /**
+   * Optional. Name + branch must be unique (case and extra spaces ignored),
+   * else a 409 whose message the form shows. `null` on an update clears it.
+   */
+  branch?: string | null;
   industryType?: string;
   streetAddress?: string;
   region?: string;

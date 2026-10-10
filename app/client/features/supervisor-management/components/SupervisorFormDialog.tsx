@@ -3,6 +3,7 @@ import SupervisorForm from "./SupervisorForm";
 import type { CoordinatorSupervisor } from "@/lib/api/supervisorManagementApi";
 import type { SupervisorForm as SupervisorFormValues } from "../hooks/use-supervisor-management";
 import Overlay from "@/components/ui/Overlay";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 /** Edits an existing supervisor; they are created on the Establishments page. */
 interface SupervisorFormDialogProps {
@@ -46,7 +47,7 @@ export default function SupervisorFormDialog({
               </h2>
               <p className="text-xs text-gray-500">
                 {supervisor.user.username ?? supervisor.user.email} ·{" "}
-                {supervisor.establishment?.name ?? "No establishment"}
+                {optionalEstablishmentLabel(supervisor.establishment) ?? "No establishment"}
               </p>
             </div>
           </div>

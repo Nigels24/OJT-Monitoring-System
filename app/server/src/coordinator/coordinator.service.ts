@@ -43,6 +43,7 @@ import {
   safeFileName,
 } from '../common/document-types';
 import { DocumentType } from '../../generated/prisma/client';
+import { establishmentLabel } from '../common/establishment-identity';
 import { deriveFromCourse } from '../common/courses';
 import {
   RESEND_ACCOUNT_SELECT,
@@ -94,7 +95,7 @@ const SUPERVISOR_ROW_SELECT = {
       createdAt: true,
     },
   },
-  establishment: { select: { id: true, name: true } },
+  establishment: { select: { id: true, name: true, branch: true } },
 } as const;
 
 @Injectable()
@@ -115,7 +116,7 @@ export class CoordinatorService {
             createdAt: true,
           },
         },
-        establishment: { select: { id: true, name: true } },
+        establishment: { select: { id: true, name: true, branch: true } },
         attendances: {
           // Only APPROVED punches can form a counted session.
           select: {
@@ -156,7 +157,7 @@ export class CoordinatorService {
             createdAt: true,
           },
         },
-        establishment: { select: { id: true, name: true } },
+        establishment: { select: { id: true, name: true, branch: true } },
         // What deleting this supervisor would take with it (evaluations) and
         // what it would merely un-attribute (punches they approved — kept, so
         // students' hours survive). The confirmation dialog states both.
@@ -234,6 +235,7 @@ export class CoordinatorService {
         select: {
           id: true,
           name: true,
+          branch: true,
           _count: { select: { students: true } },
         },
         orderBy: { students: { _count: 'desc' } },
@@ -242,7 +244,7 @@ export class CoordinatorService {
       this.prisma.client.student.findMany({
         include: {
           user: { select: { name: true, createdAt: true } },
-          establishment: { select: { name: true } },
+          establishment: { select: { name: true, branch: true } },
           attendances: {
             select: {
               punches: {
@@ -356,6 +358,7 @@ export class CoordinatorService {
       topEstablishments: topEstablishments.map((e) => ({
         id: e.id,
         name: e.name,
+        branch: e.branch,
         studentCount: e._count.students,
       })),
       recentStudents: recentStudents.map(
@@ -364,7 +367,9 @@ export class CoordinatorService {
           studentIdNumber: student.studentIdNumber,
           name: user.name,
           course: student.course,
-          establishment: establishment?.name ?? null,
+          establishment: establishment
+            ? establishmentLabel(establishment)
+            : null,
           startDate: student.startDate,
           requiredHours: student.requiredHours,
           completedHours: totalApprovedHours(attendances),
@@ -437,7 +442,7 @@ export class CoordinatorService {
           startDate: true,
           establishmentId: true,
           user: { select: { name: true } },
-          establishment: { select: { name: true } },
+          establishment: { select: { name: true, branch: true } },
         },
         orderBy: { user: { createdAt: 'desc' } },
       }),
@@ -505,7 +510,9 @@ export class CoordinatorService {
         yearLevel: student.yearLevel,
         status: student.status,
         establishmentId: student.establishmentId,
-        establishmentName: student.establishment?.name ?? null,
+        establishmentName: student.establishment
+          ? establishmentLabel(student.establishment)
+          : null,
         presentDays,
         totalDays,
         approvedHours: totalApprovedHours(inWindow),
@@ -547,6 +554,7 @@ export class CoordinatorService {
         establishment: {
           select: {
             name: true,
+            branch: true,
             // The establishment's one supervisor; may be none.
             supervisor: { select: { user: { select: { name: true } } } },
           },
@@ -572,7 +580,9 @@ export class CoordinatorService {
       studentName: student.user.name,
       schoolName: SCHOOL_NAME,
       course: student.course,
-      establishmentName: student.establishment?.name ?? null,
+      establishmentName: student.establishment
+        ? establishmentLabel(student.establishment)
+        : null,
       supervisorName: student.establishment?.supervisor?.user.name ?? null,
       year: range.year,
       month: range.month,
@@ -689,7 +699,7 @@ export class CoordinatorService {
       data: { ...studentProfileData(data), ...derived },
       include: {
         user: { select: { id: true, email: true, name: true } },
-        establishment: { select: { id: true, name: true } },
+        establishment: { select: { id: true, name: true, branch: true } },
       },
     });
   }
@@ -832,7 +842,7 @@ export class CoordinatorService {
         id: true,
         studentIdNumber: true,
         user: { select: { name: true } },
-        establishment: { select: { id: true, name: true } },
+        establishment: { select: { id: true, name: true, branch: true } },
         documents: {
           select: {
             id: true,

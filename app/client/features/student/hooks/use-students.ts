@@ -12,6 +12,7 @@ import type { IssuedCredentials } from "@/features/account/CredentialsDialog";
 import { useGetEstablishmentsQuery } from "@/lib/api/establishmentApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
 import { COURSES, findCourse, isOfferedCourse } from "@/lib/courses";
+import { optionalEstablishmentLabel } from "@/lib/establishment";
 
 /** The word the coordinator types to arm the bulk-delete button. */
 export const BULK_DELETE_CONFIRM_WORD = "DELETE";
@@ -203,7 +204,7 @@ export function useStudents() {
         s.user.name,
         s.user.email,
         s.course,
-        s.establishment?.name,
+        optionalEstablishmentLabel(s.establishment),
       ]
         .filter(Boolean)
         .join(" ")

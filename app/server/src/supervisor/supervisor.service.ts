@@ -25,6 +25,7 @@ import {
   templateMaxTotalRating,
   totalRating,
 } from '../common/evaluation-scoring';
+import { establishmentLabel } from '../common/establishment-identity';
 import { CASCADE_TRANSACTION_OPTIONS } from '../common/cascade-delete';
 import { deriveFromCourse } from '../common/courses';
 import { SCHOOL_NAME } from '../common/school';
@@ -107,7 +108,7 @@ export class SupervisorService {
       include: {
         user: { select: { id: true, email: true, name: true } },
         establishment: {
-          select: { id: true, name: true, industryType: true },
+          select: { id: true, name: true, branch: true, industryType: true },
         },
       },
     });
@@ -731,10 +732,15 @@ export class SupervisorService {
    */
   private headerFields(
     supervisor: { position: string | null; user: { name: string } },
-    student: { establishment: { name: string } | null },
+    student: { establishment: { name: string; branch: string | null } | null },
   ) {
     return {
-      trainingEmployedAt: student.establishment?.name ?? null,
+      // With the branch: "Jollibee (Pagadian)" is the place, and a sheet must
+      // say which one. Written on create only, so existing sheets keep the
+      // snapshot they were signed with.
+      trainingEmployedAt: student.establishment
+        ? establishmentLabel(student.establishment)
+        : null,
       evaluatorName: supervisor.user.name,
       evaluatorPosition: supervisor.position,
     };
@@ -807,7 +813,7 @@ export class SupervisorService {
       select: {
         id: true,
         establishmentId: true,
-        establishment: { select: { name: true } },
+        establishment: { select: { name: true, branch: true } },
       },
     });
     if (!student || student.establishmentId !== establishmentId) {
@@ -859,7 +865,7 @@ export class SupervisorService {
     const template = await this.templates.getPublishedTemplate();
     const establishment = await this.prisma.client.establishment.findUnique({
       where: { id: supervisor.establishmentId },
-      select: { name: true },
+      select: { name: true, branch: true },
     });
 
     return {
@@ -871,7 +877,7 @@ export class SupervisorService {
         name: supervisor.user.name,
         position: supervisor.position,
       },
-      employedAt: establishment?.name ?? null,
+      employedAt: establishment ? establishmentLabel(establishment) : null,
     };
   }
 
@@ -963,7 +969,7 @@ export const EVALUATION_INCLUDE = {
       course: true,
       school: true,
       user: { select: { name: true, email: true } },
-      establishment: { select: { id: true, name: true } },
+      establishment: { select: { id: true, name: true, branch: true } },
     },
   },
   supervisor: {

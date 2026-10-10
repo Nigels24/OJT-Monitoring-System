@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import { Eye, Pencil, Trash2, Building2, UserPlus } from "lucide-react";
 import { Establishment } from "@/lib/api/establishmentApi";
+import { establishmentLabel } from "@/lib/establishment";
 
 interface EstablishmentListProps {
   establishments: Establishment[];
@@ -64,7 +65,9 @@ export default function EstablishmentList({
       key: "name",
       label: "Name",
       render: (r) => (
-        <span className="font-medium text-gray-900">{r.name}</span>
+        <span className="font-medium text-gray-900">
+          {establishmentLabel(r)}
+        </span>
       ),
     },
     {
@@ -99,7 +102,7 @@ export default function EstablishmentList({
               type="button"
               onClick={() => onAddSupervisor(r)}
               className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800"
-              aria-label={`Add supervisor to ${r.name}`}
+              aria-label={`Add supervisor to ${establishmentLabel(r)}`}
             >
               <UserPlus size={12} />
               Add supervisor
@@ -170,7 +173,7 @@ export default function EstablishmentList({
           onChange={(e) => {
             setLocalSearch(e.target.value);
           }}
-          placeholder="Search by establishment or supervisor name..."
+          placeholder="Search by establishment, branch or supervisor name..."
           className="w-full h-10 md:h-12 pl-9 md:pl-11 pr-3 md:pr-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-900 placeholder-gray-400"
         />
       </div>

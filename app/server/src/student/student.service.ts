@@ -40,7 +40,7 @@ interface UploadDocumentInput {
 
 const PROFILE_INCLUDE = {
   user: { select: { id: true, email: true, name: true } },
-  establishment: { select: { id: true, name: true } },
+  establishment: { select: { id: true, name: true, branch: true } },
 } as const;
 
 /** What a student's own document list reads — `fileUrl` is the stored PATH, signed on the way out. */
@@ -110,6 +110,7 @@ export class StudentService {
           select: {
             id: true,
             name: true,
+            branch: true,
             industryType: true,
             // The contact card is the establishment's supervisor (the old
             // coordinator* contact columns were the same person, and are
@@ -561,6 +562,7 @@ function isUniqueViolation(err: unknown): boolean {
 function withSupervisorContact(establishment: {
   id: string;
   name: string;
+  branch: string | null;
   industryType: string | null;
   supervisor: {
     position: string | null;

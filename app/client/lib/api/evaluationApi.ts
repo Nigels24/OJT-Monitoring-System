@@ -99,7 +99,7 @@ export interface Evaluation {
     course: string | null;
     school: string | null;
     user: { name: string; email: string };
-    establishment: { id: string; name: string } | null;
+    establishment: { id: string; name: string; branch?: string | null } | null;
   };
   supervisor: {
     id: string;

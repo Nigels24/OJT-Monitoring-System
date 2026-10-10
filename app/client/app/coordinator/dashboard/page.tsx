@@ -31,6 +31,7 @@ import {
 } from "@/lib/api/dashboardApi";
 import { formatDateOnly } from "@/lib/format";
 import SectionError from "@/components/ui/SectionError";
+import { establishmentLabel } from "@/lib/establishment";
 
 // Charting the statuses that actually exist, one count per punch. The
 // prototype showed present/late/absent; attendance has no such states.
@@ -265,7 +266,7 @@ export default function CoordinatorDashboard() {
                   title="Top Establishments by Student Count"
                   icon={PieChart}
                   items={data.topEstablishments.map((e) => ({
-                    label: e.name,
+                    label: establishmentLabel(e),
                     value: e.studentCount,
                     badge: `${e.studentCount} student${e.studentCount === 1 ? "" : "s"}`,
                     badgeVariant: e.studentCount > 0 ? "green" : "amber",
