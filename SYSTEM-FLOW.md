@@ -164,10 +164,16 @@ Every hour figure goes through src/common/attendance-hours.ts
                                  (the roster also lastApprovedDay — the evaluation's end date)
     - Coordinator dashboard:    totalHoursLogged; pendingApprovals + weekly trend count punches
     - Attendance oversight:     presentDays (days with an approved session, within
-                                 [startDate, today]) ÷ totalDays (calendar days since
-                                 startDate) = attendancePercentage
-                                     (null if startDate is missing OR still in the
-                                      future — never a fake 0%)
+                                 the window) ÷ totalDays (calendar days in the window)
+                                 = attendancePercentage, plus approvedHours.
+                                 window = [startDate, today], or with ?month=YYYY-MM
+                                 [max(month start, startDate), min(month end, today)]
+                                     (null % if no startDate or an empty window —
+                                      never a fake 0%, never a division by zero)
+    - DTR PDF (one student, one month): APPROVED punches only, an unpaired one
+                                 still printed; TOTAL = totalApprovedHours (complete
+                                 sessions only); rows placed by Attendance.date (the
+                                 Manila day), times printed in Asia/Manila
 ```
 
 **"Today" is always Manila's calendar day, never the server's.** `manilaToday()` in

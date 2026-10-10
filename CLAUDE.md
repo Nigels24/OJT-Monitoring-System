@@ -57,7 +57,7 @@ OJT-Monitoring-System/
     ├── server/             # NestJS 11 API — port 3000
     │   ├── src/
     │   │   ├── auth/           # AuthModule, JwtStrategy, RolesGuard, authed-request.ts, jwt.constants.ts
-    │   │   ├── common/         # accounts.ts, attendance-hours.ts, cascade-delete.ts, courses.ts, credentials.ts, dates.ts, document-types.ts, evaluation-pdf.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
+    │   │   ├── common/         # accounts.ts, attendance-hours.ts, cascade-delete.ts, courses.ts, credentials.ts, dates.ts, document-types.ts, dtr-pdf.ts, evaluation-pdf.ts, evaluation-scoring.ts, school.ts, storage.ts, transforms.ts
     │   │   ├── coordinator/    # student + supervisor management, dashboard, attendance oversight
     │   │   ├── establishment/  # CRUD — open reads, COORDINATOR writes
     │   │   ├── evaluation-template/  # the versioned evaluation sheet — COORDINATOR writes, SupervisorService reads
@@ -625,7 +625,8 @@ table; never derive one from the other.
 | DELETE | `/coordinator/supervisors/:id` | COORDINATOR | delete is guarded, see §6 |
 | POST | `/coordinator/students/:id/resend-credentials` · `/coordinator/supervisors/:id/resend-credentials` | COORDINATOR | no body; new temporary password, `{ id, name, email, credentials }`; 404 unknown id. Replaced `PATCH …/:id/password` |
 | GET | `/coordinator/dashboard` | COORDINATOR | real aggregates |
-| GET | `/coordinator/attendance` | COORDINATOR | cross-establishment oversight: `[{ id, studentIdNumber, name, establishmentName, presentDays, totalDays, attendancePercentage }]`. A present day = ≥1 session with both punches APPROVED |
+| GET | `/coordinator/attendance` | COORDINATOR | cross-establishment oversight: `[{ id, studentIdNumber, name, course, yearLevel, status, establishmentId, establishmentName, presentDays, totalDays, approvedHours, attendancePercentage }]`. Optional **`?month=YYYY-MM`** (strict, month 01-12, else 400) is the **only** query param — any other (incl. `establishmentId`/`course`/…) is a 400; those filter client-side. **Window**: all-time = [startDate, Manila today]; with a month = [max(month start, startDate), min(month end, today)]. **presentDays** = days in the window with ≥1 session whose In and Out are both APPROVED; **approvedHours** = those sessions' hours (`totalApprovedHours`); **totalDays** = calendar days in the window inclusive, `0` if the window is empty (start after the month, a future month) or there is no startDate; **attendancePercentage** = round(present/total×100), `null` when totalDays is 0 (never a division by zero). Every student is returned, zeros included. Days are placed by `Attendance.date` (the Manila day), never by a punch's UTC timestamp |
+| GET | `/coordinator/students/:id/dtr?month=YYYY-MM` | COORDINATOR | the student's monthly Daily Time Record (Civil Service Form 48 style) as a PDF attachment, `"<Last>, <First> - DTR YYYY-MM.pdf"` (else `User.name`) via `attachmentDisposition` (ASCII `filename=` + RFC 5987 `filename*=`). 400 missing/invalid month, 404 unknown student. One bounded query (`date` in [1st, 1st of next month)) selecting **APPROVED punches only**. Renderer `common/dtr-pdf.ts` — see §7 |
 | GET | `/coordinator/evaluations` | COORDINATOR | read-only, all establishments |
 | GET | `/coordinator/evaluations/:id/pdf` | COORDINATOR | the filled-in sheet as a PDF, `Content-Disposition: attachment`. 404 if the evaluation is gone. Rendered from **that evaluation's own template version**, never the published one |
 | GET | `/coordinator/evaluation-template` | COORDINATOR | `{ published, draft }`, each a sheet or `null` |
@@ -1156,6 +1157,33 @@ recoverable, a half-deleted database is not.
   now state the exact counts they are about to destroy.
 - **Coordinator dashboard stats** — every tile and chart backed by real aggregates.
 - **Attendance oversight (Coordinator)** — read-only cross-establishment attendance %.
+- **Attendance filters and the monthly DTR (final-defense F8)** — `GET
+  /coordinator/attendance?month=` (§5 has the exact definitions) and `GET
+  /coordinator/students/:id/dtr?month=`. **`common/dtr-pdf.ts`** is a pure renderer
+  (`renderDtrPdf(data) → Promise<Buffer>`, plain data in, pdfkit/Helvetica like the
+  evaluation PDF, no DB, no hours rule): one LETTER page, one copy (not two-up), title
+  "DAILY TIME RECORD", school, name, month, course, establishment, supervisor (earliest at
+  the establishment; blank line when none), one row per real day of the month (28-31),
+  columns Day · A.M. Arrival/Departure · P.M. Arrival/Departure · Undertime Hours/Minutes
+  (**always blank** — no official hours to measure against), a TOTAL APPROVED HOURS row,
+  the Form 48 certification, signature lines for the trainee and "In-Charge". Times are
+  Manila 12-hour `h:mm`. An APPROVED punch prints even when its partner isn't; the total
+  is `totalApprovedHours` (complete sessions only), computed by the service and passed
+  in. Every y is fixed and text is shrunk-then-truncated to its box, so it can't spill to
+  a second page; the document's own bottom margin is deliberately tiny because PDFKit
+  adds a page whenever text is written past it. Reusable as-is by the batch ZIP, **which
+  is still pending as paid step P5**. `common/dates.ts` gained `MONTH_PATTERN` and
+  `parseMonth`. Client: `use-attendance-oversight.ts` holds month (query arg — one cache
+  entry per month, all under the `AttendanceOversight` tag) plus client-side
+  establishment / course / year level / status / search, options from the loaded rows
+  (establishments by id, with "No establishment"), stable state setters, Clear filters,
+  "Showing X of Y"; the stat cards follow the filters. `AttendanceFilterBar.tsx`: month
+  is a select of "All time" + the last 18 Manila months, not `<input type="month">`
+  (desktop Safari renders that as plain text). `AttendanceOversightTable`: a `toolbar`
+  slot, approved hours under each bar, and a per-row "DTR · <Month>" button (the picked
+  month, else Manila's current month, said in its label and tooltip) through
+  `lib/api/fileDownload.ts` `downloadFile`, one at a time, spinner, errors to the
+  snackbar.
 - **Documents (server)** — a typed checklist of six requirements (`DocumentType`), one
   file each per student. Student: list (signed URLs), upload-or-replace (upsert on
   `(studentId, type)`; new object uploaded, row pointed at it, *then* the old object
@@ -1230,6 +1258,21 @@ recoverable, a half-deleted database is not.
 **All three roles land on a real page after login. No role 404s.**
 
 ### Needs live verification
+
+**Final-defense step F8** (oversight month + filters, single-student DTR PDF). Verified
+in-process only (20 cases). Renderer as a pure function: `%PDF` and exactly one page
+for a normal month, 28-day Feb, leap Feb, 30- and 31-day months, a month with no
+punches, a very long name with null supervisor/establishment/course; the text drawn
+(decoded from the PDF's content streams) has Manila 12-hour times, the unpaired approved
+punch, no 24-hour/UTC clock, exactly the month's days, and a total equal to
+`totalApprovedHours` and to a hand-summed check. Route against a faked Prisma: 400 for
+missing/invalid month (6 forms), 404 unknown student, STUDENT/SUPERVISOR 403, exact
+`Content-Disposition` for "José", one bounded query, PENDING and DECLINED times absent,
+a 00:10 Manila punch (UTC date the day before) on the right row, total 15.5. Oversight:
+bad month and unknown params 400, all-time row with the new fields, October/September
+windows, a student starting after the month and a future month → zeros with a null
+percentage. A sample is written to `/tmp/dtr-sample.pdf`; the layout has **not** been
+looked at by anyone yet. The client was typechecked, never rendered.
 
 **Final-defense step F7** (establishment detail leak, filters, assigned students).
 Server verified in-process only — real `AppModule`, `ValidationPipe`, `RolesGuard` and

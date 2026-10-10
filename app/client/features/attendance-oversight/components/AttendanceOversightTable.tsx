@@ -1,4 +1,11 @@
-import { Search, ChevronLeft, ChevronRight, CalendarCheck } from "lucide-react";
+import {
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  CalendarCheck,
+  FileDown,
+  Loader2,
+} from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
 import ProgressBar from "@/components/ui/ProgressBar";
 import { AttendanceOversightRow } from "@/lib/api/attendanceOversightApi";
@@ -13,6 +20,14 @@ interface AttendanceOversightTableProps {
   onSearchChange: (value: string) => void;
   onPageChange: (page: number) => void;
   emptyMessage?: string;
+  /** The filter bar, rendered under the search box. */
+  toolbar?: React.ReactNode;
+  /** "October 2026" — the month a DTR download will be for. */
+  dtrMonthLabel: string;
+  /** Whether the coordinator picked that month (vs. the current one by default). */
+  dtrMonthIsPicked: boolean;
+  downloadingId: string | null;
+  onDownloadDtr: (row: AttendanceOversightRow) => void;
 }
 
 export default function AttendanceOversightTable({
@@ -25,7 +40,16 @@ export default function AttendanceOversightTable({
   onSearchChange,
   onPageChange,
   emptyMessage = "No students match your filters.",
+  toolbar,
+  dtrMonthLabel,
+  dtrMonthIsPicked,
+  downloadingId,
+  onDownloadDtr,
 }: AttendanceOversightTableProps) {
+  const dtrHint = dtrMonthIsPicked
+    ? `Download the DTR for ${dtrMonthLabel}`
+    : `No month selected — downloads the DTR for this month, ${dtrMonthLabel}`;
+
   const columns: DataTableColumn<AttendanceOversightRow>[] = [
     {
       key: "student",
@@ -61,10 +85,34 @@ export default function AttendanceOversightTable({
             />
             <div className="text-xs text-gray-500 mt-1">
               {r.presentDays} of {r.totalDays} day
-              {r.totalDays === 1 ? "" : "s"}
+              {r.totalDays === 1 ? "" : "s"} · {r.approvedHours} hrs
             </div>
           </div>
         ),
+    },
+    {
+      key: "dtr",
+      label: "DTR",
+      render: (r) => {
+        const busy = downloadingId === r.id;
+        return (
+          <button
+            type="button"
+            onClick={() => onDownloadDtr(r)}
+            disabled={downloadingId !== null}
+            title={dtrHint}
+            aria-label={`${dtrHint} — ${r.name}`}
+            className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md border border-blue-200 text-blue-600 hover:bg-blue-50 text-xs font-medium whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {busy ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <FileDown size={14} />
+            )}
+            {busy ? "Preparing…" : `DTR · ${dtrMonthLabel}`}
+          </button>
+        );
+      },
     },
   ];
 
@@ -85,6 +133,8 @@ export default function AttendanceOversightTable({
           className="w-full h-10 md:h-12 pl-9 md:pl-11 pr-3 md:pr-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-900 placeholder-gray-400"
         />
       </div>
+
+      {toolbar}
 
       {isLoading ? (
         <p className="text-gray-400 text-sm">Loading...</p>

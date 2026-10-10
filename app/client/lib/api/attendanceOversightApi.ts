@@ -11,14 +11,24 @@ export interface AttendanceOversightRow {
   id: string;
   studentIdNumber: string;
   name: string;
+  course: string | null;
+  yearLevel: string | null;
+  status: "ACTIVE" | "PENDING" | "COMPLETED" | "INACTIVE";
+  establishmentId: string | null;
   establishmentName: string | null;
-  /** APPROVED attendance days logged up to today. */
-  presentDays: number;
-  /** Calendar days from the student's start date to today, inclusive. */
-  totalDays: number;
   /**
-   * null when there is no window to measure against — the student has no start
-   * date, or it is still in the future. Render it as "—", never as 0%.
+   * Days in the window with at least one approved session. The window is
+   * [startDate, today] — or, with a month, [max(month start, startDate),
+   * min(month end, today)] (Manila calendar).
+   */
+  presentDays: number;
+  /** Calendar days in the window, inclusive; 0 when it is empty or there is no start date. */
+  totalDays: number;
+  /** Hours of the approved sessions in the window. */
+  approvedHours: number;
+  /**
+   * null when there is no window to measure against (no start date, a start
+   * date after the window, a future month). Render it as "—", never as 0%.
    */
   attendancePercentage: number | null;
 }
@@ -28,8 +38,20 @@ export const attendanceOversightApi = createApi({
   baseQuery: baseQueryWithAuth,
   tagTypes: ["AttendanceOversight"],
   endpoints: (builder) => ({
-    getAttendanceOversight: builder.query<AttendanceOversightRow[], void>({
-      query: () => "/coordinator/attendance",
+    /**
+     * `month` (`YYYY-MM`) recomputes the figures for that month and is the
+     * only server-side filter — every other filter is client-side over these
+     * rows. One cache entry per month; all share the tag, so a student
+     * delete still invalidates every month.
+     */
+    getAttendanceOversight: builder.query<
+      AttendanceOversightRow[],
+      string | undefined
+    >({
+      query: (month) =>
+        month
+          ? `/coordinator/attendance?month=${encodeURIComponent(month)}`
+          : "/coordinator/attendance",
       providesTags: ["AttendanceOversight"],
     }),
   }),

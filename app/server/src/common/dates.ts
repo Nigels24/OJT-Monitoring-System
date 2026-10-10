@@ -70,3 +70,28 @@ export function formatDateOnly(value: Date): string {
     timeZone: 'UTC',
   });
 }
+
+/** `YYYY-MM` with a real month (01-12). The only month format the API accepts. */
+export const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/**
+ * A calendar month as date-only bounds (UTC midnight, the convention above):
+ * `start` = the 1st, `end` = the last day (28-31), `next` = the 1st of the
+ * following month (the exclusive upper bound for a `date` range query).
+ * `null` for anything that isn't a strict `YYYY-MM`.
+ */
+export function parseMonth(value: string): {
+  year: number;
+  month: number;
+  start: Date;
+  end: Date;
+  next: Date;
+} | null {
+  if (!MONTH_PATTERN.test(value)) return null;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const next = new Date(Date.UTC(year, month, 1));
+  const end = new Date(next.getTime() - MS_PER_DAY);
+  return { year, month, start, end, next };
+}

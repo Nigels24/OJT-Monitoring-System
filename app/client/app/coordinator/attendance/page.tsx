@@ -9,6 +9,7 @@ import { CalendarCheck, Users, TrendingUp, AlertTriangle } from "lucide-react";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
 import { useAttendanceOversight } from "@/features/attendance-oversight/hooks/use-attendance-oversight";
 import AttendanceOversightTable from "@/features/attendance-oversight/components/AttendanceOversightTable";
+import AttendanceFilterBar from "@/features/attendance-oversight/components/AttendanceFilterBar";
 
 /**
  * Read-only attendance oversight across every establishment.
@@ -20,6 +21,7 @@ import AttendanceOversightTable from "@/features/attendance-oversight/components
  */
 export default function CoordinatorAttendancePage() {
   const currentUser = useCurrentUser();
+  const oversight = useAttendanceOversight();
   const {
     isLoading,
     isError,
@@ -30,7 +32,7 @@ export default function CoordinatorAttendancePage() {
     stats,
     setSearch,
     setPage,
-  } = useAttendanceOversight();
+  } = oversight;
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -91,6 +93,13 @@ export default function CoordinatorAttendancePage() {
             totalPages={totalPages}
             onSearchChange={setSearch}
             onPageChange={setPage}
+            toolbar={<AttendanceFilterBar oversight={oversight} />}
+            dtrMonthLabel={oversight.dtrMonthLabel}
+            dtrMonthIsPicked={!!oversight.month}
+            downloadingId={oversight.downloadingId}
+            onDownloadDtr={(row) => {
+              void oversight.downloadDtr(row);
+            }}
           />
         </Card>
       </main>

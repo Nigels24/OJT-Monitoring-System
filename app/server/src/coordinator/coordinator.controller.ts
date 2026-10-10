@@ -29,8 +29,9 @@ import {
 } from 'class-validator';
 import { CoordinatorService } from './coordinator.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
-import { EmptyToNull } from '../common/transforms';
+import { EmptyToNull, EmptyToUndefined } from '../common/transforms';
 import { attachmentDisposition } from '../common/document-types';
+import { MONTH_PATTERN } from '../common/dates';
 
 // The coordinator creates no accounts here. Supervisors are created inside an
 // establishment (POST /establishments, POST /establishments/:id/supervisor);
@@ -167,6 +168,28 @@ class UpdateStudentDto extends StudentDetailsDto {
   status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
 }
 
+const MONTH_MESSAGE = 'month must be YYYY-MM with a real month (01-12)';
+
+/**
+ * `GET /coordinator/attendance`. Only `month` is a server-side filter — it
+ * changes the computed figures. Establishment, course, year level and status
+ * are filtered client-side over the rows this returns, so they are not
+ * declared here, and `forbidNonWhitelisted` makes any of them (or any other
+ * query param) a 400 instead of something silently ignored.
+ */
+class AttendanceOversightQueryDto {
+  @IsOptional()
+  @EmptyToUndefined()
+  @Matches(MONTH_PATTERN, { message: MONTH_MESSAGE })
+  month?: string;
+}
+
+/** `GET /coordinator/students/:id/dtr` — the month is required. */
+class DtrQueryDto {
+  @Matches(MONTH_PATTERN, { message: MONTH_MESSAGE })
+  month!: string;
+}
+
 class BulkDeleteStudentsDto {
   @IsArray()
   @ArrayNotEmpty()
@@ -200,8 +223,31 @@ export class CoordinatorController {
   }
 
   @Get('attendance')
-  getAttendanceOversight() {
-    return this.coordinatorService.getAttendanceOversight();
+  getAttendanceOversight(@Query() query: AttendanceOversightQueryDto) {
+    return this.coordinatorService.getAttendanceOversight(query.month);
+  }
+
+  /**
+   * One student's monthly Daily Time Record (Form 48 style), approved punches
+   * only, as an attachment. Built whole before the first header, like the
+   * evaluation PDF, so a failure is a clean error rather than a truncated 200.
+   * The filename keeps accents; `attachmentDisposition` sends an ASCII
+   * `filename=` fallback plus the RFC 5987 `filename*=`.
+   */
+  @Get('students/:id/dtr')
+  async downloadStudentDtr(
+    @Param('id') id: string,
+    @Query() query: DtrQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { filename, body } = await this.coordinatorService.getStudentDtr(
+      id,
+      query.month,
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', attachmentDisposition(filename));
+    res.setHeader('Content-Length', body.length);
+    res.end(body);
   }
 
   @Get('evaluations')

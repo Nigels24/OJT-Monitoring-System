@@ -12,7 +12,14 @@ import {
   hasApprovedSession,
   totalApprovedHours,
 } from '../common/attendance-hours';
-import { MS_PER_DAY, manilaToday, startOfUtcDay } from '../common/dates';
+import {
+  MS_PER_DAY,
+  manilaToday,
+  parseMonth,
+  startOfUtcDay,
+} from '../common/dates';
+import { renderDtrPdf } from '../common/dtr-pdf';
+import { SCHOOL_NAME } from '../common/school';
 import {
   EVALUATION_INCLUDE,
   withSectionTotals,
@@ -381,26 +388,54 @@ export class CoordinatorService {
    * so students with different start dates or weekend-heavy periods are only
    * roughly comparable.
    */
-  async getAttendanceOversight() {
+  /**
+   * Cross-establishment attendance, one row per student.
+   *
+   * `month` (`YYYY-MM`, validated by the DTO) is the only server-side filter,
+   * because it changes the figures; establishment, course, year level and
+   * status filter client-side over these rows. Definitions — identical with
+   * and without a month, only the window differs:
+   *
+   * - **window**: all-time = [startDate, today]; with a month =
+   *   [max(month start, startDate), min(month end, today)] — Manila's today.
+   * - **presentDays**: days in the window with at least one approved session
+   *   (In and Out both APPROVED — `hasApprovedSession`).
+   * - **approvedHours**: hours of those sessions (`totalApprovedHours`).
+   * - **totalDays**: calendar days in the window, inclusive; `0` when the
+   *   window is empty (start date after the month, a future month) or the
+   *   student has no startDate.
+   * - **attendancePercentage**: round(presentDays / totalDays × 100), or
+   *   `null` when totalDays is 0 — never a division by zero, never a fake 0%.
+   *
+   * A student with no startDate has no lower bound for presentDays/hours
+   * (the count stays honest about what was logged) but no totalDays, so the
+   * percentage is null either way. Every student is returned, zeros included.
+   */
+  async getAttendanceOversight(month?: string) {
     // Manila's calendar day — see getDashboard.
-    const todayStart = manilaToday();
-    const todayEnd = new Date(todayStart.getTime() + MS_PER_DAY);
+    const today = manilaToday();
+    const range = month ? parseMonth(month) : null;
+    if (month && !range) {
+      // The DTO already rejects this; kept so the service is safe on its own.
+      throw new BadRequestException('month must be YYYY-MM');
+    }
 
-    // Both bounds matter. The upper one (`lt: todayEnd`, i.e. date <= today)
-    // agrees with `StudentService.punch`, which only ever writes Manila's
-    // today; it stays as a second line of defence for rows written before
-    // punches existed. The lower one is each student's own
-    // startDate, applied per student below: a day approved *before* a student
-    // started is outside the window totalDays measures, and counting it would
-    // push the percentage past 100%.
-    //
-    // A filtered relation `_count` can't express that correlated per-row bound,
-    // so the rows are fetched flat and bucketed here — still one round trip per
-    // table, no N+1, the same app-level aggregation shape as common/
-    // attendance-hours.ts.
+    // Upper bound of every window: today, or the month's last day if earlier.
+    const windowEnd = range && range.end < today ? range.end : today;
+
+    // Two flat queries, no N+1: the per-student lower bound (startDate) is a
+    // correlated bound Prisma can't express in a filtered count, so rows are
+    // bucketed here. Explicit selects only.
     const [students, approvedRows] = await Promise.all([
       this.prisma.client.student.findMany({
-        include: {
+        select: {
+          id: true,
+          studentIdNumber: true,
+          course: true,
+          yearLevel: true,
+          status: true,
+          startDate: true,
+          establishmentId: true,
           user: { select: { name: true } },
           establishment: { select: { name: true } },
         },
@@ -408,7 +443,10 @@ export class CoordinatorService {
       }),
       this.prisma.client.attendance.findMany({
         where: {
-          date: { lt: todayEnd },
+          date: {
+            ...(range ? { gte: range.start } : {}),
+            lt: new Date(windowEnd.getTime() + MS_PER_DAY),
+          },
           punches: { some: { status: 'APPROVED' } },
         },
         select: {
@@ -422,51 +460,150 @@ export class CoordinatorService {
       }),
     ]);
 
-    // A day with an approved punch is not yet a present day: it needs a whole
-    // session (In and Out) approved.
-    const approvedByStudent = new Map<string, Date[]>();
+    // Only days with a whole approved session are present days, and only
+    // their sessions carry approved hours — so nothing else is kept.
+    const sessionDaysByStudent = new Map<
+      string,
+      { date: Date; punches: (typeof approvedRows)[number]['punches'] }[]
+    >();
     for (const row of approvedRows) {
       if (!hasApprovedSession(row.punches)) continue;
-      const dates = approvedByStudent.get(row.studentId) ?? [];
-      dates.push(row.date);
-      approvedByStudent.set(row.studentId, dates);
+      const days = sessionDaysByStudent.get(row.studentId) ?? [];
+      days.push({ date: row.date, punches: row.punches });
+      sessionDaysByStudent.set(row.studentId, days);
     }
 
     return students.map((student) => {
       const startDay = student.startDate
         ? startOfUtcDay(student.startDate)
         : null;
+      // The window's lower bound. With no startDate: the month's start (or
+      // none at all-time) for counting what was logged.
+      let windowStart: Date | null = range?.start ?? null;
+      if (startDay && (!windowStart || startDay > windowStart)) {
+        windowStart = startDay;
+      }
 
-      // With no startDate there is no lower bound to apply — the count stays
-      // honest about what was logged, while totalDays below is 0 and so the
-      // percentage is null either way.
-      const presentDays = (approvedByStudent.get(student.id) ?? []).filter(
-        (date) => !startDay || date >= startDay,
-      ).length;
+      const inWindow = (sessionDaysByStudent.get(student.id) ?? []).filter(
+        (day) =>
+          (!windowStart || day.date >= windowStart) && day.date <= windowEnd,
+      );
 
-      const totalDays = startDay
-        ? Math.max(
-            0,
-            Math.floor(
-              (todayStart.getTime() - startDay.getTime()) / MS_PER_DAY,
-            ) + 1,
-          )
-        : 0;
+      const totalDays =
+        startDay && windowStart && windowStart <= windowEnd
+          ? Math.floor(
+              (windowEnd.getTime() - windowStart.getTime()) / MS_PER_DAY,
+            ) + 1
+          : 0;
+      const presentDays = inWindow.length;
 
       return {
         id: student.id,
         studentIdNumber: student.studentIdNumber,
         name: student.user.name,
+        course: student.course,
+        yearLevel: student.yearLevel,
+        status: student.status,
+        establishmentId: student.establishmentId,
         establishmentName: student.establishment?.name ?? null,
         presentDays,
         totalDays,
-        // null, not 0, when there is no window to measure against — no
-        // startDate, or a startDate still in the future. Same distinction the
-        // dashboard's averageRating makes between "no data" and a real zero.
+        approvedHours: totalApprovedHours(inWindow),
+        // null, not 0, when there is no window to measure against — the same
+        // "no data vs zero" distinction as the dashboard's averageRating.
         attendancePercentage:
           totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : null,
       };
     });
+  }
+
+  /**
+   * One student's Daily Time Record for a month, as PDF bytes plus the
+   * download name. 404 for an unknown student; the month is validated by the
+   * DTO (and again here).
+   *
+   * One bounded query for the month's days (`date` in [1st, 1st of next
+   * month), the Manila calendar every `Attendance.date` is stored in), with
+   * only APPROVED punches selected — PENDING and DECLINED can't print because
+   * they are never fetched. Each day is placed by its own `date`, never by a
+   * punch's UTC timestamp, so a 07:30 Manila punch (23:30 UTC the day before)
+   * lands on the right row. The total is `totalApprovedHours` over the same
+   * days: complete approved sessions only.
+   */
+  async getStudentDtr(studentId: string, month: string) {
+    const range = parseMonth(month);
+    if (!range) {
+      throw new BadRequestException('month must be YYYY-MM');
+    }
+
+    const student = await this.prisma.client.student.findUnique({
+      where: { id: studentId },
+      select: {
+        firstName: true,
+        middleInitial: true,
+        lastName: true,
+        course: true,
+        user: { select: { name: true } },
+        establishment: {
+          select: {
+            name: true,
+            // Earliest supervisor, as on the establishment list; may be none.
+            supervisors: {
+              select: { user: { select: { name: true } } },
+              orderBy: { user: { createdAt: 'asc' } },
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    const days = await this.prisma.client.attendance.findMany({
+      where: { studentId, date: { gte: range.start, lt: range.next } },
+      select: {
+        date: true,
+        punches: {
+          where: { status: 'APPROVED' },
+          select: HOURS_PUNCH_SELECT,
+        },
+      },
+    });
+
+    const body = await renderDtrPdf({
+      studentName: student.user.name,
+      schoolName: SCHOOL_NAME,
+      course: student.course,
+      establishmentName: student.establishment?.name ?? null,
+      supervisorName: student.establishment?.supervisors[0]?.user.name ?? null,
+      year: range.year,
+      month: range.month,
+      days: days.map((day) => {
+        const time = (kind: string) =>
+          day.punches.find((p) => p.kind === kind)?.time ?? null;
+        return {
+          day: day.date.getUTCDate(),
+          amArrival: time('TIME_IN_AM'),
+          amDeparture: time('TIME_OUT_AM'),
+          pmArrival: time('TIME_IN_PM'),
+          pmDeparture: time('TIME_OUT_PM'),
+        };
+      }),
+      totalApprovedHours: totalApprovedHours(days),
+    });
+
+    // "Dela Cruz, Juan - DTR 2026-10.pdf": surname first, as the DTR is filed.
+    // Accents are kept; attachmentDisposition adds the RFC 5987 form.
+    const displayName =
+      student.lastName?.trim() && student.firstName?.trim()
+        ? `${student.lastName.trim()}, ${student.firstName.trim()}`
+        : student.user.name;
+    return {
+      filename: safeFileName(`${displayName} - DTR ${month}.pdf`),
+      body,
+    };
   }
 
   /**
