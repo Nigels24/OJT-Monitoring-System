@@ -1,15 +1,16 @@
 import { UserCog, X } from "lucide-react";
 import SupervisorForm from "./SupervisorForm";
-import { Establishment } from "@/lib/api/establishmentApi";
+import type { CoordinatorSupervisor } from "@/lib/api/supervisorManagementApi";
 import type { SupervisorForm as SupervisorFormValues } from "../hooks/use-supervisor-management";
 import Overlay from "@/components/ui/Overlay";
 
+/** Edits an existing supervisor; they are created on the Establishments page. */
 interface SupervisorFormDialogProps {
-  open: boolean;
+  /** The supervisor being edited; `null` = closed. */
+  supervisor: CoordinatorSupervisor | null;
   form: SupervisorFormValues;
-  isCreating: boolean;
+  isSaving: boolean;
   error: string;
-  establishments: Establishment[];
   setField: (
     key: keyof SupervisorFormValues,
   ) => (e: { target: { value: string } }) => void;
@@ -18,21 +19,20 @@ interface SupervisorFormDialogProps {
 }
 
 export default function SupervisorFormDialog({
-  open,
+  supervisor,
   form,
-  isCreating,
+  isSaving,
   error,
-  establishments,
   setField,
   onSubmit,
   onClose,
 }: SupervisorFormDialogProps) {
-  if (!open) return null;
+  if (!supervisor) return null;
 
   return (
     <Overlay
       open
-      label="Add Supervisor"
+      label="Edit Supervisor"
       onClose={onClose}
       closeOnBackdrop={false}
     >
@@ -40,9 +40,15 @@ export default function SupervisorFormDialog({
         <div className="flex items-center justify-between p-4 md:p-6 border-b border-gray-200">
           <div className="flex items-center gap-2">
             <UserCog size={20} className="text-blue-600" />
-            <h2 className="text-lg md:text-xl font-semibold text-gray-900">
-              Add Supervisor
-            </h2>
+            <div>
+              <h2 className="text-lg md:text-xl font-semibold text-gray-900">
+                Edit Supervisor
+              </h2>
+              <p className="text-xs text-gray-500">
+                {supervisor.user.username ?? supervisor.user.email} ·{" "}
+                {supervisor.establishment?.name ?? "No establishment"}
+              </p>
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -56,9 +62,8 @@ export default function SupervisorFormDialog({
         <div className="flex-1 overflow-y-auto p-4 md:p-6">
           <SupervisorForm
             form={form}
-            isCreating={isCreating}
+            isSaving={isSaving}
             error={error}
-            establishments={establishments}
             setField={setField}
             onSubmit={onSubmit}
             onCancel={onClose}

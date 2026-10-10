@@ -24,11 +24,7 @@ export class AuthService {
    * username from shadowing another's email.
    */
   async login(identifier: string, password: string) {
-    const user = await this.prisma.client.user.findFirst({
-      where: {
-        OR: [{ email: identifier }, { username: identifier }],
-      },
-    });
+    const user = await this.findByIdentifier(identifier);
 
     if (!user) {
       throw new UnauthorizedException('Invalid username or password');
@@ -41,6 +37,49 @@ export class AuthService {
     }
 
     return this.session(user);
+  }
+
+  /**
+   * Resolves the login box to one account.
+   *
+   * Since no username contains "@" and every email does, the "@" decides which
+   * column to search — one indexed lookup instead of an OR across both:
+   *
+   * - **Email:** exact match on the unique index, as before.
+   * - **Username:** case-insensitive, so "JDelacruz" signs in as `jdelacruz`.
+   *   Generated usernames are lowercase and `nextFreeUsername` already treats
+   *   names as case-insensitively taken, so a new clash can't be created. A
+   *   pair of legacy typed names differing only in case could still exist:
+   *   then the exact-case spelling wins, and with no exact match the login is
+   *   refused rather than guessing between two accounts.
+   *
+   * Prisma's `mode: 'insensitive'` is ILIKE on Postgres, where `%` and `_` are
+   * wildcards; a username containing either (only possible for a legacy typed
+   * one) is matched exactly instead, so a wildcard can never reach another
+   * account. ILIKE can't use the unique index on `username`, so this is a scan
+   * of User — a table of a few hundred rows, where that costs nothing. A
+   * `lower(username)` index would need a migration; add one if it ever grows.
+   */
+  private async findByIdentifier(identifier: string) {
+    if (identifier.includes('@')) {
+      return this.prisma.client.user.findUnique({
+        where: { email: identifier },
+      });
+    }
+
+    if (/[%_\\]/.test(identifier)) {
+      return this.prisma.client.user.findUnique({
+        where: { username: identifier },
+      });
+    }
+
+    const matches = await this.prisma.client.user.findMany({
+      // No `take`: a case-insensitive equality can only match case variants
+      // of one name, and the exact one must not be cut off.
+      where: { username: { equals: identifier, mode: 'insensitive' } },
+    });
+    if (matches.length <= 1) return matches[0] ?? null;
+    return matches.find((user) => user.username === identifier) ?? null;
   }
 
   /**

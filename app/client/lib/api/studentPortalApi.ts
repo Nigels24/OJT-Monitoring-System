@@ -96,10 +96,13 @@ export interface StudentDashboard {
     id: string;
     name: string;
     industryType: string | null;
-    coordinatorFirstName: string | null;
-    coordinatorLastName: string | null;
-    coordinatorContact: string | null;
-    coordinatorEmail: string | null;
+    /**
+     * The contact card: the establishment's supervisor. All three `null`
+     * when the establishment has no supervisor yet.
+     */
+    supervisorName: string | null;
+    supervisorPosition: string | null;
+    supervisorEmail: string | null;
   } | null;
   stats: {
     completedHours: number;

@@ -5,10 +5,9 @@ import { COORDINATOR_NAV } from "@/features/coordinator/nav";
 import PageHeader from "@/components/ui/PageHeader";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
-import Button from "@/components/ui/Button";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { useCurrentUser } from "@/lib/hooks/use-current-user";
-import { UserCog, Plus, Building2, UserX, KeyRound } from "lucide-react";
+import { UserCog, Building2, UserX, KeyRound } from "lucide-react";
 import { useSupervisorManagement } from "@/features/supervisor-management/hooks/use-supervisor-management";
 import SupervisorList from "@/features/supervisor-management/components/SupervisorList";
 import SupervisorFormDialog from "@/features/supervisor-management/components/SupervisorFormDialog";
@@ -20,14 +19,13 @@ export default function SupervisorManagementPage() {
   const {
     form,
     error,
-    establishments,
     isLoading,
-    isCreating,
+    isSaving,
+    editTarget,
     resendTarget,
     isResending,
     issuedCredentials,
     deleteTarget,
-    isDialogOpen,
     search,
     page,
     paged,
@@ -42,7 +40,7 @@ export default function SupervisorManagementPage() {
     handleDeleteConfirm,
     handleResendConfirm,
     closeIssuedCredentials,
-    handleOpenAddDialog,
+    handleOpenEdit,
     closeDialog,
   } = useSupervisorManagement();
 
@@ -59,17 +57,9 @@ export default function SupervisorManagementPage() {
         <div className="bg-gradient-to-r from-gray-800 to-gray-700 rounded-2xl p-4 md:p-6 mb-6 flex flex-col md:flex-row md:items-start md:justify-between gap-4">
           <PageHeader
             title="Supervisor Management"
-            subtitle="Manage establishment supervisors and their credentials"
+            subtitle="Supervisors are added from the Establishments page; edit their details and logins here"
             icon={UserCog}
           />
-          <Button
-            icon={Plus}
-            onClick={handleOpenAddDialog}
-            fullWidth={false}
-            className="self-start md:self-auto"
-          >
-            Add Supervisor
-          </Button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
@@ -102,6 +92,7 @@ export default function SupervisorManagementPage() {
             paged={paged}
             onSearchChange={setSearch}
             onPageChange={setPage}
+            onEdit={handleOpenEdit}
             onResendLogin={(supervisor) => {
               setResendTarget(supervisor);
             }}
@@ -132,11 +123,10 @@ export default function SupervisorManagementPage() {
       />
 
       <SupervisorFormDialog
-        open={isDialogOpen}
+        supervisor={editTarget}
         form={form}
-        isCreating={isCreating}
+        isSaving={isSaving}
         error={error}
-        establishments={establishments || []}
         setField={setField}
         onSubmit={handleSubmit}
         onClose={closeDialog}

@@ -219,12 +219,18 @@ the prototype's three demo logins are a mock-up device, not the real account mod
 ### Auth: two separate checks, in two separate places
 
 Login is by **username or email**. `POST /auth/login` takes `{ identifier, password }`;
-`AuthService.login` matches `identifier` against `User.email` OR `User.username`
-(`findFirst` with `OR`, exact case), verifies bcrypt, and signs `{ sub, email, role }`
+`AuthService.login` (`findByIdentifier`) picks the column by `"@"`: with one, an exact
+`User.email` match on the unique index; without, a **case-insensitive** `User.username`
+match (`equals` + `mode: 'insensitive'`, so `JDelacruz` signs in as `jdelacruz`). If two
+legacy usernames differ only in case, the exact spelling wins and otherwise the login is
+refused; an identifier containing `%`, `_` or `\` (ILIKE wildcards — legacy typed names
+only) is matched exactly. ILIKE can't use the unique index — a scan of a few hundred
+rows; a `lower(username)` index would need a migration. It then verifies bcrypt and
+signs `{ sub, email, role }`
 plus **`mcp: true` only when `User.mustChangePassword`** is set. `User.username` is
 nullable (accounts predating it sign in with email), unique, and never contains `"@"`
 (generated ones are letters and digits only; the old typed ones were barred from it) —
-that is what stops a username colliding with an email in that lookup.
+that is what lets the `"@"` decide the lookup.
 
 `JwtStrategy.validate` returns `{ userId, email, role, mustChangePassword }` onto
 `req.user` (`mustChangePassword` = the token's `mcp`, false when absent). **Handlers read
@@ -284,10 +290,15 @@ unused. Students and supervisors never choose their first password.
   rule**. `nextFreeUsername(base, taken)` appends 2, 3, … (case-insensitive compare).
   `createWithGeneratedUsername(base, findTaken, create, isUsernameClash)` does one read of
   taken names, creates, and on a lost race (P2002 on `username`) re-reads and retries, 3
-  attempts. `generatePassword()` = 8 chars from `crypto.randomInt`, no `0 O 1 l I`, at least
+  attempts. `generatePassword()` = 8 chars from `crypto.randomInt`, no `0 O o 1 l I`, at least
   one letter and one digit, shuffled.
-- **`src/common/accounts.ts`** — the Prisma callbacks: `findTakenUsernames` (one
-  `startsWith`, `mode: 'insensitive'` query) and `isUsernameClash`.
+- **`src/common/accounts.ts`** — the Prisma half: `findTakenUsernames` (one
+  `startsWith`, `mode: 'insensitive'` query), `isUsernameClash`, `isEmailClash`,
+  `assertEmailAvailable` (409), `buildPersonName` (first [MI] last, the one way a
+  `User.name` is composed) and **`issueNewAccount(db, first, last, create)`** — generate,
+  hash, pick a username, run `create(username, hash)` (retried whole on a username race,
+  so everything it writes belongs in one transaction), return `{ result, credentials }`.
+  Used by student create, establishment create and add-supervisor.
 - The create/resend response carries **`credentials: { username, tempPassword }`** — the
   **only** place the plaintext exists. It is hashed (`bcrypt`, 10) before Prisma sees it,
   never logged, never stored; the client shows it once in `CredentialsDialog` (closes only
@@ -302,6 +313,7 @@ unused. Students and supervisors never choose their first password.
 | `PATCH /auth/password` | any signed-in user, **including a must-change session** | `{ currentPassword, newPassword }` (≥ 8) — the current password is required even with a valid JWT (in forced mode it is the temporary one). Clears `mustChangePassword` and returns a **fresh session** `{ changed, accessToken, user }`, since the caller's token may carry `mcp` |
 | `POST /coordinator/students/:id/resend-credentials` | COORDINATOR | "Resend login": new generated password, flag set, `{ id, name, email, credentials }`. Username never regenerated (`null` for a pre-username account → sign in by email) |
 | `POST /coordinator/supervisors/:id/resend-credentials` | COORDINATOR | same |
+| `POST /establishments` (with `supervisor`) · `POST /establishments/:id/supervisor` | COORDINATOR | how a supervisor account is created — see §5 |
 | `npm run reset-coordinator` | CLI, needs `.env` | **the only way to reset a coordinator.** Also clears `mustChangePassword`. There is deliberately no web route — don't add one |
 
 The old `PATCH /coordinator/{students,supervisors}/:id/password` (coordinator types the
@@ -429,8 +441,10 @@ and makes required create fields optional.
 - **`PrismaService`** exposes the client as `.client` rather than extending
   `PrismaClient` — every query reads `this.prisma.client.<model>`. It is built with a
   **global `omit`** of the retired `Student` columns (`age`, `dateOfBirth`, `gender`,
-  `endDate` — §7 "Course decides year level and hours"), so no query returns them and
-  the generated types don't have them. Remove the entry when the columns are dropped.
+  `endDate` — §7 "Course decides year level and hours") and the retired `Establishment`
+  `coordinator*` contact columns (§7 "Supervisor created inside the establishment"), so
+  no query returns them and the generated types don't have them. Remove an entry when its
+  columns are dropped.
 - **`src/common/courses.ts`** — the course table (`COURSES`: `code`, `label`,
   `yearLevel`, `requiredHours`), `COURSE_LABELS`, `isOfferedCourse`,
   `deriveFromCourse`. The only source of a student's year level and required hours.
@@ -595,11 +609,13 @@ table; never derive one from the other.
 | POST | `/auth/login` | public | `{ identifier, password }` |
 | PATCH | `/auth/password` | any signed-in (also must-change) | `{ currentPassword, newPassword }` → `{ changed, accessToken, user }`, clears `mustChangePassword` |
 | GET | `/establishments` · `/establishments/:id` | any signed-in | reads are open |
-| POST/PATCH/DELETE | `/establishments` · `/establishments/:id` | COORDINATOR | POST always creates **ACTIVE** — `status` is only on the update DTO (400 on create) |
-| POST | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | **generates** username + temporary password, returned once as `credentials` (§4); `username`/`password` in the body are a 400; `mustChangePassword` set. Student: `firstName`/`lastName` required (service check). Supervisor: `firstName`, `middleInitial?`, `lastName` replace `name`. A student is created **ACTIVE** — `status` is not on the create DTO (400 if sent). `course` is **required** and must be an offered course; the server sets `yearLevel`/`requiredHours` from it. `yearLevel`, `requiredHours`, `age`, `dateOfBirth`, `gender`, `endDate` in the body are a 400 |
+| POST/PATCH/DELETE | `/establishments` · `/establishments/:id` | COORDINATOR | POST always creates **ACTIVE** — `status` is only on the update DTO (400 on create). The `coordinator*` contact fields are a **400** on both. POST takes an optional nested **`supervisor: { firstName, middleInitial?, lastName, email, position? }`** (no `username`/`password`/`establishmentId` — 400): Establishment + User + Supervisor in **one `$transaction`** (`CASCADE_TRANSACTION_OPTIONS`), generated login, `mustChangePassword` set, 409 on a taken email; the response is the establishment plus `supervisor: { id, name, email, position }` and `credentials`. PATCH rejects `supervisor` (400). `GET /establishments` rows carry `supervisor: { id, name, email, position } \| null` (earliest-created if several) |
+| POST | `/establishments/:id/supervisor` | COORDINATOR | same body as the nested `supervisor`; `{ id, name, email, position, establishmentId, credentials }`. 404 unknown establishment, 409 taken email. **A second supervisor is not refused** (paid item 3, pending) — the client offers this only when there is none |
+| POST | `/coordinator/students` | COORDINATOR | **generates** username + temporary password, returned once as `credentials` (§4); `username`/`password` in the body are a 400; `mustChangePassword` set. `firstName`/`lastName` required (service check). (`POST /coordinator/supervisors` is **removed** — supervisors are created through `/establishments`.) A student is created **ACTIVE** — `status` is not on the create DTO (400 if sent). `course` is **required** and must be an offered course; the server sets `yearLevel`/`requiredHours` from it. `yearLevel`, `requiredHours`, `age`, `dateOfBirth`, `gender`, `endDate` in the body are a 400 |
 | POST | `/coordinator/students/bulk-delete` | COORDINATOR | `{ ids }`, 1–100. Every id must exist and be **COMPLETED**, else 400 with `offenders: [{ id, reason }]` and nothing deleted. Then `deleteStudentCascade` per student, **one `$transaction` each** (status re-checked inside), files after each commit. Returns `{ deleted: [ids], failed: [{ id, reason }] }` |
 | GET | `/coordinator/students` · `/coordinator/supervisors` | COORDINATOR | |
 | PATCH/DELETE | `/coordinator/students/:id` | COORDINATOR | delete is guarded, see §6. PATCH: same six fields rejected. A `course` that **differs from the stored one** must be offered (clearing it is a 400) and recomputes `yearLevel`/`requiredHours`; an unchanged or absent course leaves all three alone, so legacy students keep their values until the course changes |
+| PATCH | `/coordinator/supervisors/:id` | COORDINATOR | `{ firstName?, middleInitial?, lastName?, email?, position? }`. **Not** `establishmentId` or `username` (400). Only `User.name` is stored, so sending any name part requires `firstName` + `lastName` and rebuilds the whole name (`buildPersonName`); none leaves it alone. `""` clears `middleInitial`/`position`; a blank first/last/email is a 400. 409 taken email (pre-check + P2002), 404 unknown. One nested write (User + Supervisor). Returns the list-row shape |
 | DELETE | `/coordinator/supervisors/:id` | COORDINATOR | delete is guarded, see §6 |
 | POST | `/coordinator/students/:id/resend-credentials` · `/coordinator/supervisors/:id/resend-credentials` | COORDINATOR | no body; new temporary password, `{ id, name, email, credentials }`; 404 unknown id. Replaced `PATCH …/:id/password` |
 | GET | `/coordinator/dashboard` | COORDINATOR | real aggregates |
@@ -613,7 +629,7 @@ table; never derive one from the other.
 | GET | `/coordinator/documents` | COORDINATOR | the checklist: one row per student, **including students with nothing submitted** — `{ id, name, studentIdNumber, establishment: { id, name } \| null, submittedCount, documents: { <DocumentType>: { id, uploadedAt, fileName } \| null } }`. No signed URLs |
 | GET | `/coordinator/documents/:id/download` | COORDINATOR | one file as an attachment (`Content-Type` from storage, RFC 5987 `Content-Disposition`). 404 unknown id, 503 if storage can't return it |
 | GET | `/coordinator/students/:studentId/documents/zip` | COORDINATOR | `?ids=a,b,c` for a selection, none for all. Every id must belong to that student (else 400); 404 unknown student or nothing submitted. Entries `<Type Label> - <Student Name>.<ext>`, archive `<Student Name> - OJT Documents.zip` |
-| GET | `/student/dashboard` · `/student/profile` · `/student/documents` | STUDENT | own data only. Documents: `[{ id, type, fileName, uploadedAt, fileUrl }]`, `fileUrl` signed or `null` |
+| GET | `/student/dashboard` · `/student/profile` · `/student/documents` | STUDENT | own data only. Dashboard `establishment` = `{ id, name, industryType, supervisorName, supervisorPosition, supervisorEmail }` (the contact card — the establishment's earliest supervisor, each `null` when it has none) or `null`. Documents: `[{ id, type, fileName, uploadedAt, fileUrl }]`, `fileUrl` signed or `null` |
 | GET | `/student/attendance` | STUDENT | history, newest first: `[{ id, date, remarks, createdAt, punches: { TIME_IN_AM: Punch \| null, TIME_OUT_AM, TIME_IN_PM, TIME_OUT_PM }, dayStatus, approvedHours, pendingHours }]`, `Punch = { id, kind, time, status, declineReason, decidedAt, decidedBy: { id, user: { name } } \| null }` |
 | GET | `/student/attendance/today` | STUDENT | the punch card: `{ date, attendanceId \| null, remarks, punches, dayStatus \| null (null = nothing logged today), approvedHours, pendingHours, allowed: { <PunchKind>: true \| "<reason>" }, blockedReason \| null }`. The client renders from `allowed` and holds no punch rules |
 | POST | `/student/attendance/punch` | STUDENT | `{ kind }` only — **no date or time**; the server stamps now on Manila's today, and a sent `time`/`date` is a 400 (`forbidNonWhitelisted`). Returns the `/today` shape. 409 if that kind already stands today; 400 for an ordering rule or a block (§6) |
@@ -952,9 +968,39 @@ recoverable, a half-deleted database is not.
   vanish or leave COMPLETED drop out without an effect. Failures stay selected.
   `bulkDeleteStudents` shares `invalidateStudentCascade` with `deleteStudent`.
   `DataTableColumn.label` is now a `ReactNode` (for the header checkbox).
-- **Supervisor Management (Coordinator)** — create (generated login), list, Resend login, and delete
-  (guarded — see §6). No edit yet (§8 item 10). Table columns: name, username, email,
-  establishment, position.
+- **Supervisor Management (Coordinator)** — list, **edit**, Resend login and delete
+  (guarded — see §6). **No Add button**: supervisors are created on the Establishments page
+  (next item). Edit (`SupervisorFormDialog`, pencil per row) = first name, middle
+  initial, last name, email, position; the dialog's subtitle shows the username and
+  establishment, neither editable. The form is prefilled by `splitPersonName(user.name)`
+  (a lone letter after the first word = middle initial; otherwise first word / rest) — a
+  guess, since only the full name is stored, so the form tells the coordinator to check it.
+  Table columns: name, username, email, establishment, position.
+- **Supervisor created inside the establishment (final-defense F4)** — the old
+  "Establishment Coordinator" contact person (name, age, gender, position, address,
+  contact, email) was the same person as the supervisor, so that section is gone. Its
+  nine `Establishment.coordinator*` columns **stay in `schema.prisma`, unused** (no
+  migration), hidden by `PrismaService`'s global `omit`, and rejected by both DTOs. The
+  create form ends with an optional **Supervisor** section (first name, middle initial,
+  last name, email, position) — empty or complete (first/last/email), never half; not
+  shown on edit. Its state is `features/establishment/hooks/use-supervisor-fields.ts`,
+  **deliberately outside `useEstablishment`'s `form`** so the PSGC cascade and
+  `isPopulatingRef` can neither touch it nor be touched by it (§4); `SupervisorFields.tsx`
+  renders it. The list's **Supervisor** column shows the name/position, or "None" with
+  **Add supervisor** → `AddSupervisorDialog` (`FormDialog`, all three required) →
+  `POST /establishments/:id/supervisor`. Both paths end in the one-time
+  `CredentialsDialog`. The view dialog shows the supervisor (name, position, email). The
+  student dashboard's "My Establishment" card shows Supervisor / Position / Email from the
+  supervisor ("—" each when none). Cache: create invalidates `Establishment` +
+  `Dashboard` (it counts establishments; it never did before) and, with a supervisor,
+  `CoordinatorSupervisor` + messages `Contacts`; add-supervisor the same minus
+  `Dashboard`; supervisor edit invalidates `CoordinatorSupervisor`, `Establishment`,
+  `Evaluation` (the coordinator's list reads the supervisor's name live) and messages
+  `Conversations`/`Contacts`. `supervisorManagementApi` ↔ `establishmentApi` import each
+  other — safe, both only read the other inside `onQueryStarted`.
+  **Still pending, paid:** item 3 (one supervisor per establishment — no 409 yet, the
+  relation is unchanged, older establishments may have several) and item 14 (Branch,
+  unique establishment names).
 - **The evaluation sheet is the school's to change**, end to end. `EvaluationTemplate`
   and friends (§6) hold it as a versioned, immutable-once-published template; the
   coordinator owns the draft, supervisors consume whichever version is published, and
@@ -1114,6 +1160,16 @@ recoverable, a half-deleted database is not.
 
 ### Needs live verification
 
+**Final-defense step F4** (supervisor inside the establishment form, supervisor edit,
+supervisor-based contact card, case-insensitive username login, no lowercase `o` in
+passwords). Verified in-process only — real `AppModule`, `ValidationPipe`, guards and
+services against a faked Prisma (13 cases: nested create in one transaction and its
+rollback, old fields and stray `username`/`establishmentId` 400, dup email 409,
+add-supervisor + 404, list shape with no hashes or old columns, the removed route 404,
+PATCH supervisor incl. 409/400/404, contact card with and without a supervisor, login
+case/wildcard/ambiguity, 20,000 passwords). No live request was made; the client was
+typechecked, never rendered.
+
 **Final-defense step F3** (generated credentials, Resend login, forced password change).
 **Blocked on migration `20261010090000_user_credential_flags`**, which is written but not
 applied. Verified in-process only — real `AppModule`, `ValidationPipe`, `RolesGuard`,
@@ -1244,9 +1300,12 @@ Ordered roughly by how likely each is to bite.
    /supervisor/evaluations/:id` exist and are guarded by authorship (§5). There is still no
    uniqueness constraint on `(studentId, supervisorId)` and there should not be — multiple
    sheets per student is the requirement, not an oversight.
-10. **Supervisor Management (Coordinator) has no edit.** Create, list, Resend login, and
-    delete all exist; there is still no endpoint or UI for editing a supervisor's
-    details/establishment. Don't build it speculatively — add it when asked.
+10. **A supervisor's name is stored only whole (`User.name`).** `Supervisor` has no
+    first/middle/last columns, so the edit form's parts come from `splitPersonName`, a
+    guess that is wrong for a two-word first name with no middle initial. The server
+    rebuilds the name from whatever parts are saved; the username is never touched.
+    Proper columns would need a migration. Moving a supervisor to another establishment is
+    still not supported, by decision.
 11. The coordinator dashboard's attendance trend has no server-side date range; it is
     always the last 6 weeks from today.
 12. **Resolved by retirement: `Student.endDate` and `Student.gender`.** Both were retired

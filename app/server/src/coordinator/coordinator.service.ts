@@ -39,12 +39,13 @@ import {
 import { DocumentType } from '../../generated/prisma/client';
 import { SCHOOL_NAME } from '../common/school';
 import { deriveFromCourse } from '../common/courses';
+import { generatePassword } from '../common/credentials';
 import {
-  createWithGeneratedUsername,
-  generatePassword,
-  usernameBase,
-} from '../common/credentials';
-import { findTakenUsernames, isUsernameClash } from '../common/accounts';
+  assertEmailAvailable,
+  buildPersonName,
+  isEmailClash,
+  issueNewAccount,
+} from '../common/accounts';
 
 /** Fields the coordinator can set on a student, shared by create and update. */
 /**
@@ -71,6 +72,27 @@ interface StudentDetails {
   status?: 'ACTIVE' | 'PENDING' | 'COMPLETED' | 'INACTIVE';
 }
 
+/**
+ * One supervisor as the coordinator's list shows it. Explicit `select` on the
+ * User relation, never `user: true` — that would return the password hash.
+ */
+const SUPERVISOR_ROW_SELECT = {
+  id: true,
+  userId: true,
+  establishmentId: true,
+  position: true,
+  user: {
+    select: {
+      id: true,
+      email: true,
+      username: true,
+      name: true,
+      createdAt: true,
+    },
+  },
+  establishment: { select: { id: true, name: true } },
+} as const;
+
 /** The login fields "Resend login" needs — never `password`. */
 const ACCOUNT_SELECT = {
   id: true,
@@ -84,78 +106,6 @@ export class CoordinatorService {
   private readonly logger = new Logger(CoordinatorService.name);
 
   constructor(private prisma: PrismaService) {}
-
-  /** Rejects an email already claimed by another account. */
-  private async assertEmailAvailable(email: string) {
-    const clash = await this.prisma.client.user.findUnique({
-      where: { email },
-      select: { id: true },
-    });
-    if (clash) {
-      throw new ConflictException('Email already in use');
-    }
-  }
-
-  /**
-   * Creates a login with a generated username and temporary password.
-   *
-   * `create` receives the chosen username and the password *hash*; the
-   * plaintext never reaches Prisma, so no Prisma error (which can echo its
-   * arguments) can carry it. It leaves here only inside `credentials`, which
-   * the controller returns as the one response that ever shows it.
-   */
-  private async issueNewAccount<T extends { username: string | null }>(
-    firstName: string,
-    lastName: string,
-    create: (username: string, passwordHash: string) => Promise<T>,
-  ) {
-    const tempPassword = generatePassword();
-    const passwordHash = await bcrypt.hash(tempPassword, 10);
-    const user = await createWithGeneratedUsername(
-      usernameBase(firstName, lastName),
-      (base) => findTakenUsernames(this.prisma.client, base),
-      (username) => create(username, passwordHash),
-      isUsernameClash,
-    );
-    return { user, credentials: { username: user.username, tempPassword } };
-  }
-
-  async createSupervisor(data: {
-    email: string;
-    firstName: string;
-    middleInitial?: string;
-    lastName: string;
-    establishmentId: string;
-    position?: string;
-  }) {
-    await this.assertEmailAvailable(data.email);
-
-    const { user, credentials } = await this.issueNewAccount(
-      data.firstName,
-      data.lastName,
-      (username, passwordHash) =>
-        this.prisma.client.user.create({
-          data: {
-            email: data.email,
-            username,
-            password: passwordHash,
-            mustChangePassword: true,
-            name: buildFullName(data) ?? data.lastName,
-            role: 'SUPERVISOR',
-            supervisorProfile: {
-              create: {
-                establishmentId: data.establishmentId,
-                position: data.position,
-              },
-            },
-          },
-          include: { supervisorProfile: true },
-        }),
-    );
-
-    const { password, ...result } = user;
-    return { ...result, credentials };
-  }
 
   async createStudent(
     data: StudentDetails & {
@@ -182,7 +132,7 @@ export class CoordinatorService {
       throw new BadRequestException('firstName and lastName are required');
     }
 
-    await this.assertEmailAvailable(data.email);
+    await assertEmailAvailable(this.prisma.client, data.email);
 
     const idTaken = await this.prisma.client.student.findUnique({
       where: { studentIdNumber: data.studentIdNumber },
@@ -195,7 +145,8 @@ export class CoordinatorService {
 
     const fullName = buildFullName(data) as string;
 
-    const { user, credentials } = await this.issueNewAccount(
+    const { result: user, credentials } = await issueNewAccount(
+      this.prisma.client,
       firstName,
       lastName,
       // User and Student are separate rows. Without a transaction a failure on
@@ -703,6 +654,86 @@ export class CoordinatorService {
         establishment: { select: { id: true, name: true } },
       },
     });
+  }
+
+  /**
+   * Edits a supervisor's name, email and position. Not the establishment (a
+   * supervisor is created inside one and stays there) and never the username,
+   * which is how they sign in and was generated once.
+   *
+   * The name is stored only as `User.name`, so the parts are required
+   * together: sending any of them rebuilds the whole name from what was sent,
+   * exactly as create composed it. Sending none leaves the name alone.
+   *
+   * One nested write, so User and Supervisor change together or not at all.
+   */
+  async updateSupervisor(
+    supervisorId: string,
+    data: {
+      firstName?: string;
+      middleInitial?: string | null;
+      lastName?: string;
+      email?: string;
+      position?: string | null;
+    },
+  ) {
+    const supervisor = await this.prisma.client.supervisor.findUnique({
+      where: { id: supervisorId },
+      select: { id: true, userId: true },
+    });
+    if (!supervisor) {
+      throw new NotFoundException('Supervisor not found');
+    }
+
+    const touchesName =
+      data.firstName !== undefined ||
+      data.middleInitial !== undefined ||
+      data.lastName !== undefined;
+    const firstName = data.firstName?.trim();
+    const lastName = data.lastName?.trim();
+    if (touchesName && (!firstName || !lastName)) {
+      throw new BadRequestException(
+        'firstName and lastName are required when changing the name',
+      );
+    }
+
+    if (data.email !== undefined) {
+      const clash = await this.prisma.client.user.findUnique({
+        where: { email: data.email },
+        select: { id: true },
+      });
+      if (clash && clash.id !== supervisor.userId) {
+        throw new ConflictException('Email already in use');
+      }
+    }
+
+    try {
+      return await this.prisma.client.supervisor.update({
+        where: { id: supervisorId },
+        data: {
+          position: data.position,
+          user: {
+            update: {
+              email: data.email,
+              name: touchesName
+                ? buildPersonName({
+                    firstName,
+                    middleInitial: data.middleInitial,
+                    lastName,
+                  })
+                : undefined,
+            },
+          },
+        },
+        select: SUPERVISOR_ROW_SELECT,
+      });
+    } catch (err) {
+      // Claimed by someone else between the check above and this write.
+      if (isEmailClash(err)) {
+        throw new ConflictException('Email already in use');
+      }
+      throw err;
+    }
   }
 
   /**

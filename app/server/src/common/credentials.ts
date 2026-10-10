@@ -85,10 +85,10 @@ export async function createWithGeneratedUsername<T>(
   }
 }
 
-// Look-alikes removed: 0/O, 1/l/I. A temporary password is read off a screen
-// and typed by someone else, so a character that can be misread is a support
-// call.
-const LETTERS = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
+// Look-alikes removed: 0/O/o, 1/l/I. A temporary password is read off a
+// screen and typed by someone else, so a character that can be misread is a
+// support call (lowercase o next to a zero-free digit set still reads as 0).
+const LETTERS = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
 const DIGITS = '23456789';
 const ALPHABET = LETTERS + DIGITS;
 export const GENERATED_PASSWORD_LENGTH = 8;

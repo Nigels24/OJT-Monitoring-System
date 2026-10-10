@@ -1,4 +1,13 @@
-import { Building2, MapPin, User, Phone, Mail, CalendarCheck, Users } from "lucide-react";
+import {
+  Briefcase,
+  Building2,
+  CalendarCheck,
+  Mail,
+  MapPin,
+  User,
+  UserCog,
+  Users,
+} from "lucide-react";
 import ViewDialog from "@/components/ui/ViewDialog";
 import DetailItem from "@/components/ui/DetailItem";
 import { Establishment } from "@/lib/api/establishmentApi";
@@ -69,46 +78,33 @@ export default function EstablishmentViewDialog({
 
           <div className="border-t border-gray-200 pt-4">
             <h3 className="text-base md:text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <User size={18} className="text-blue-600" />
-              Coordinator Information
+              <UserCog size={18} className="text-blue-600" />
+              Supervisor
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-              <DetailItem
-                label="Full Name"
-                value={`${establishment.coordinatorFirstName} ${establishment.coordinatorMiddleInitial || ""} ${establishment.coordinatorLastName}`.trim()}
-                icon={User}
-              />
-              <DetailItem
-                label="Age"
-                value={establishment.coordinatorAge}
-                icon={User}
-              />
-              <DetailItem
-                label="Gender"
-                value={establishment.coordinatorGender}
-                icon={User}
-              />
-              <DetailItem
-                label="Position"
-                value={establishment.coordinatorPosition}
-                icon={User}
-              />
-              <DetailItem
-                label="Contact Number"
-                value={establishment.coordinatorContact}
-                icon={Phone}
-              />
-              <DetailItem
-                label="Email Address"
-                value={establishment.coordinatorEmail}
-                icon={Mail}
-              />
-              <DetailItem
-                label="Address"
-                value={establishment.coordinatorAddress}
-                icon={MapPin}
-              />
-            </div>
+            {establishment.supervisor ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+                <DetailItem
+                  label="Full Name"
+                  value={establishment.supervisor.name}
+                  icon={User}
+                />
+                <DetailItem
+                  label="Position"
+                  value={establishment.supervisor.position}
+                  icon={Briefcase}
+                />
+                <DetailItem
+                  label="Email Address"
+                  value={establishment.supervisor.email}
+                  icon={Mail}
+                />
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">
+                No supervisor yet. Use &ldquo;Add supervisor&rdquo; in the
+                establishments list.
+              </p>
+            )}
           </div>
 
           <div className="border-t border-gray-200 pt-4">

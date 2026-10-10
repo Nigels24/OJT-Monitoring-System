@@ -15,7 +15,7 @@ import {
   CalendarCheck,
   Building2,
   User,
-  Phone,
+  Briefcase,
   Mail,
   IdCard,
   GraduationCap,
@@ -154,25 +154,18 @@ export default function StudentDashboardPage() {
                       icon={Building2}
                     />
                     <DetailItem
-                      label="Contact Person"
-                      value={
-                        [
-                          data.establishment.coordinatorFirstName,
-                          data.establishment.coordinatorLastName,
-                        ]
-                          .filter(Boolean)
-                          .join(" ") || null
-                      }
+                      label="Supervisor"
+                      value={data.establishment.supervisorName}
                       icon={User}
                     />
                     <DetailItem
-                      label="Contact Number"
-                      value={data.establishment.coordinatorContact}
-                      icon={Phone}
+                      label="Position"
+                      value={data.establishment.supervisorPosition}
+                      icon={Briefcase}
                     />
                     <DetailItem
                       label="Email"
-                      value={data.establishment.coordinatorEmail}
+                      value={data.establishment.supervisorEmail}
                       icon={Mail}
                     />
                   </div>

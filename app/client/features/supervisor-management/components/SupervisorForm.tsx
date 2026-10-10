@@ -1,15 +1,12 @@
-import { User, Mail, Briefcase, UserPlus } from "lucide-react";
+import { User, Mail, Briefcase, Save } from "lucide-react";
 import TextField from "@/components/ui/TextField";
 import Button from "@/components/ui/Button";
-import SelectField from "@/components/ui/SelectField";
-import { Establishment } from "@/lib/api/establishmentApi";
 import type { SupervisorForm as SupervisorFormValues } from "../hooks/use-supervisor-management";
 
 interface SupervisorFormProps {
   form: SupervisorFormValues;
-  isCreating: boolean;
+  isSaving: boolean;
   error: string;
-  establishments: Establishment[];
   setField: (
     key: keyof SupervisorFormValues,
   ) => (e: { target: { value: string } }) => void;
@@ -19,17 +16,12 @@ interface SupervisorFormProps {
 
 export default function SupervisorForm({
   form,
-  isCreating,
+  isSaving,
   error,
-  establishments,
   setField,
   onSubmit,
   onCancel,
 }: SupervisorFormProps) {
-  const setValue = (key: keyof SupervisorFormValues) => (value: string) => {
-    setField(key)({ target: { value } });
-  };
-
   return (
     <form onSubmit={onSubmit} className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
@@ -70,21 +62,6 @@ export default function SupervisorForm({
           onChange={setField("email")}
           placeholder="supervisor@company.com"
         />
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Establishment
-          </label>
-          <SelectField
-            value={form.establishmentId}
-            onChange={setValue("establishmentId")}
-            placeholder="Select Establishment"
-            options={establishments.map((e) => ({
-              label: e.name,
-              value: e.id,
-            }))}
-            className="w-full"
-          />
-        </div>
         <TextField
           label="Position"
           labelIcon={Briefcase}
@@ -95,9 +72,9 @@ export default function SupervisorForm({
         />
       </div>
       <p className="text-xs text-gray-500">
-        A username and a temporary password are generated when you add the
-        supervisor, and shown to you once. The supervisor must choose their own
-        password the first time they sign in.
+        Check the name parts before saving — the full name is rebuilt from
+        them. The username and establishment don&apos;t change here; use Resend
+        login for a new password.
       </p>
 
       {error && (
@@ -115,8 +92,8 @@ export default function SupervisorForm({
           Cancel
         </button>
         <div className="sm:w-48">
-          <Button type="submit" icon={UserPlus} loading={isCreating}>
-            Add Supervisor
+          <Button type="submit" icon={Save} loading={isSaving}>
+            Save Changes
           </Button>
         </div>
       </div>

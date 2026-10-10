@@ -18,10 +18,31 @@ const RETIRED_STUDENT_COLUMNS = {
   endDate: true,
 } as const;
 
+/**
+ * The establishment's old "Establishment Coordinator" contact person — the
+ * same person as its supervisor, who is now a real account. Retired the same
+ * way as the Student columns above: kept in the schema, omitted from every
+ * read, absent from the generated types. Drop together with the columns.
+ */
+const RETIRED_ESTABLISHMENT_COLUMNS = {
+  coordinatorFirstName: true,
+  coordinatorLastName: true,
+  coordinatorMiddleInitial: true,
+  coordinatorAge: true,
+  coordinatorGender: true,
+  coordinatorPosition: true,
+  coordinatorAddress: true,
+  coordinatorContact: true,
+  coordinatorEmail: true,
+} as const;
+
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   readonly client = new PrismaClient({
-    omit: { student: RETIRED_STUDENT_COLUMNS },
+    omit: {
+      student: RETIRED_STUDENT_COLUMNS,
+      establishment: RETIRED_ESTABLISHMENT_COLUMNS,
+    },
   });
 
   async onModuleInit() {

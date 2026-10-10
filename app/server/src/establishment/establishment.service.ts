@@ -4,8 +4,51 @@ import {
   CASCADE_TRANSACTION_OPTIONS,
   deleteSupervisorCascade,
 } from '../common/cascade-delete';
+import {
+  assertEmailAvailable,
+  buildPersonName,
+  issueNewAccount,
+} from '../common/accounts';
 
-interface EstablishmentInput {
+/**
+ * The User half of a new supervisor. Takes the password *hash*; the plaintext
+ * stays in `issueNewAccount` and the response. `mustChangePassword` makes the
+ * supervisor replace the generated password at first sign-in.
+ */
+function supervisorUserData(
+  supervisor: NewSupervisorInput,
+  username: string,
+  passwordHash: string,
+) {
+  return {
+    email: supervisor.email,
+    username,
+    password: passwordHash,
+    mustChangePassword: true,
+    name: buildPersonName(supervisor),
+    role: 'SUPERVISOR' as const,
+  };
+}
+
+/**
+ * The supervisor created with (or added to) an establishment. No username or
+ * password: both are generated, and the password is returned exactly once.
+ */
+interface NewSupervisorInput {
+  firstName: string;
+  middleInitial?: string;
+  lastName: string;
+  email: string;
+  position?: string;
+}
+
+/**
+ * The establishment's own columns. The old `coordinator*` contact columns
+ * (name, age, gender, position, address, contact, email) are deliberately
+ * absent: that contact person is the supervisor, now a real account. The
+ * columns stay in the schema, unread and unwritten.
+ */
+interface EstablishmentFields {
   name: string;
   industryType?: string;
   streetAddress?: string;
@@ -14,47 +57,172 @@ interface EstablishmentInput {
   city?: string;
   province?: string;
   zipCode?: string;
-  coordinatorFirstName?: string;
-  coordinatorLastName?: string;
-  coordinatorMiddleInitial?: string;
-  coordinatorAge?: number;
-  coordinatorGender?: string;
-  coordinatorPosition?: string;
-  coordinatorAddress?: string;
-  coordinatorContact?: string;
-  coordinatorEmail?: string;
 }
 
 /** Only an edit may change status — creation always yields ACTIVE. */
-type EstablishmentUpdate = Partial<EstablishmentInput> & {
+type EstablishmentUpdate = Partial<EstablishmentFields> & {
   status?: 'ACTIVE' | 'INACTIVE';
 };
+
+/**
+ * The supervisor as the establishment list shows it. Explicit `select` on the
+ * User relation — `user: true` would return the password hash.
+ */
+const SUPERVISOR_SUMMARY_SELECT = {
+  id: true,
+  position: true,
+  user: { select: { name: true, email: true } },
+} as const;
+
+type SupervisorSummaryRow = {
+  id: string;
+  position: string | null;
+  user: { name: string; email: string };
+};
+
+/** Flattened to `{ id, name, email, position }` for the client. */
+function toSupervisorSummary(row: SupervisorSummaryRow) {
+  return {
+    id: row.id,
+    name: row.user.name,
+    email: row.user.email,
+    position: row.position,
+  };
+}
 
 @Injectable()
 export class EstablishmentService {
   constructor(private prisma: PrismaService) {}
 
-  async create(data: EstablishmentInput) {
-    return this.prisma.client.establishment.create({
-      data: {
-        ...data,
-        // Every new establishment starts ACTIVE; the DTO has no status field.
-        status: 'ACTIVE',
-        coordinatorAge:
-          data.coordinatorAge != null ? Number(data.coordinatorAge) : undefined,
-      },
-    });
+  /**
+   * Creates an establishment, and its supervisor when one is given.
+   *
+   * With a supervisor, the Establishment, User and Supervisor rows are written
+   * in ONE transaction: a failure on any of them (or a lost username race,
+   * which is retried) leaves none behind — no establishment half-created with
+   * a login that has no profile. The writes inside are sequential awaits; an
+   * interactive transaction is one connection and concurrent queries on it
+   * come back wrong (CLAUDE.md §8 item 19).
+   *
+   * The response is the establishment row as before, plus `supervisor` and the
+   * one-time `credentials` when a supervisor was created.
+   */
+  async create(
+    data: EstablishmentFields & { supervisor?: NewSupervisorInput },
+  ) {
+    const { supervisor, ...fields } = data;
+    // Every new establishment starts ACTIVE; the DTO has no status field.
+    const establishmentData = { ...fields, status: 'ACTIVE' as const };
+
+    if (!supervisor) {
+      return this.prisma.client.establishment.create({
+        data: establishmentData,
+      });
+    }
+
+    await assertEmailAvailable(this.prisma.client, supervisor.email);
+
+    const { result, credentials } = await issueNewAccount(
+      this.prisma.client,
+      supervisor.firstName,
+      supervisor.lastName,
+      (username, passwordHash) =>
+        this.prisma.client.$transaction(async (tx) => {
+          const establishment = await tx.establishment.create({
+            data: establishmentData,
+          });
+          const created = await tx.supervisor.create({
+            data: {
+              position: supervisor.position,
+              establishment: { connect: { id: establishment.id } },
+              user: {
+                create: supervisorUserData(supervisor, username, passwordHash),
+              },
+            },
+            select: SUPERVISOR_SUMMARY_SELECT,
+          });
+          return { establishment, supervisor: created };
+        }, CASCADE_TRANSACTION_OPTIONS),
+    );
+
+    return {
+      ...result.establishment,
+      supervisor: toSupervisorSummary(result.supervisor),
+      credentials,
+    };
   }
 
+  /**
+   * Adds a supervisor to an existing establishment. Same body and same
+   * one-time `credentials` as the nested create. 404 for an unknown
+   * establishment.
+   *
+   * A second supervisor is NOT refused here — one supervisor per
+   * establishment is a separate, later rule. The client only offers this when
+   * the establishment has none.
+   *
+   * User and Supervisor are one nested write, which Prisma runs atomically.
+   */
+  async addSupervisor(establishmentId: string, supervisor: NewSupervisorInput) {
+    const establishment = await this.prisma.client.establishment.findUnique({
+      where: { id: establishmentId },
+      select: { id: true },
+    });
+    if (!establishment) {
+      throw new NotFoundException('Establishment not found');
+    }
+
+    await assertEmailAvailable(this.prisma.client, supervisor.email);
+
+    const { result, credentials } = await issueNewAccount(
+      this.prisma.client,
+      supervisor.firstName,
+      supervisor.lastName,
+      (username, passwordHash) =>
+        this.prisma.client.supervisor.create({
+          data: {
+            position: supervisor.position,
+            establishment: { connect: { id: establishmentId } },
+            user: {
+              create: supervisorUserData(supervisor, username, passwordHash),
+            },
+          },
+          select: SUPERVISOR_SUMMARY_SELECT,
+        }),
+    );
+
+    return {
+      ...toSupervisorSummary(result),
+      establishmentId,
+      credentials,
+    };
+  }
+
+  /**
+   * Every establishment, with its supervisor `{ id, name, email, position }`
+   * or `null`. Until one-supervisor-per-establishment is enforced an older
+   * establishment may have several; the earliest-created is shown and
+   * `_count.supervisors` still says how many there are.
+   */
   async findAll() {
-    return this.prisma.client.establishment.findMany({
+    const establishments = await this.prisma.client.establishment.findMany({
       include: {
         _count: {
           select: { students: true, supervisors: true },
         },
+        supervisors: {
+          select: SUPERVISOR_SUMMARY_SELECT,
+          orderBy: { user: { createdAt: 'asc' } },
+          take: 1,
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    return establishments.map(({ supervisors, ...establishment }) => ({
+      ...establishment,
+      supervisor: supervisors[0] ? toSupervisorSummary(supervisors[0]) : null,
+    }));
   }
 
   async findOne(id: string) {
@@ -72,11 +240,7 @@ export class EstablishmentService {
     await this.findOne(id);
     return this.prisma.client.establishment.update({
       where: { id },
-      data: {
-        ...data,
-        coordinatorAge:
-          data.coordinatorAge != null ? Number(data.coordinatorAge) : undefined,
-      },
+      data,
     });
   }
 

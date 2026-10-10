@@ -9,21 +9,58 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { PartialType } from '@nestjs/mapped-types';
+import { OmitType, PartialType } from '@nestjs/mapped-types';
 import { Type } from 'class-transformer';
 import {
   IsEmail,
   IsIn,
-  IsInt,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
-  Max,
   MaxLength,
-  Min,
+  ValidateNested,
 } from 'class-validator';
 import { EstablishmentService } from './establishment.service';
 import { Roles, RolesGuard } from '../auth/roles.guard';
+import { EmptyToUndefined } from '../common/transforms';
+
+/**
+ * A supervisor created inside an establishment — nested in POST
+ * /establishments, or the whole body of POST /establishments/:id/supervisor.
+ *
+ * No `username` or `password`: both are generated (common/credentials.ts) and
+ * returned once. The name comes in parts because the username is built from
+ * the first initial and the last name ("Juan Dela Cruz" -> jdelacruz).
+ * No `establishmentId` either: the establishment is the one being created, or
+ * the one in the path.
+ */
+class NewSupervisorDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  firstName!: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(10)
+  middleInitial?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  lastName!: string;
+
+  @IsEmail()
+  email!: string;
+
+  @IsOptional()
+  @EmptyToUndefined()
+  @IsString()
+  @MaxLength(120)
+  position?: string;
+}
 
 class CreateEstablishmentDto {
   @IsString()
@@ -66,61 +103,31 @@ class CreateEstablishmentDto {
   @MaxLength(20)
   zipCode?: string;
 
+  // The establishment's supervisor, created with it in one transaction. The
+  // old "Establishment Coordinator" contact fields (coordinatorFirstName …
+  // coordinatorEmail) described this same person; they are gone from the DTO,
+  // so sending one is a 400. Their columns stay in the schema, unused.
   @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  coordinatorFirstName?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  coordinatorLastName?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(10)
-  coordinatorMiddleInitial?: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(120)
-  coordinatorAge?: number;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(30)
-  coordinatorGender?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  coordinatorPosition?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  coordinatorAddress?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(30)
-  coordinatorContact?: string;
-
-  @IsOptional()
-  @IsEmail()
-  coordinatorEmail?: string;
+  @IsObject()
+  @ValidateNested()
+  @Type(() => NewSupervisorDto)
+  supervisor?: NewSupervisorDto;
 }
 
-// Same fields as create, all optional. PartialType rewrites the validation
-// metadata rather than inheriting it, which plain `extends` cannot do without
-// making `name` optional on create too.
+// Same fields as create, all optional, minus `supervisor`. PartialType
+// rewrites the validation metadata rather than inheriting it, which plain
+// `extends` cannot do without making `name` optional on create too.
+//
+// `supervisor` is create-only: an existing establishment gains one through
+// POST /establishments/:id/supervisor, and supervisors are edited on their own
+// route (PATCH /coordinator/supervisors/:id). Sending it here is a 400.
 //
 // `status` lives only here: a new establishment is always ACTIVE (the service
 // sets it), so a create body carrying one is a 400 under forbidNonWhitelisted.
 // Deactivating is an edit.
-class UpdateEstablishmentDto extends PartialType(CreateEstablishmentDto) {
+class UpdateEstablishmentDto extends PartialType(
+  OmitType(CreateEstablishmentDto, ['supervisor'] as const),
+) {
   @IsOptional()
   @IsIn(['ACTIVE', 'INACTIVE'])
   status?: 'ACTIVE' | 'INACTIVE';
@@ -135,6 +142,18 @@ export class EstablishmentController {
   @Roles('COORDINATOR')
   create(@Body() dto: CreateEstablishmentDto) {
     return this.establishmentService.create(dto);
+  }
+
+  /**
+   * Adds a supervisor to an existing establishment — the same body as the
+   * nested `supervisor` on create, and the same one-time `credentials` back.
+   * A second supervisor is not refused yet; the client offers this only when
+   * there is none.
+   */
+  @Post(':id/supervisor')
+  @Roles('COORDINATOR')
+  addSupervisor(@Param('id') id: string, @Body() dto: NewSupervisorDto) {
+    return this.establishmentService.addSupervisor(id, dto);
   }
 
   @Get()

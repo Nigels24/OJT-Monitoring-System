@@ -1,7 +1,7 @@
 import { Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { useState, useEffect } from "react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
-import { Eye, Pencil, Trash2, Building2, MapPin, User, Phone, Mail, CalendarCheck, Users } from "lucide-react";
+import { Eye, Pencil, Trash2, Building2, UserPlus } from "lucide-react";
 import { Establishment } from "@/lib/api/establishmentApi";
 
 interface EstablishmentListProps {
@@ -16,6 +16,8 @@ interface EstablishmentListProps {
   onView: (establishment: Establishment) => void;
   onEdit: (establishment: Establishment) => void;
   onDelete: (establishment: Establishment) => void;
+  /** Offered only on a row with no supervisor. */
+  onAddSupervisor: (establishment: Establishment) => void;
 }
 
 export default function EstablishmentList({
@@ -30,6 +32,7 @@ export default function EstablishmentList({
   onView,
   onEdit,
   onDelete,
+  onAddSupervisor,
 }: EstablishmentListProps) {
   const [localSearch, setLocalSearch] = useState(search);
 
@@ -69,28 +72,34 @@ export default function EstablishmentList({
       render: (r) => `${r.region || ""}, ${r.city || ""}`.trim() || "—",
     },
     {
-      key: "coordinator",
-      label: "Coordinator",
-      render: (r) => {
-        const fullName = [r.coordinatorFirstName, r.coordinatorLastName]
-          .filter(Boolean)
-          .join(" ");
-        return (
+      key: "supervisor",
+      label: "Supervisor",
+      render: (r) =>
+        r.supervisor ? (
           <div>
-            <div className="font-semibold text-gray-900">{fullName || "—"}</div>
-            {r.coordinatorPosition && (
+            <div className="font-semibold text-gray-900">
+              {r.supervisor.name}
+            </div>
+            {r.supervisor.position && (
               <div className="text-xs text-gray-500">
-                {r.coordinatorPosition}
+                {r.supervisor.position}
               </div>
             )}
           </div>
-        );
-      },
-    },
-    {
-      key: "coordinatorContact",
-      label: "Contact",
-      render: (r) => r.coordinatorContact || "—",
+        ) : (
+          <div className="flex flex-col items-start gap-1">
+            <span className="text-gray-500">None</span>
+            <button
+              type="button"
+              onClick={() => onAddSupervisor(r)}
+              className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800"
+              aria-label={`Add supervisor to ${r.name}`}
+            >
+              <UserPlus size={12} />
+              Add supervisor
+            </button>
+          </div>
+        ),
     },
     {
       key: "students",
@@ -155,7 +164,7 @@ export default function EstablishmentList({
           onChange={(e) => {
             setLocalSearch(e.target.value);
           }}
-          placeholder="Search by establishment name, industry, coordinator..."
+          placeholder="Search by establishment name, industry, supervisor..."
           className="w-full h-10 md:h-12 pl-9 md:pl-11 pr-3 md:pr-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-900 placeholder-gray-400"
         />
       </div>

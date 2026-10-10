@@ -1,6 +1,7 @@
 import { Building2, X } from "lucide-react";
 import EstablishmentForm from "./EstablishmentForm";
 import Overlay from "@/components/ui/Overlay";
+import type { SupervisorFields } from "../hooks/use-supervisor-fields";
 
 interface EstablishmentEditDialogProps {
   open: boolean;
@@ -10,7 +11,7 @@ interface EstablishmentEditDialogProps {
   isUpdating: boolean;
   error: string;
   industryOptions: string[];
-  genderOptions: string[];
+  supervisor: SupervisorFields;
   regions: { code: string; name: string }[];
   provinces: { code: string; name: string }[];
   municipalities: { code: string; name: string }[];
@@ -37,7 +38,7 @@ export default function EstablishmentEditDialog({
   isUpdating,
   error,
   industryOptions,
-  genderOptions,
+  supervisor,
   regions,
   provinces,
   municipalities,
@@ -91,7 +92,7 @@ export default function EstablishmentEditDialog({
             isUpdating={isUpdating}
             error={error}
             industryOptions={industryOptions}
-            genderOptions={genderOptions}
+            supervisor={supervisor}
             setField={setField}
             onSubmit={onSubmit}
             onReset={onReset}

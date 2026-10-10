@@ -4,9 +4,12 @@ import {
   useCreateEstablishmentMutation,
   useUpdateEstablishmentMutation,
   useDeleteEstablishmentMutation,
+  useAddEstablishmentSupervisorMutation,
   Establishment,
 } from "@/lib/api/establishmentApi";
 import { useSnackbar } from "@/lib/contexts/SnackbarContext";
+import type { IssuedCredentials } from "@/features/account/CredentialsDialog";
+import { useSupervisorFields } from "./use-supervisor-fields";
 import {
   getAllRegions,
   getProvincesByRegion,
@@ -33,8 +36,6 @@ const INDUSTRY_OPTIONS = [
   "Other",
 ];
 
-const GENDER_OPTIONS = ["Male", "Female", "Other"];
-
 const EMPTY_FORM = {
   name: "",
   industryType: "",
@@ -45,15 +46,6 @@ const EMPTY_FORM = {
   province: "",
   zipCode: "",
   status: "ACTIVE" as "ACTIVE" | "INACTIVE",
-  coordinatorFirstName: "",
-  coordinatorLastName: "",
-  coordinatorMiddleInitial: "",
-  coordinatorAge: "",
-  coordinatorGender: "",
-  coordinatorPosition: "",
-  coordinatorAddress: "",
-  coordinatorContact: "",
-  coordinatorEmail: "",
 };
 
 interface LocationOption {
@@ -71,6 +63,22 @@ export function useEstablishment() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const { showSuccess, showError } = useSnackbar();
+
+  // The supervisor, kept out of `form` so the address cascade below can never
+  // reset or repopulate it (see use-supervisor-fields.ts). Two instances: the
+  // optional section on the create form, and the list's "Add supervisor"
+  // dialog for an establishment that has none.
+  const newSupervisor = useSupervisorFields();
+  const laterSupervisor = useSupervisorFields();
+  const [addSupervisorTarget, setAddSupervisorTarget] =
+    useState<Establishment | null>(null);
+  const [addSupervisorError, setAddSupervisorError] = useState("");
+  /**
+   * Login details just generated for a supervisor, shown once. Cleared on
+   * close and kept nowhere else, so nothing can reopen it.
+   */
+  const [issuedCredentials, setIssuedCredentials] =
+    useState<IssuedCredentials | null>(null);
 
   // Location state
   const [regions, setRegions] = useState<LocationOption[]>([]);
@@ -95,6 +103,8 @@ export function useEstablishment() {
   const [updateEstablishment, { isLoading: isUpdating }] =
     useUpdateEstablishmentMutation();
   const [deleteEstablishment] = useDeleteEstablishmentMutation();
+  const [addEstablishmentSupervisor, { isLoading: isAddingSupervisor }] =
+    useAddEstablishmentSupervisorMutation();
 
   // Load all regions on mount
   useEffect(() => {
@@ -181,7 +191,15 @@ export function useEstablishment() {
       if (editTarget) {
         await handleUpdate(e);
       } else {
-        await createEstablishment({
+        // The supervisor section is optional, but a half-filled one is a
+        // mistake rather than "no supervisor": refuse it instead of silently
+        // dropping what was typed.
+        if (newSupervisor.isFilled && newSupervisor.missingRequired.length) {
+          const message = `Supervisor: fill in ${newSupervisor.missingRequired.join(", ")}, or clear the section to add a supervisor later.`;
+          setError(message);
+          return;
+        }
+        const result = await createEstablishment({
           name: form.name,
           industryType: form.industryType || undefined,
           streetAddress: form.streetAddress || undefined,
@@ -191,21 +209,25 @@ export function useEstablishment() {
           province: form.province || undefined,
           zipCode: form.zipCode || undefined,
           // No status: a new establishment is always ACTIVE server-side.
-          coordinatorFirstName: form.coordinatorFirstName || undefined,
-          coordinatorLastName: form.coordinatorLastName || undefined,
-          coordinatorMiddleInitial: form.coordinatorMiddleInitial || undefined,
-          coordinatorAge: form.coordinatorAge
-            ? Number(form.coordinatorAge)
+          supervisor: newSupervisor.isFilled
+            ? newSupervisor.toRequest()
             : undefined,
-          coordinatorGender: form.coordinatorGender || undefined,
-          coordinatorPosition: form.coordinatorPosition || undefined,
-          coordinatorAddress: form.coordinatorAddress || undefined,
-          coordinatorContact: form.coordinatorContact || undefined,
-          coordinatorEmail: form.coordinatorEmail || undefined,
         }).unwrap();
         setForm(EMPTY_FORM);
+        newSupervisor.reset();
         setIsDialogOpen(false);
         showSuccess(`"${form.name}" has been created successfully.`);
+        // The supervisor's generated username and temporary password, shown
+        // once — same dialog and same rules as every other generated login.
+        if (result.credentials && result.supervisor) {
+          setIssuedCredentials({
+            name: result.supervisor.name,
+            email: result.supervisor.email,
+            username: result.credentials.username,
+            tempPassword: result.credentials.tempPassword,
+            reason: "created",
+          });
+        }
       }
     } catch (err: any) {
       const errorMessage =
@@ -234,17 +256,6 @@ export function useEstablishment() {
         province: form.province || undefined,
         zipCode: form.zipCode || undefined,
         status: form.status,
-        coordinatorFirstName: form.coordinatorFirstName || undefined,
-        coordinatorLastName: form.coordinatorLastName || undefined,
-        coordinatorMiddleInitial: form.coordinatorMiddleInitial || undefined,
-        coordinatorAge: form.coordinatorAge
-          ? Number(form.coordinatorAge)
-          : undefined,
-        coordinatorGender: form.coordinatorGender || undefined,
-        coordinatorPosition: form.coordinatorPosition || undefined,
-        coordinatorAddress: form.coordinatorAddress || undefined,
-        coordinatorContact: form.coordinatorContact || undefined,
-        coordinatorEmail: form.coordinatorEmail || undefined,
       }).unwrap();
       setEditTarget(null);
       setForm(EMPTY_FORM);
@@ -371,15 +382,6 @@ export function useEstablishment() {
       province: establishment.province || "",
       zipCode: establishment.zipCode || "",
       status: establishment.status || "ACTIVE",
-      coordinatorFirstName: establishment.coordinatorFirstName || "",
-      coordinatorLastName: establishment.coordinatorLastName || "",
-      coordinatorMiddleInitial: establishment.coordinatorMiddleInitial || "",
-      coordinatorAge: establishment.coordinatorAge?.toString() || "",
-      coordinatorGender: establishment.coordinatorGender || "",
-      coordinatorPosition: establishment.coordinatorPosition || "",
-      coordinatorAddress: establishment.coordinatorAddress || "",
-      coordinatorContact: establishment.coordinatorContact || "",
-      coordinatorEmail: establishment.coordinatorEmail || "",
     });
     setIsDialogOpen(true);
   };
@@ -387,6 +389,7 @@ export function useEstablishment() {
   const resetForm = () => {
     setEditTarget(null);
     setForm(EMPTY_FORM);
+    newSupervisor.reset();
     setSelectedRegion("");
     setSelectedProvince("");
     setSelectedMunicipality("");
@@ -396,6 +399,8 @@ export function useEstablishment() {
   const handleOpenAddDialog = () => {
     setEditTarget(null);
     setForm(EMPTY_FORM);
+    newSupervisor.reset();
+    setError("");
     setSelectedRegion("");
     setSelectedProvince("");
     setSelectedMunicipality("");
@@ -408,15 +413,53 @@ export function useEstablishment() {
     resetForm();
   };
 
+  /** Opens the "Add supervisor" dialog for an establishment that has none. */
+  const handleOpenAddSupervisor = (establishment: Establishment) => {
+    laterSupervisor.reset();
+    setAddSupervisorError("");
+    setAddSupervisorTarget(establishment);
+  };
+
+  const handleCloseAddSupervisor = () => {
+    setAddSupervisorTarget(null);
+    laterSupervisor.reset();
+    setAddSupervisorError("");
+  };
+
+  const handleAddSupervisorSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addSupervisorTarget) return;
+    setAddSupervisorError("");
+    try {
+      const result = await addEstablishmentSupervisor({
+        establishmentId: addSupervisorTarget.id,
+        ...laterSupervisor.toRequest(),
+      }).unwrap();
+      handleCloseAddSupervisor();
+      setIssuedCredentials({
+        name: result.name,
+        email: result.email,
+        username: result.credentials.username,
+        tempPassword: result.credentials.tempPassword,
+        reason: "created",
+      });
+    } catch (err: unknown) {
+      const data = (err as { data?: { message?: string | string[] } })?.data;
+      const message = Array.isArray(data?.message)
+        ? data.message.join(", ")
+        : data?.message || "Failed to add supervisor.";
+      setAddSupervisorError(message);
+      showError(message);
+    }
+  };
+
   const filteredEstablishments =
     establishments?.filter((est: Establishment) => {
       const searchLower = search.toLowerCase();
       return (
         est.name.toLowerCase().includes(searchLower) ||
         est.industryType?.toLowerCase().includes(searchLower) ||
-        `${est.coordinatorFirstName} ${est.coordinatorLastName}`
-          .toLowerCase()
-          .includes(searchLower)
+        (est.supervisor?.name.toLowerCase().includes(searchLower) ?? false)
       );
     }) || [];
 
@@ -458,7 +501,13 @@ export function useEstablishment() {
     setSelectedBarangay,
 
     INDUSTRY_OPTIONS,
-    GENDER_OPTIONS,
+
+    newSupervisor,
+    laterSupervisor,
+    addSupervisorTarget,
+    addSupervisorError,
+    isAddingSupervisor,
+    issuedCredentials,
 
     setForm,
     setError,
@@ -476,5 +525,11 @@ export function useEstablishment() {
     handleEdit,
     handleOpenAddDialog,
     handleCloseDialog,
+    handleOpenAddSupervisor,
+    handleCloseAddSupervisor,
+    handleAddSupervisorSubmit,
+    closeIssuedCredentials: () => {
+      setIssuedCredentials(null);
+    },
   };
 }

@@ -111,10 +111,18 @@ export class StudentService {
             id: true,
             name: true,
             industryType: true,
-            coordinatorFirstName: true,
-            coordinatorLastName: true,
-            coordinatorContact: true,
-            coordinatorEmail: true,
+            // The contact card is the establishment's supervisor (the old
+            // coordinator* contact columns were the same person, and are
+            // retired). Name, position and email only — nothing else of the
+            // account leaves here. Earliest-created if there are several.
+            supervisors: {
+              select: {
+                position: true,
+                user: { select: { name: true, email: true } },
+              },
+              orderBy: { user: { createdAt: 'asc' } },
+              take: 1,
+            },
           },
         },
         attendances: { orderBy: { date: 'desc' }, select: DAY_SELECT },
@@ -125,7 +133,7 @@ export class StudentService {
       throw new NotFoundException('Student profile not found');
     }
 
-    const { attendances, ...profile } = student;
+    const { attendances, establishment, ...profile } = student;
     const completedHours = totalApprovedHours(attendances);
     // Counts are of punches, not days: each punch is approved on its own, so
     // "3 pending" means three decisions still owed.
@@ -135,6 +143,7 @@ export class StudentService {
 
     return {
       ...profile,
+      establishment: establishment && withSupervisorContact(establishment),
       stats: {
         // Only sessions with both punches approved count toward the
         // requirement, which is why this can trail what was punched.
@@ -544,4 +553,28 @@ function isUniqueViolation(err: unknown): boolean {
   return (
     err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
   );
+}
+
+/**
+ * Flattens the establishment's supervisor into the contact card's three
+ * fields, each `null` when the establishment has no supervisor (the client
+ * then shows its "—" empty state).
+ */
+function withSupervisorContact(establishment: {
+  id: string;
+  name: string;
+  industryType: string | null;
+  supervisors: {
+    position: string | null;
+    user: { name: string; email: string };
+  }[];
+}) {
+  const { supervisors, ...rest } = establishment;
+  const supervisor = supervisors[0];
+  return {
+    ...rest,
+    supervisorName: supervisor?.user.name ?? null,
+    supervisorPosition: supervisor?.position ?? null,
+    supervisorEmail: supervisor?.user.email ?? null,
+  };
 }

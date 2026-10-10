@@ -1,14 +1,14 @@
 import {
   Building2,
   MapPin,
-  User,
-  Phone,
-  Mail,
+  UserCog,
 } from "lucide-react";
 import TextField from "@/components/ui/TextField";
 import TextArea from "@/components/ui/TextArea";
 import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
+import SupervisorFields from "./SupervisorFields";
+import type { SupervisorFields as SupervisorFieldsState } from "../hooks/use-supervisor-fields";
 
 interface EstablishmentFormProps {
   form: any;
@@ -17,7 +17,8 @@ interface EstablishmentFormProps {
   isUpdating: boolean;
   error: string;
   industryOptions: string[];
-  genderOptions: string[];
+  /** The optional supervisor section — create only. */
+  supervisor: SupervisorFieldsState;
   setField: (key: any) => (e: any) => void;
   onSubmit: (e: React.FormEvent) => void;
   onReset: () => void;
@@ -43,7 +44,7 @@ export default function EstablishmentForm({
   isUpdating,
   error,
   industryOptions,
-  genderOptions,
+  supervisor,
   setField,
   onSubmit,
   onReset,
@@ -217,92 +218,36 @@ export default function EstablishmentForm({
         </div>
       </div>
 
-      {/* Establishment Coordinator Details */}
-      <div className="border-l-4 border-blue-400 pl-4 md:pl-6">
-        <div className="flex items-center gap-2 mb-4 max-w-4xl mx-auto">
-          <User size={16} className="text-gray-700" />
-          <h3 className="font-semibold text-gray-900 text-base md:text-lg">
-            Establishment Coordinator Details
-          </h3>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 max-w-4xl mx-auto">
-          <TextField
-            label="First Name"
-            required
-            value={form.coordinatorFirstName}
-            onChange={setField("coordinatorFirstName")}
-            placeholder="First name"
-          />
-          <TextField
-            label="Last Name"
-            required
-            value={form.coordinatorLastName}
-            onChange={setField("coordinatorLastName")}
-            placeholder="Last name"
-          />
-          <TextField
-            label="Middle Initial"
-            value={form.coordinatorMiddleInitial}
-            onChange={setField("coordinatorMiddleInitial")}
-            placeholder="M.I."
-          />
-          <TextField
-            label="Age"
-            required
-            type="number"
-            value={form.coordinatorAge}
-            onChange={setField("coordinatorAge")}
-            placeholder="Age"
-          />
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Gender <span className="text-red-500">*</span>
-            </label>
-            <SelectField
-              value={form.coordinatorGender}
-              onChange={(value) =>
-                setField("coordinatorGender")({ target: { value } })
-              }
-              placeholder="Select Gender"
-              options={genderOptions.map((opt) => ({
-                label: opt,
-                value: opt,
-              }))}
-              className="w-full"
+      {/* Supervisor — create only. The establishment's contact person is its
+          supervisor, a real login; once created they are edited on the
+          Supervisors page, so an edit of the establishment doesn't show this.
+          State lives outside `form` (use-supervisor-fields.ts) so the
+          address cascade can't touch it. */}
+      {!editTarget && (
+        <div className="border-l-4 border-blue-400 pl-4 md:pl-6">
+          <div className="flex items-center gap-2 mb-1 max-w-4xl mx-auto">
+            <UserCog size={16} className="text-gray-700" />
+            <h3 className="font-semibold text-gray-900 text-base md:text-lg">
+              Supervisor{" "}
+              <span className="text-sm font-normal text-gray-500">
+                (optional)
+              </span>
+            </h3>
+          </div>
+          <p className="text-xs text-gray-500 mb-4 max-w-4xl mx-auto">
+            Leave blank to add one later from the list. If you start it, first
+            name, last name and email are required. A username and a temporary
+            password are generated and shown to you once.
+          </p>
+          <div className="max-w-4xl mx-auto">
+            <SupervisorFields
+              values={supervisor.values}
+              setField={supervisor.setField}
+              required={false}
             />
           </div>
-          <TextField
-            label="Position"
-            value={form.coordinatorPosition}
-            onChange={setField("coordinatorPosition")}
-            placeholder="Position"
-          />
-          <TextField
-            label="Address"
-            labelIcon={MapPin}
-            fieldIcon={MapPin}
-            value={form.coordinatorAddress}
-            onChange={setField("coordinatorAddress")}
-            placeholder="Address"
-          />
-          <TextField
-            label="Contact"
-            labelIcon={Phone}
-            fieldIcon={Phone}
-            value={form.coordinatorContact}
-            onChange={setField("coordinatorContact")}
-            placeholder="Contact number"
-          />
-          <TextField
-            label="Email"
-            labelIcon={Mail}
-            fieldIcon={Mail}
-            value={form.coordinatorEmail}
-            onChange={setField("coordinatorEmail")}
-            placeholder="Email address"
-          />
         </div>
-      </div>
+      )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 

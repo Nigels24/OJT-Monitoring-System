@@ -4,6 +4,7 @@ import {
   ChevronRight,
   UserCog,
   KeyRound,
+  Pencil,
   Trash2,
 } from "lucide-react";
 import DataTable, { DataTableColumn } from "@/components/ui/DataTable";
@@ -18,6 +19,7 @@ interface SupervisorListProps {
   paged: CoordinatorSupervisor[];
   onSearchChange: (value: string) => void;
   onPageChange: (page: number) => void;
+  onEdit: (supervisor: CoordinatorSupervisor) => void;
   onResendLogin: (supervisor: CoordinatorSupervisor) => void;
   onDelete: (supervisor: CoordinatorSupervisor) => void;
 }
@@ -30,6 +32,7 @@ export default function SupervisorList({
   paged,
   onSearchChange,
   onPageChange,
+  onEdit,
   onResendLogin,
   onDelete,
 }: SupervisorListProps) {
@@ -85,6 +88,14 @@ export default function SupervisorList({
       label: "Actions",
       render: (r) => (
         <div className="flex gap-1 md:gap-2">
+          <button
+            onClick={() => onEdit(r)}
+            className="p-1 md:p-1.5 rounded-md border border-blue-200 text-blue-600 hover:bg-blue-50"
+            aria-label={`Edit ${r.user.name}`}
+            title="Edit"
+          >
+            <Pencil size={14} />
+          </button>
           <button
             onClick={() => onResendLogin(r)}
             className="p-1 md:p-1.5 rounded-md border border-amber-200 text-amber-600 hover:bg-amber-50"

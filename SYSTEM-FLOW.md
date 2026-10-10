@@ -36,7 +36,8 @@ contract change. Keep `lib/api/<domain>Api.ts`'s TS interfaces in sync by hand.
 ```
 Login
   POST /auth/login { identifier, password }
-    → AuthService.login: User.findFirst({ email: identifier OR username: identifier })
+    → AuthService.login: "@" in identifier ? User by email (exact)
+                                          : User by username (case-insensitive)
     → bcrypt.compare
     → jwt.sign({ sub, email, role, mcp?: true })   mcp only when User.mustChangePassword
   ← client stores token (localStorage) + persistSession() sets ojt_role cookie (role only)
@@ -66,7 +67,9 @@ thrown from inside the service.
 ### Generated credentials → forced change
 
 ```
-Coordinator: POST /coordinator/students | /coordinator/supervisors   (no username/password in body)
+Coordinator: POST /coordinator/students | /establishments {…, supervisor} | /establishments/:id/supervisor
+             (no username/password in body; the establishment create writes Establishment +
+              User + Supervisor in one $transaction)
          or  POST /coordinator/{students,supervisors}/:id/resend-credentials
   → generatePassword() → bcrypt.hash → user row (username via usernameBase +
     nextFreeUsername, retried on a P2002 race), mustChangePassword = true

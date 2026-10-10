@@ -16,6 +16,8 @@ import { useEstablishment } from "../../../features/establishment/hooks/use-esta
 import EstablishmentList from "../../../features/establishment/components/EstablishmentList";
 import EstablishmentViewDialog from "../../../features/establishment/components/EstablishmentViewDialog";
 import EstablishmentEditDialog from "../../../features/establishment/components/EstablishmentEditDialog";
+import AddSupervisorDialog from "../../../features/establishment/components/AddSupervisorDialog";
+import CredentialsDialog from "@/features/account/CredentialsDialog";
 
 
 export default function EstablishmentManagementPage() {
@@ -39,7 +41,12 @@ export default function EstablishmentManagementPage() {
     paged,
     totalPages,
     INDUSTRY_OPTIONS,
-    GENDER_OPTIONS,
+    newSupervisor,
+    laterSupervisor,
+    addSupervisorTarget,
+    addSupervisorError,
+    isAddingSupervisor,
+    issuedCredentials,
     regions,
     provinces,
     municipalities,
@@ -61,6 +68,10 @@ export default function EstablishmentManagementPage() {
     handleEdit,
     handleOpenAddDialog,
     handleCloseDialog,
+    handleOpenAddSupervisor,
+    handleCloseAddSupervisor,
+    handleAddSupervisorSubmit,
+    closeIssuedCredentials,
   } = useEstablishment();
 
   return (
@@ -76,7 +87,7 @@ export default function EstablishmentManagementPage() {
         <div className="bg-gradient-to-r from-gray-800 to-gray-700 rounded-2xl p-4 md:p-6 mb-6 flex flex-col md:flex-row md:items-start md:justify-between gap-4">
           <PageHeader
             title="Establishment Management"
-            subtitle="Manage partner establishments and their assigned coordinators"
+            subtitle="Manage partner establishments and their supervisors"
             icon={Building2}
           />
           <div className="flex items-center gap-3">
@@ -111,6 +122,7 @@ export default function EstablishmentManagementPage() {
             onView={handleView}
             onEdit={handleEdit}
             onDelete={(establishment) => setDeleteTarget(establishment)}
+            onAddSupervisor={handleOpenAddSupervisor}
           />
         </Card>
       </main>
@@ -150,7 +162,7 @@ export default function EstablishmentManagementPage() {
         isUpdating={isUpdating}
         error={error}
         industryOptions={INDUSTRY_OPTIONS}
-        genderOptions={GENDER_OPTIONS}
+        supervisor={newSupervisor}
         regions={regions}
         provinces={provinces}
         municipalities={municipalities}
@@ -167,6 +179,20 @@ export default function EstablishmentManagementPage() {
         onSubmit={handleSubmit}
         onReset={handleCloseDialog}
         onClose={handleCloseDialog}
+      />
+
+      <AddSupervisorDialog
+        establishment={addSupervisorTarget}
+        supervisor={laterSupervisor}
+        isSubmitting={isAddingSupervisor}
+        error={addSupervisorError}
+        onSubmit={handleAddSupervisorSubmit}
+        onClose={handleCloseAddSupervisor}
+      />
+
+      <CredentialsDialog
+        credentials={issuedCredentials}
+        onDone={closeIssuedCredentials}
       />
     </div>
   );
